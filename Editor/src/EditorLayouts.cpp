@@ -1,4 +1,5 @@
 // Workspaces: named editor layouts. Each one remembers its own panels, so switching never loses an arrangement.
+#include <format>
 #include "EditorApp.h"
 #include "Core/FileSystem.h"
 #include "TitleBar.h"

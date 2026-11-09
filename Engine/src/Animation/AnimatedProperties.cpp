@@ -1,3 +1,4 @@
+#include <format>
 #include "Animation/AnimatedProperties.h"
 #include "Scene/ComponentState.h"
 #include "Scripting/ScriptEngine.h"

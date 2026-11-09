@@ -1,3 +1,4 @@
+#include <format>
 #include "InspectorWidgets.h"
 #include "ManagedEditorUI.h"
 #include "Scripting/ScriptEngine.h"

@@ -1,4 +1,5 @@
 // Unity-style object slot ("None (Material)" + target button) and the grid picker with Assets / Scene tabs.
+#include <format>
 #include "AssetUI.h"
 #include "EditorIcons.h"
 #include "InspectorWidgets.h"

@@ -1083,7 +1083,8 @@ void EditorApp::DrawProject() {
                 const bool isOpen = expandedModels.count(relPath) > 0;
                 const float midY = (tileMin.y + tileMax.y) * 0.5f, right = tileMax.x + 2;
                 const ImVec2 hitMin(right - 14, midY - 14), hitMax(right + 2, midY + 14);
-                const bool overArrow = ImGui::IsWindowHovered() && ImGui::IsMouseHoveringRect(hitMin, hitMax);
+                // The arrow overlaps the icon, which grabs the press first: ignore that so the whole arrow works
+                const bool overArrow = ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) && ImGui::IsMouseHoveringRect(hitMin, hitMax, false);
                 auto* arrowDraw = ImGui::GetWindowDrawList();
                 arrowDraw->AddRectFilled(hitMin, hitMax, overArrow ? IM_COL32(70, 110, 170, 255) : IM_COL32(44, 47, 53, 230), 3);
                 const ImU32 arrowColor = IM_COL32(225, 228, 235, 255);

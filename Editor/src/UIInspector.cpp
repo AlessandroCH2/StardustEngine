@@ -1,3 +1,4 @@
+#include <format>
 #include "InspectorWidgets.h"
 #include "EditorApp.h"
 #include "EditorIcons.h"
