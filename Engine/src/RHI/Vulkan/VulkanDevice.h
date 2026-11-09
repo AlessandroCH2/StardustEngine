@@ -184,6 +184,7 @@ private:
 
     Window& m_Window;
     bool m_VSync = true, m_SwapchainDirty = false;
+    bool m_HasAnisotropy = false, m_HasDepthClamp = false, m_HasWireframe = false;
 
     VkInstance m_Instance = VK_NULL_HANDLE;
     VkDebugUtilsMessengerEXT m_Messenger = VK_NULL_HANDLE;

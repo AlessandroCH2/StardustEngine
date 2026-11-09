@@ -144,6 +144,44 @@ void VulkanDevice::CreateInstance(bool validation) {
     }
 }
 
+namespace {
+// Everything the renderer asks of the GPU. The third column says if it can run without it.
+#define SD_VK_FEATURES(X) \
+    X(f13, dynamicRendering, true) X(f13, synchronization2, true) X(f13, maintenance4, false) X(f13, shaderDemoteToHelperInvocation, true) \
+    X(f12, descriptorIndexing, true) X(f12, runtimeDescriptorArray, true) X(f12, descriptorBindingPartiallyBound, true) \
+    X(f12, descriptorBindingSampledImageUpdateAfterBind, true) X(f12, descriptorBindingStorageImageUpdateAfterBind, true) \
+    X(f12, descriptorBindingStorageBufferUpdateAfterBind, true) X(f12, descriptorBindingUpdateUnusedWhilePending, true) \
+    X(f12, shaderSampledImageArrayNonUniformIndexing, true) X(f12, shaderStorageImageArrayNonUniformIndexing, false) \
+    X(f12, shaderStorageBufferArrayNonUniformIndexing, true) X(f12, scalarBlockLayout, true) X(f12, timelineSemaphore, true) \
+    X(f12, hostQueryReset, true) X(f12, drawIndirectCount, false) X(f12, samplerFilterMinmax, false) X(f12, uniformBufferStandardLayout, false) \
+    X(f11, shaderDrawParameters, true) \
+    X(f2.features, samplerAnisotropy, false) X(f2.features, multiDrawIndirect, false) X(f2.features, drawIndirectFirstInstance, false) \
+    X(f2.features, fillModeNonSolid, false) X(f2.features, depthClamp, false) X(f2.features, depthBiasClamp, false) \
+    X(f2.features, independentBlend, false) X(f2.features, imageCubeArray, false) X(f2.features, shaderStorageImageReadWithoutFormat, false) \
+    X(f2.features, shaderStorageImageWriteWithoutFormat, true) X(f2.features, fragmentStoresAndAtomics, true) \
+    X(f2.features, vertexPipelineStoresAndAtomics, true) X(f2.features, shaderImageGatherExtended, false)
+
+struct DeviceFeatures {
+    VkPhysicalDeviceVulkan13Features f13{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES };
+    VkPhysicalDeviceVulkan12Features f12{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES };
+    VkPhysicalDeviceVulkan11Features f11{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES };
+    VkPhysicalDeviceFeatures2 f2{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2 };
+    DeviceFeatures() { f12.pNext = &f13; f11.pNext = &f12; f2.pNext = &f11; }
+    DeviceFeatures(const DeviceFeatures&) = delete;
+    DeviceFeatures& operator=(const DeviceFeatures&) = delete;
+};
+
+std::string MissingFeatures(VkPhysicalDevice device, bool required) {
+    DeviceFeatures supported;
+    vkGetPhysicalDeviceFeatures2(device, &supported.f2);
+    std::string missing;
+#define SD_CHECK_FEATURE(group, name, essential) if (essential == required && !supported.group.name) missing += (missing.empty() ? "" : ", ") + std::string(#name);
+    SD_VK_FEATURES(SD_CHECK_FEATURE)
+#undef SD_CHECK_FEATURE
+    return missing;
+}
+}
+
 void VulkanDevice::PickPhysicalDevice() {
     u32 count = 0;
     vkEnumeratePhysicalDevices(m_Instance, &count, nullptr);
@@ -154,7 +192,8 @@ void VulkanDevice::PickPhysicalDevice() {
     for (VkPhysicalDevice pd : devices) {
         VkPhysicalDeviceProperties p;
         vkGetPhysicalDeviceProperties(pd, &p);
-        if (p.apiVersion < VK_API_VERSION_1_3) continue;
+        if (p.apiVersion < VK_API_VERSION_1_3) { SD_INFO("GPU {}: skipped, it does not offer Vulkan 1.3", p.deviceName); continue; }
+        if (std::string missing = MissingFeatures(pd, true); !missing.empty()) { SD_WARN("GPU {}: skipped, missing {}", p.deviceName, missing); continue; }
 
         u32 qc = 0;
         vkGetPhysicalDeviceQueueFamilyProperties(pd, &qc, nullptr);
@@ -171,8 +210,9 @@ void VulkanDevice::PickPhysicalDevice() {
             break;
         }
     }
-    SD_VERIFY(m_PhysicalDevice, "No Vulkan 1.3 GPU with graphics+compute+present found");
+    SD_VERIFY(m_PhysicalDevice, "No Vulkan 1.3 GPU with graphics+compute+present and the required features found");
     vkGetPhysicalDeviceProperties2(m_PhysicalDevice, &m_Props);
+    SD_INFO("GPU: {} (driver {:x})", m_Props.properties.deviceName, m_Props.properties.driverVersion);
 }
 
 void VulkanDevice::CreateLogicalDevice() {
@@ -182,50 +222,16 @@ void VulkanDevice::CreateLogicalDevice() {
     qi.queueCount = 1;
     qi.pQueuePriorities = &prio;
 
-    VkPhysicalDeviceVulkan13Features f13{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES };
-    f13.dynamicRendering = VK_TRUE;
-    f13.synchronization2 = VK_TRUE;
-    f13.maintenance4 = VK_TRUE;
-    f13.shaderDemoteToHelperInvocation = VK_TRUE; // DXC lowers HLSL discard to demote
-
-    VkPhysicalDeviceVulkan12Features f12{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES };
-    f12.pNext = &f13;
-    f12.descriptorIndexing = VK_TRUE;
-    f12.runtimeDescriptorArray = VK_TRUE;
-    f12.descriptorBindingPartiallyBound = VK_TRUE;
-    f12.descriptorBindingSampledImageUpdateAfterBind = VK_TRUE;
-    f12.descriptorBindingStorageImageUpdateAfterBind = VK_TRUE;
-    f12.descriptorBindingStorageBufferUpdateAfterBind = VK_TRUE;
-    f12.descriptorBindingUpdateUnusedWhilePending = VK_TRUE;
-    f12.shaderSampledImageArrayNonUniformIndexing = VK_TRUE;
-    f12.shaderStorageImageArrayNonUniformIndexing = VK_TRUE;
-    f12.shaderStorageBufferArrayNonUniformIndexing = VK_TRUE;
-    f12.scalarBlockLayout = VK_TRUE;
-    f12.timelineSemaphore = VK_TRUE;
-    f12.hostQueryReset = VK_TRUE;
-    f12.drawIndirectCount = VK_TRUE;
-    f12.samplerFilterMinmax = VK_TRUE;
-    f12.uniformBufferStandardLayout = VK_TRUE;
-
-    VkPhysicalDeviceVulkan11Features f11{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES };
-    f11.pNext = &f12;
-    f11.shaderDrawParameters = VK_TRUE;
-
-    VkPhysicalDeviceFeatures2 f2{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2 };
-    f2.pNext = &f11;
-    f2.features.samplerAnisotropy = VK_TRUE;
-    f2.features.multiDrawIndirect = VK_TRUE;
-    f2.features.drawIndirectFirstInstance = VK_TRUE;
-    f2.features.fillModeNonSolid = VK_TRUE;
-    f2.features.depthClamp = VK_TRUE;
-    f2.features.depthBiasClamp = VK_TRUE;
-    f2.features.independentBlend = VK_TRUE;
-    f2.features.imageCubeArray = VK_TRUE;
-    f2.features.shaderStorageImageReadWithoutFormat = VK_TRUE;
-    f2.features.shaderStorageImageWriteWithoutFormat = VK_TRUE;
-    f2.features.fragmentStoresAndAtomics = VK_TRUE;
-    f2.features.vertexPipelineStoresAndAtomics = VK_TRUE;
-    f2.features.shaderImageGatherExtended = VK_TRUE;
+    // Turn on only what this GPU has: asking for anything else makes vkCreateDevice fail
+    DeviceFeatures supported, wanted;
+    vkGetPhysicalDeviceFeatures2(m_PhysicalDevice, &supported.f2);
+#define SD_ENABLE_FEATURE(group, name, essential) wanted.group.name = supported.group.name;
+    SD_VK_FEATURES(SD_ENABLE_FEATURE)
+#undef SD_ENABLE_FEATURE
+    if (std::string missing = MissingFeatures(m_PhysicalDevice, false); !missing.empty()) SD_WARN("Optional GPU features not available: {}", missing);
+    m_HasAnisotropy = supported.f2.features.samplerAnisotropy;
+    m_HasDepthClamp = supported.f2.features.depthClamp;
+    m_HasWireframe = supported.f2.features.fillModeNonSolid;
 
     u32 ec = 0;
     vkEnumerateDeviceExtensionProperties(m_PhysicalDevice, nullptr, &ec, nullptr);
@@ -237,7 +243,7 @@ void VulkanDevice::CreateLogicalDevice() {
         if (strcmp(e.extensionName, VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME) == 0) exts.push_back(VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME);
 
     VkDeviceCreateInfo ci{ VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO };
-    ci.pNext = &f2;
+    ci.pNext = &wanted.f2;
     ci.queueCreateInfoCount = 1;
     ci.pQueueCreateInfos = &qi;
     ci.enabledExtensionCount = (u32)exts.size();
@@ -315,7 +321,7 @@ void VulkanDevice::CreateSamplers() {
         si.mipmapMode = filter == VK_FILTER_LINEAR ? VK_SAMPLER_MIPMAP_MODE_LINEAR : VK_SAMPLER_MIPMAP_MODE_NEAREST;
         si.addressModeU = si.addressModeV = si.addressModeW = addr;
         si.maxLod = VK_LOD_CLAMP_NONE;
-        si.anisotropyEnable = aniso > 1.0f;
+        si.anisotropyEnable = aniso > 1.0f && m_HasAnisotropy;
         si.maxAnisotropy = std::min(aniso, m_Props.properties.limits.maxSamplerAnisotropy);
         si.compareEnable = compare;
         si.compareOp = VK_COMPARE_OP_GREATER_OR_EQUAL; // reverse-Z shadow maps
@@ -673,10 +679,10 @@ Ref<Pipeline> VulkanDevice::CreateGraphicsPipeline(const GraphicsPipelineDesc& d
     vp.scissorCount = 1;
 
     VkPipelineRasterizationStateCreateInfo rs{ VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO };
-    rs.polygonMode = d.wireframe ? VK_POLYGON_MODE_LINE : VK_POLYGON_MODE_FILL;
+    rs.polygonMode = d.wireframe && m_HasWireframe ? VK_POLYGON_MODE_LINE : VK_POLYGON_MODE_FILL;
     rs.cullMode = d.cull == CullMode::None ? VK_CULL_MODE_NONE : d.cull == CullMode::Back ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_FRONT_BIT;
     rs.frontFace = d.frontCCW ? VK_FRONT_FACE_COUNTER_CLOCKWISE : VK_FRONT_FACE_CLOCKWISE;
-    rs.depthClampEnable = d.depthClamp;
+    rs.depthClampEnable = d.depthClamp && m_HasDepthClamp;
     rs.depthBiasEnable = d.depthBiasConstant != 0 || d.depthBiasSlope != 0;
     rs.depthBiasConstantFactor = d.depthBiasConstant;
     rs.depthBiasSlopeFactor = d.depthBiasSlope;

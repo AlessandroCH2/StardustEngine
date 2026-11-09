@@ -59,6 +59,7 @@ struct GroupEntry { BYTE width,height,colors=0,reserved=0;WORD planes=1,bits=32;
 }
 
 void ApplyEmbedded(GLFWwindow* window) {
+    if (glfwGetPlatform() == GLFW_PLATFORM_WAYLAND) return; // Wayland windows take their icon from the desktop entry
 #ifdef _WIN32
     auto hwnd=glfwGetWin32Window(window);
     auto module=GetModuleHandleW(nullptr);
