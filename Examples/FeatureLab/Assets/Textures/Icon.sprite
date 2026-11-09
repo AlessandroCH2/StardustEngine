@@ -1,0 +1,20 @@
+{
+  "border": [
+    0.0,
+    0.0,
+    0.0,
+    0.0
+  ],
+  "pivot": [
+    0.5,
+    0.5
+  ],
+  "pixelsPerUnit": 100.0,
+  "rect": [
+    0.0,
+    0.0,
+    240.0,
+    240.0
+  ],
+  "texture": "Textures/Icon.png"
+}

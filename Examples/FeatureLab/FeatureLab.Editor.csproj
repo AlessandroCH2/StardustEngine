@@ -1,0 +1,17 @@
+<Project>
+  <PropertyGroup><BaseIntermediateOutputPath>obj/Editor/</BaseIntermediateOutputPath><MSBuildProjectExtensionsPath>obj/Editor/</MSBuildProjectExtensionsPath></PropertyGroup>
+  <Import Project="Sdk.props" Sdk="Microsoft.NET.Sdk" />
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework><EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath><Nullable>disable</Nullable>
+    <AssemblyName>FeatureLab.Editor</AssemblyName>
+    <AssemblySearchPaths>{HintPathFromItem};$(AssemblySearchPaths)</AssemblySearchPaths>
+    <StardustBin Condition="'$(StardustBin)' == ''">F:/ProjektArkStardust/GameEngineCustom/build/bin/Release</StardustBin>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="Assets/**/Editor/**/*.cs;Packages/**/Editor/**/*.cs" />
+    <Reference Include="Stardust.ScriptCore"><HintPath>$(StardustBin)/Stardust.ScriptCore.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="FeatureLab"><HintPath>bin/FeatureLab.dll</HintPath><Private>false</Private></Reference>
+  </ItemGroup>
+  <Import Project="Sdk.targets" Sdk="Microsoft.NET.Sdk" />
+</Project>

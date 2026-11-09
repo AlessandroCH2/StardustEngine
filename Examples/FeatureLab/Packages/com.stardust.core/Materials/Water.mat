@@ -1,0 +1,9 @@
+{
+  "name": "Stardust Water",
+  "shader": "Stardust/Water",
+  "color": [0.025, 0.25, 0.32, 0.75],
+  "roughness": 0.12,
+  "normalStrength": 0.12,
+  "tiling": [0.3, 0.8],
+  "doubleSided": true
+}

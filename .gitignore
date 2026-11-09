@@ -1,0 +1,11 @@
+build/
+bin/
+obj/
+.vs/
+*.user
+imgui.ini
+build-linux/
+dist/
+# Sample projects: not needed to compile the engine, and large
+SandboxProject/
+NodulusProject/

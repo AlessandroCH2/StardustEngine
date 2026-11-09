@@ -1,0 +1,3 @@
+#pragma once
+#include "Scene/Scene.h"
+namespace Stardust { class AnimatorSystem { public: static glm::vec4 EvaluateN(const nlohmann::json& keys,float time,glm::vec4 fallback,const std::string& interpolation,int dimension);static glm::vec3 Evaluate(const nlohmann::json& keys,float time,glm::vec3 fallback,const std::string& interpolation="Linear");static void SampleClip(Scene& scene,EntityID root,const nlohmann::json& clip,float time,bool loop=true);static bool AdvanceController(AnimatorComponent& animator,const nlohmann::json& controller,float duration,const nlohmann::json* parameterOwner=nullptr);static void Update(Scene& scene, float dt); }; }

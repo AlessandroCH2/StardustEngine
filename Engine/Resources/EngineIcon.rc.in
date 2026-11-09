@@ -1,0 +1,2 @@
+LANGUAGE 0, 0
+101 ICON "@CMAKE_SOURCE_DIR@/Engine/Resources/EngineIcon.ico"

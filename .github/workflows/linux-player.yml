@@ -1,0 +1,28 @@
+name: Linux player runtime
+on: workflow_dispatch
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Native dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y g++-14 cmake libvulkan-dev libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libwayland-dev libxkbcommon-dev
+          mkdir -p "$RUNNER_TEMP/dxc"
+          curl --fail --location https://github.com/microsoft/DirectXShaderCompiler/releases/download/v1.8.2505.1/linux_dxc_2025_07_14.x86_64.tar.gz | tar xz -C "$RUNNER_TEMP/dxc"
+          echo "$RUNNER_TEMP/dxc/bin" >> "$GITHUB_PATH"
+      - name: Compile native Linux player
+        env:
+          CC: gcc-14
+          CXX: g++-14
+        run: |
+          export LD_LIBRARY_PATH="$RUNNER_TEMP/dxc/lib:${LD_LIBRARY_PATH:-}"
+          bash Tools/BuildLinuxRuntime.sh build-linux
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Stardust-Linux-x64-runtime
+          path: build-linux/bin/Release/Linux
