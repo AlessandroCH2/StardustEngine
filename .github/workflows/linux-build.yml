@@ -31,14 +31,25 @@ jobs:
           echo "$sdk/bin" >> "$GITHUB_PATH"
           echo "LD_LIBRARY_PATH=$sdk/lib:${LD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
 
+      # The DXC in this SDK crashes on our compute shaders; this one matches the 1.9 compiler used on Windows
+      - name: Shader compiler
+        run: |
+          dxc="$RUNNER_TEMP/dxc"
+          mkdir -p "$dxc"
+          curl --fail --location https://github.com/microsoft/DirectXShaderCompiler/releases/download/v1.9.2609/linux_dxc_2026_09_28.x86_x64.tar.gz \
+            | tar -xz -C "$dxc"
+          echo "DXC_DIR=$dxc" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=$dxc/lib:${LD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
+          LD_LIBRARY_PATH="$dxc/lib" "$dxc/bin/dxc" --version
+
       - name: Compile editor and player
         env:
           CC: gcc-13
           CXX: g++-13
         run: |
           cmake -S . -B build-linux -G Ninja -DCMAKE_BUILD_TYPE=Release -DSTARDUST_BUILD_EDITOR=ON \
-            -DCMAKE_EXE_LINKER_FLAGS="-static-libstdc++ -static-libgcc"
-          cmake --build build-linux --target StardustEditor StardustPlayer -j "$(nproc)"
+            -DVulkan_dxc_EXECUTABLE="$DXC_DIR/bin/dxc" -DCMAKE_EXE_LINKER_FLAGS="-static-libstdc++ -static-libgcc"
+          cmake --build build-linux --target StardustEditor StardustPlayer -j "$(nproc)" -- -k 0
 
       - name: Package
         run: |
@@ -48,8 +59,8 @@ jobs:
           cp -r Assets/Shaders "$dist/Assets/Shaders"
           cp -r Packages docs "$dist/"
           # The editor compiles custom shaders with its own copy of DXC
-          cp -L "$VULKAN_SDK/bin/dxc" "$dist/tools/dxc/bin/dxc"
-          cp -L "$VULKAN_SDK"/lib/libdxcompiler.so* "$dist/tools/dxc/lib/"
+          cp -L "$DXC_DIR/bin/dxc" "$dist/tools/dxc/bin/dxc"
+          cp -L "$DXC_DIR"/lib/*.so* "$dist/tools/dxc/lib/"
           printf '%s\n' '#!/bin/sh' 'here="$(cd -- "$(dirname -- "$0")" && pwd)"' \
             'LD_LIBRARY_PATH="$here/tools/dxc/lib:$LD_LIBRARY_PATH" exec "$here/StardustEditor" "$@"' > "$dist/Stardust.sh"
           chmod +x "$dist/Stardust.sh" "$dist/StardustEditor" "$dist/StardustPlayer" "$dist/tools/dxc/bin/dxc"
