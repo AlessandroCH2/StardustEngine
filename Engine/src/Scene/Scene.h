@@ -59,6 +59,11 @@ public:
     bool GetCamera(EntityID entity,RenderCamera& out,float aspect);
     void RenderCameraTargets(RHI::Device& device,RHI::CommandList& cmd,float time);
     void SubmitToRenderer(SceneRenderer& renderer, RHI::Device& device,bool animationPreview=false);
+    // LOD Groups: the share of the view's height the group covers (quality LOD bias included), the level that
+    // gives (-1 = culled), and the bounds measured from its renderers
+    float LODScreenHeight(EntityID group, const RenderCamera& camera);
+    int SelectLOD(EntityID group, const RenderCamera& camera);
+    void RecalculateLODBounds(EntityID group);
     void PrepareTerrains(RHI::Device& device); // make sure terrain data exists (physics heightfields need it before play)
 
     // Deep copy (entering play mode works on a copy, like Unity)

@@ -16,17 +16,18 @@
 namespace Stardust {
 
 // The decoder seeks within a pak entry just as it would within a loose file.
-struct AudioFile { std::filesystem::path path;std::ifstream loose;u64 cursor=0,size=0,base=0;bool packed=false; };
+struct AudioFile { std::filesystem::path path;std::ifstream loose;u64 cursor=0,size=0,base=0,cipher=0;bool packed=false; };
 static ma_vfs_callbacks s_Vfs{};
 static void InitVfs(){
- s_Vfs.onOpen=[](ma_vfs*,const char* path,ma_uint32 mode,ma_vfs_file* output)->ma_result{if(mode&MA_OPEN_MODE_WRITE)return MA_ACCESS_DENIED;auto f=std::make_unique<AudioFile>();f->path=std::filesystem::u8path(path);std::filesystem::path archive;f->packed=Pak::Locate(f->path,archive,f->base,f->size);f->loose.open(f->packed?archive:f->path,std::ios::binary|std::ios::ate);if(!f->loose)return MA_DOES_NOT_EXIST;if(!f->packed)f->size=(u64)f->loose.tellg();f->loose.seekg(f->base);*output=f.release();return MA_SUCCESS;};
+ s_Vfs.onOpen=[](ma_vfs*,const char* path,ma_uint32 mode,ma_vfs_file* output)->ma_result{if(mode&MA_OPEN_MODE_WRITE)return MA_ACCESS_DENIED;auto f=std::make_unique<AudioFile>();f->path=std::filesystem::u8path(path);std::filesystem::path archive;f->packed=Pak::Locate(f->path,archive,f->base,f->size,&f->cipher);f->loose.open(f->packed?archive:f->path,std::ios::binary|std::ios::ate);if(!f->loose)return MA_DOES_NOT_EXIST;if(!f->packed)f->size=(u64)f->loose.tellg();f->loose.seekg(f->base);*output=f.release();return MA_SUCCESS;};
  s_Vfs.onClose=[](ma_vfs*,ma_vfs_file file)->ma_result{delete (AudioFile*)file;return MA_SUCCESS;};
- s_Vfs.onRead=[](ma_vfs*,ma_vfs_file file,void* data,size_t count,size_t* read)->ma_result{auto& f=*(AudioFile*)file;count=(size_t)std::min<u64>(count,f.size-f.cursor);u64 n=0;f.loose.read((char*)data,count);n=f.loose.gcount();f.cursor+=n;if(read)*read=(size_t)n;return n?MA_SUCCESS:MA_AT_END;};
+ s_Vfs.onRead=[](ma_vfs*,ma_vfs_file file,void* data,size_t count,size_t* read)->ma_result{auto& f=*(AudioFile*)file;count=(size_t)std::min<u64>(count,f.size-f.cursor);u64 n=0;f.loose.read((char*)data,count);n=f.loose.gcount();if(f.cipher)Pak::Decrypt(f.cipher,f.cursor,data,n);f.cursor+=n;if(read)*read=(size_t)n;return n?MA_SUCCESS:MA_AT_END;};
  s_Vfs.onSeek=[](ma_vfs*,ma_vfs_file file,ma_int64 offset,ma_seek_origin origin)->ma_result{auto& f=*(AudioFile*)file;auto at=(ma_int64)(origin==ma_seek_origin_start?0:origin==ma_seek_origin_end?f.size:f.cursor)+offset;if(at<0||(u64)at>f.size)return MA_BAD_SEEK;f.cursor=at;f.loose.clear();f.loose.seekg(f.base+at);return MA_SUCCESS;};
  s_Vfs.onTell=[](ma_vfs*,ma_vfs_file file,ma_int64* at)->ma_result{*at=((AudioFile*)file)->cursor;return MA_SUCCESS;};
  s_Vfs.onInfo=[](ma_vfs*,ma_vfs_file file,ma_file_info* info)->ma_result{info->sizeInBytes=((AudioFile*)file)->size;return MA_SUCCESS;};
 }
 static ma_engine s_Engine;
+static bool s_Paused = false;
 static std::unordered_map<EntityID, ma_sound*> s_Sounds;
 static std::vector<ma_sound*> s_OneShots;
 static ma_sound* s_Preview = nullptr;
@@ -178,3 +179,11 @@ void AudioEngine::StopPreview() {
 }
 
 } // namespace Stardust
+
+namespace Stardust {
+void AudioEngine::SetPaused(bool paused) {
+    if (!s_Ready || paused == s_Paused) return;
+    s_Paused = paused;
+    if (paused) ma_engine_stop(&s_Engine); else ma_engine_start(&s_Engine);
+}
+}

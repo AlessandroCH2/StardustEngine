@@ -5,6 +5,9 @@ file(GLOB_RECURSE PLAYER_SOURCES CONFIGURE_DEPENDS
 add_executable(StardustPlayer ${PLAYER_SOURCES})
 if(WIN32)
     target_sources(StardustPlayer PRIVATE ${CMAKE_BINARY_DIR}/EngineIcon.rc)
+    # A windowed game: no console unless it is started with --log (see main.cpp). main() stays the entry point.
+    set_target_properties(StardustPlayer PROPERTIES WIN32_EXECUTABLE TRUE)
+    target_link_options(StardustPlayer PRIVATE /ENTRY:mainCRTStartup)
 endif()
 target_link_libraries(StardustPlayer PRIVATE StardustEngine)
 add_dependencies(StardustPlayer StardustScriptCore)

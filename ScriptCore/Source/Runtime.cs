@@ -93,6 +93,14 @@ namespace Stardust
         public static bool IsPlaying
             => Native.Api.IsPlaying() != 0;
 
+        /// <summary>Keep the game running while its window is in the background (unfocused or minimized). Off by default:
+        /// the game pauses, audio included. It has no effect in the editor.</summary>
+        public static bool runInBackground
+        {
+            get => System.Text.Json.Nodes.JsonNode.Parse(Native.FromUtf8(Native.Api.GetComponentJson(0, 105)))?["runInBackground"]?.GetValue<bool>() ?? false;
+            set { fixed (byte* p = Native.Utf8("{\"runInBackground\":" + (value ? "true" : "false") + "}")) Native.Api.SetComponentJson(0, 105, p); }
+        }
+
         private static string MarshalString(IntPtr ptr)
         => Marshal.PtrToStringUTF8(ptr) ?? string.Empty;
         

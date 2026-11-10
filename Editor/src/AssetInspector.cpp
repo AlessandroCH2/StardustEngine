@@ -28,7 +28,7 @@ void EditorApp::DrawAssetInspector() {
         ImGui::TextDisabled("Folder");
         if (ImGui::Button("Build Content Pak")) {
             auto output = path.parent_path() / (path.filename().string() + ".pak");
-            if (Pak::Build(path,output)) SD_INFO("Content pak built: {}",output.string());
+            if (Pak::Build(path,output,Pak::HasKey())) SD_INFO("Content pak built: {}",output.string());
         }
         return;
     }

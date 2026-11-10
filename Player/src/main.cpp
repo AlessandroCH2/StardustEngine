@@ -13,6 +13,9 @@
 #include "Core/WindowIcon.h"
 #include "Project/Project.h"
 #include "Assets/Pak.h"
+#include <cstring>
+#include <string_view>
+#include <cstdio>
 #include "Scene/SceneManager.h"
 #include "Audio/AudioEngine.h"
 #include "Renderer/Nature/TerrainData.h"
@@ -26,6 +29,15 @@
 
 namespace Stardust {
 
+// Pak key slot: the editor writes the encryption key here when it exports a game (Pak::EmbedKey)
+extern "C" volatile unsigned char g_StardustPakKey[48];
+volatile unsigned char g_StardustPakKey[48] = { 'S','D','P','K','E','Y','0','1','M','A','R','K','E','R','!','!' };
+static void LoadEmbeddedPakKey() {
+    unsigned char slot[48];
+    for (int i = 0; i < 48; ++i) slot[i] = g_StardustPakKey[i];
+    if (std::memcmp(slot + 8, "ENABLED!", 8) == 0) Stardust::Pak::SetKey(slot + 16);
+}
+
 class PlayerApp final : public Application {
 public:
     PlayerApp() : Application(MakeDesc()) {}
@@ -33,9 +45,11 @@ public:
 protected:
     static ApplicationDesc MakeDesc() {
         auto data=FileSystem::ExecutableDir()/"Data";
+        LoadEmbeddedPakKey();
         if(!Pak::Mount(data/"game.pak",data/"Assets")||!Project::LoadRuntime(data))throw std::runtime_error("Missing or invalid runtime metadata in Data/game.pak. Rebuild the game.");
         const auto& cfg = Project::Config();
         ApplicationDesc d;
+        d.pauseWhenInactive = true;
         d.window.title = cfg.name;
         d.window.width = cfg.windowWidth;
         d.window.height = cfg.windowHeight;
@@ -145,7 +159,27 @@ private:
 
 } // namespace Stardust
 
-int main() {
+// Games have no console window; "--log" opens one (or reuses the terminal it was started from) to show the log
+static void OpenLogConsole(int argc, char** argv) {
+    bool wanted = false;
+    for (int i = 1; i < argc; ++i) if (std::string_view(argv[i]) == "--log") wanted = true;
+#ifdef _WIN32
+    if (!wanted) return;
+    if (!AttachConsole(ATTACH_PARENT_PROCESS)) AllocConsole();
+    FILE* stream = nullptr;
+    freopen_s(&stream, "CONOUT$", "w", stdout);
+    freopen_s(&stream, "CONOUT$", "w", stderr);
+    SetConsoleOutputCP(CP_UTF8);
+    DWORD mode = 0; HANDLE out = GetStdHandle(STD_OUTPUT_HANDLE);
+    if (GetConsoleMode(out, &mode)) SetConsoleMode(out, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING); // the log is coloured
+    std::ios::sync_with_stdio(true);
+#else
+    (void)wanted; // a Linux terminal shows the output already
+#endif
+}
+
+int main(int argc, char** argv) {
+    OpenLogConsole(argc, argv);
     try {
         SD_INFO("Stardust Player {}", STARDUST_VERSION_FULL);
         Stardust::PlayerApp app;

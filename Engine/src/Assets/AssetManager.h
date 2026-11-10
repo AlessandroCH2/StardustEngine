@@ -26,7 +26,9 @@ public:
     static std::filesystem::path ToAbsolute(const std::string& relative);
 
     // Textures (PNG/JPG/TGA/BMP via stb_image, full mip chain). Returns the bindless SRV of the texture or a fallback.
-    static Ref<RHI::Texture> GetTexture(const std::string& path, bool srgb);
+    static Ref<RHI::Texture> GetTexture(const std::string& path, bool srgb); // large files decode in the background: nullptr until ready
+    static int PendingTextures();   // textures still decoding
+    static void WaitForTextures();  // finishes every pending texture now
     static void SetRuntimeTexture(const std::string& path,Ref<RHI::Texture> texture);
     static void SetRuntimeMesh(const std::string& path,Ref<Mesh> mesh);
     static u32 TextureSRV(const std::string& path, bool srgb, DefaultTexture fallback);

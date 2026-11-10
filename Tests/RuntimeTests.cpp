@@ -336,6 +336,53 @@ static void TestAssetMeta() {
      auto back=SpriteAsset::Load(texture);Check(back.pixelsPerUnit==32&&back.border.w==4&&back.texture==texture&&TextureImportSettings::Load(texture).maxSize==256,"embedded sprite not read back from the .meta, or it replaced the texture settings");
      Check(!std::filesystem::exists(texture+".sprite"),"embedded sprite wrote a separate file");}
 }
+static void TestPakEncryption() {
+    auto root=TestRoot()/"PakCrypto";auto source=root/"src";
+    std::string big(200000,'x');for(size_t i=0;i<big.size();++i)big[i]=(char)(i*31+7);
+    std::filesystem::create_directories(source/"Textures/Hero");{std::ofstream raw(source/"Textures/Hero/Diffuse.png",std::ios::binary);raw.write(big.data(),big.size());}FileSystem::WriteText(source/"Textures/Hero/Normal.png","normal");FileSystem::WriteText(source/"Textures/Hero/Mask.png","mask");
+    Pak::SetPassphrase("secret phrase");
+    Check(Pak::Build(source,root/"plain.pak",false)&&Pak::Build(source,root/"locked.pak",true),"pak build failed");
+    {std::ifstream in(root/"locked.pak",std::ios::binary);std::string raw((std::istreambuf_iterator<char>(in)),{});Check(raw.find("Diffuse")==std::string::npos&&raw.find("normal")==std::string::npos,"encrypted pak shows names or contents");}
+    Check(Pak::Mount(root/"locked.pak",root/"mounted"),"encrypted pak did not mount");
+    auto file=root/"mounted/Textures/Hero/Diffuse.png";auto bytes=FileSystem::ReadBinary(file);
+    Check(std::string(bytes.begin(),bytes.end())==big,"encrypted pak read wrong bytes");
+    char part[100];Check(Pak::ReadRange(file,12345,part,100)==100&&std::string(part,100)==big.substr(12345,100),"encrypted range read wrong");
+    std::filesystem::path archive;u64 offset=0,size=0,cipher=0;Check(!Pak::Locate(file,archive,offset,size)&&Pak::Locate(file,archive,offset,size,&cipher)&&cipher,"raw access to an encrypted entry not guarded");
+    Check(FileSystem::ReadText(root/"mounted/Textures/Hero/Normal.png")=="normal","small encrypted file wrong");
+    Pak::Unmount(root/"locked.pak");
+    Pak::SetPassphrase("wrong");Check(!Pak::Mount(root/"locked.pak",root/"mounted"),"wrong key accepted");
+    Pak::SetPassphrase("");Check(!Pak::Mount(root/"locked.pak",root/"mounted"),"missing key accepted");
+    Check(Pak::Mount(root/"plain.pak",root/"plainMounted")&&FileSystem::ReadText(root/"plainMounted/Textures/Hero/Mask.png")=="mask","plain v2 pak failed");
+    Pak::Unmount(root/"plain.pak");
+    // The binary index: 3 entries in well under what the JSON index needed
+    std::ifstream in(root/"plain.pak",std::ios::binary);in.seekg(32);u64 indexSize=0;in.read((char*)&indexSize,8);
+    Check(indexSize<100,"binary index is not compact");
+    {   // The key lands in the player's slot
+        std::string exe(1000,(char)0x90);exe+="SDPKEY01";exe+="MARKER!!";exe+=std::string(32,(char)0);exe+=std::string(500,(char)0xCC);
+        {std::ofstream o(root/"Player.exe",std::ios::binary);o.write(exe.data(),exe.size());}
+        Check(Pak::EmbedKey(root/"Player.exe","secret phrase"),"key not embedded");
+        auto patched=FileSystem::ReadBinary(root/"Player.exe");u8 expected[32];Pak::KeyFromPassphrase("secret phrase",expected);
+        Check(patched.size()==exe.size()&&std::memcmp(patched.data()+1008,"ENABLED!",8)==0&&std::memcmp(patched.data()+1016,expected,32)==0,"embedded key slot wrong");
+    }
+}
+static void TestLODGroup() {
+    Scene scene;auto group=scene.CreateEntity("Rock");auto near=scene.CreateEntity("Rock_LOD0"),far=scene.CreateEntity("Rock_LOD1"),leaf=scene.CreateEntity("Leaf");
+    scene.SetParent(near,group,false);scene.SetParent(far,group,false);scene.SetParent(leaf,near,false);
+    auto& g=scene.Reg().Add<LODGroupComponent>(group);g.size=1;
+    g.levels={{0.6f,{scene.Reg().Get<IDComponent>(near).uuid}},{0.3f,{scene.Reg().Get<IDComponent>(far).uuid}},{0.1f,{}}};
+    RenderCamera camera;camera.fovY=glm::radians(60.f);
+    auto at=[&](float distance){camera.position={0,0,distance};return scene.SelectLOD(group,camera);};
+    // A 1 m object fills 0.866/d of a 60 degree view
+    Check(at(1)==0&&at(2)==1&&at(5)==2&&at(20)==-1,"LOD level chosen by screen height is wrong");
+    auto copy=SceneSerializer::FromJson(SceneSerializer::ToJson(scene));Check(copy!=nullptr,"scene with LOD Group not reloaded");
+    auto loadedGroup=copy->FindByUUID(scene.Reg().Get<IDComponent>(group).uuid);auto* loaded=copy->Reg().TryGet<LODGroupComponent>(loadedGroup);
+    Check(loaded&&loaded->levels.size()==3&&std::abs(loaded->levels[1].screenHeight-0.3f)<1e-5f&&loaded->levels[0].renderers.size()==1&&copy->FindByUUID(loaded->levels[0].renderers[0])!=kNullEntity,"LOD Group lost its levels on save");
+    // A duplicate points at its own children, not the original's
+    auto pasted=SceneSerializer::InstantiateSelection(scene,SceneSerializer::SelectionToJson(scene,{group}));
+    Check(pasted.size()==1,"LOD Group not duplicated");
+    auto& dup=scene.Reg().Get<LODGroupComponent>(pasted[0]);EntityID dupNear=scene.FindByUUID(dup.levels[0].renderers[0]);
+    Check(dupNear&&dupNear!=near&&scene.GetParent(dupNear)==pasted[0],"duplicated LOD Group still points at the original renderers");
+}
 static void TestPrefabLinks(){
     auto file=TestRoot()/"PrefabTests/Linked.prefab";
     Scene source;auto root=source.CreateEntity("Linked Root");auto child=source.CreatePrimitive(PrimitiveType::Cube,"Child");source.SetParent(child,root,false);source.Reg().Get<MeshRendererComponent>(child).material.roughness=.4f;
@@ -514,6 +561,8 @@ int main() {
         TestFbx();
         TestAnimator();
         TestAssetMeta();
+        TestLODGroup();
+        TestPakEncryption();
         TestPrefabLinks();
         TestCanvasAndRichText();
         TestCookingAndAsync();

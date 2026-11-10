@@ -532,6 +532,7 @@ static void InitNativeApi() {
         using j=nlohmann::json;j data=j::object();auto e=E(id);
         auto vec2=[](glm::vec2 v){return j::array({v.x,v.y});};auto vec4=[](glm::vec4 v){return j::array({v.x,v.y,v.z,v.w});};
         if(type==104)data={{"cursorLocked",Input::RuntimeMouse&&Input::GetCursorMode()==CursorMode::Locked}};
+        if(type==105)data={{"runInBackground",Application::RunInBackground()}};
         if(type==101)data={{"layers",Project::Config().layers}};
         if(type==100){data["connected"]=Input::GamepadConnected((int)id);data["axes"]=j::array();data["buttons"]=j::array();data["pressed"]=j::array();for(int i=0;i<6;++i)data["axes"].push_back(Input::GamepadAxis((int)id,i));for(int i=0;i<15;++i){data["buttons"].push_back(Input::GamepadButton((int)id,i));data["pressed"].push_back(Input::GamepadButton((int)id,i,true));}}
         if(e){auto& r=S()->Reg();
@@ -565,7 +566,9 @@ static void InitNativeApi() {
             if(type==12)if(auto* c=r.TryGet<AnimatorComponent>(e))data={{"state",c->state},{"speed",c->speed},{"playing",c->playing},{"parameters",c->parameters}};
         }s_NameBuffer=data.dump();return s_NameBuffer.c_str();
     };
-    a.SetComponentJson=[](u64 id,int type,const char* value){auto e=E(id);if(!e)return;auto data=nlohmann::json::parse(value,nullptr,false);if(!data.is_object())return;
+    a.SetComponentJson=[](u64 id,int type,const char* value){
+        if(type==105){auto settings=nlohmann::json::parse(value,nullptr,false);if(settings.is_object()&&settings.contains("runInBackground"))Application::SetRunInBackground(settings.value("runInBackground",false));return;}
+        auto e=E(id);if(!e)return;auto data=nlohmann::json::parse(value,nullptr,false);if(!data.is_object())return;
         auto v2=[&](const char* name,glm::vec2& v){if(data.contains(name)&&data[name].is_array()&&data[name].size()==2)v={data[name][0].get<float>(),data[name][1].get<float>()};};
         auto v4=[&](const char* name,glm::vec4& v){if(data.contains(name)&&data[name].is_array()&&data[name].size()==4)v={data[name][0].get<float>(),data[name][1].get<float>(),data[name][2].get<float>(),data[name][3].get<float>()};};
         try{auto& r=S()->Reg();

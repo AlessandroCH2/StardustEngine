@@ -119,6 +119,16 @@ struct TerrainComponent {
     bool collider = true;   // static heightfield collider in play mode
 };
 
+// Unity's LOD Group: each level lists objects (with their children) shown while the group covers at least
+// screenHeight of the view's height. Below the last level the object is culled.
+struct LODLevel { float screenHeight = 0.5f; std::vector<u64> renderers; }; // renderers by UUID
+struct LODGroupComponent {
+    std::vector<LODLevel> levels{ { 0.6f, {} }, { 0.3f, {} }, { 0.1f, {} } };
+    float size = 0;                    // world size at scale 1; 0 = measured from the renderers the first time
+    glm::vec3 localCenter{ 0 };        // centre of the bounds in the group's space
+    int currentLevel = -1;             // last level drawn (runtime, shown by the inspector)
+};
+
 // Automatic grass and scattered trees for the Terrain on the same object
 struct TerrainVegetationComponent {
     bool grass = true;

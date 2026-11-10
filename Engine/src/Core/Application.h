@@ -10,6 +10,7 @@ struct ApplicationDesc {
     WindowDesc window;
     RHI::DeviceDesc device;
     bool imgui = true;
+    bool pauseWhenInactive = false; // games: stop while the window is unfocused or minimized, unless RunInBackground
 };
 
 // Base class for the editor and the standalone player.
@@ -22,6 +23,9 @@ public:
     void Close() { m_Running = false; }
 
     static Application& Get() { return *s_Instance; }
+    // Application.runInBackground in scripts: keep updating while the game window is not focused
+    static void SetRunInBackground(bool run);
+    static bool RunInBackground() { return s_RunInBackground; }
     Window& GetWindow() { return *m_Window; }
     RHI::Device& GetDevice() { return *m_Device; }
 
@@ -47,6 +51,7 @@ private:
     void RunLoop();
 
     static inline Application* s_Instance = nullptr;
+    static inline bool s_RunInBackground = false;
     ApplicationDesc m_Desc;
     Scope<Window> m_Window;
     Scope<RHI::Device> m_Device;

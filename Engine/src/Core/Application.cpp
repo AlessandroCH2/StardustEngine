@@ -1,6 +1,8 @@
 #include "Core/Application.h"
 #include "Core/Log.h"
 #include "Assets/AssetManager.h"
+#include "Audio/AudioEngine.h"
+#include <thread>
 #include <GLFW/glfw3.h>
 #include <imgui.h>
 #include <imgui_impl_glfw.h>
@@ -85,6 +87,12 @@ void Application::Run() {
     }
 }
 
+void Application::SetRunInBackground(bool run) {
+    s_RunInBackground = run;
+    // Exclusive fullscreen minimizes itself when it loses focus; a game that keeps running should stay up
+    if (s_Instance && s_Instance->m_Window) glfwSetWindowAttrib(s_Instance->m_Window->Native(), GLFW_AUTO_ICONIFY, run ? GLFW_FALSE : GLFW_TRUE);
+}
+
 void Application::RunLoop() {
     OnInit();
     if(m_Desc.imgui){m_UiBaseStyle=MakeScope<ImGuiStyle>(ImGui::GetStyle());UpdateUiScale();}
@@ -94,7 +102,26 @@ void Application::RunLoop() {
 
     while (m_Running && !m_Window->ShouldClose()) {
         m_Window->PollEvents();
-        while (m_Window->IsMinimized() && !m_Window->ShouldClose()) glfwWaitEvents();
+        if (m_Desc.pauseWhenInactive) {
+            const bool focused = glfwGetWindowAttrib(m_Window->Native(), GLFW_FOCUSED) == GLFW_TRUE;
+            if (!s_RunInBackground && (!focused || m_Window->IsMinimized())) {
+                // Paused: nothing runs and the time does not jump when the player comes back
+                AudioEngine::SetPaused(true);
+                glfwWaitEventsTimeout(0.25);
+                last = clock::now();
+                continue;
+            }
+            AudioEngine::SetPaused(false);
+            if (m_Window->IsMinimized()) {
+                // Running in the background with no surface to draw on: game logic only
+                auto now = clock::now();
+                m_DeltaTime = std::min(std::chrono::duration<float>(now - last).count(), 0.1f);
+                last = now; m_Time += m_DeltaTime;
+                OnUpdate(m_DeltaTime);
+                std::this_thread::sleep_for(std::chrono::milliseconds(16));
+                continue;
+            }
+        } else while (m_Window->IsMinimized() && !m_Window->ShouldClose()) glfwWaitEvents();
         if(m_Desc.imgui)UpdateUiScale();
 
         auto now = clock::now();

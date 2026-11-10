@@ -10,6 +10,7 @@
 #include "Project/PackageManager.h"
 #include "Assets/AssetManager.h"
 #include "Assets/Pak.h"
+#include <random>
 #include "UI/CanvasRenderer.h"
 #include "Scripting/ScriptEngine.h"
 #include "Scene/SceneSerializer.h"
@@ -97,6 +98,7 @@ void EditorApp::OpenProject(const fs::path& file, bool isNew) {
     if (m_State != PlayState::Edit) Stop();
     if (Project::IsLoaded() && m_EditorScene) SaveProjectState();
     if (!Project::Load(file)) return;
+    Pak::SetPassphrase(Project::Config().pakKey);
     AssetMeta::MigrateFolder(Project::AssetsDir());
     PackageManager::EnsureDefault();
     Project::WriteEditorScriptProject();
@@ -219,6 +221,14 @@ void EditorApp::DrawBuildSettings() {
     changed |= ImGui::Checkbox("VSync", &cfg.vsync);
     ImGui::SetNextItemWidth(220);
     if (ImGui::Combo("Graphics Quality", &cfg.quality, "Low (older GPUs)\0Medium\0High\0")) { GraphicsQuality::Apply(cfg.quality); changed = true; }
+    {   // Pak encryption: the key goes into the exported player, never into the paks
+        static bool showKey = false;
+        ImGui::SetNextItemWidth(260);
+        if (ImGui::InputTextWithHint("Pak Encryption Key", "empty = not encrypted", &cfg.pakKey, showKey ? 0 : ImGuiInputTextFlags_Password)) { Pak::SetPassphrase(cfg.pakKey); changed = true; }
+        ImGui::SameLine(); ImGui::Checkbox("Show##pakKey", &showKey);
+        ImGui::SameLine(); if (ImGui::SmallButton("Generate")) { std::random_device random; static const char* chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"; cfg.pakKey.clear(); for (int i = 0; i < 32; ++i) cfg.pakKey += chars[random() % 57]; Pak::SetPassphrase(cfg.pakKey); changed = true; }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Paks built from now on are encrypted with this key. Keep it: old builds need theirs.");
+    }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Low and Medium render the Game view and the built player at a lower 3D resolution,\nwith smaller shadow maps, cheaper clouds and sparser grass.");
     if (changed) Project::Save();
 

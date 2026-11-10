@@ -44,6 +44,7 @@ bool Project::Load(const fs::path& file) {
         c.buildTarget=p.value("target",std::string("Windows"));
     }
     for(auto& p:j.value("contentPacks",json::array()))c.contentPacks.push_back({p.value("name","content"),p.value("folder","")});
+    c.pakKey=j.value("pakKey",std::string());
     c.layers=j.value("layers",c.layers);c.layers.resize(32);
     s_Config = std::move(c);
     s_File = fs::absolute(file);
@@ -75,6 +76,7 @@ bool Project::Save() {
     j["layers"]=s_Config.layers;
     j["lastOpenedScene"] = s_Config.lastOpenedScene;
     j["lastBuildFolder"] = s_Config.lastBuildFolder;
+    if (!s_Config.pakKey.empty()) j["pakKey"] = s_Config.pakKey;
     j["player"] = { { "width", s_Config.windowWidth }, { "height", s_Config.windowHeight },
                     { "fullscreen", s_Config.fullscreen }, { "vsync", s_Config.vsync }, { "quality", s_Config.quality }, {"icon", s_Config.icon},{"target",s_Config.buildTarget} };
     return FileSystem::WriteText(s_File, j.dump(2));

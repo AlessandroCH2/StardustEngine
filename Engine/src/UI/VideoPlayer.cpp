@@ -8,12 +8,12 @@
 namespace Stardust {
 namespace {
 struct State {
-    std::string clip,target;std::ifstream file;u64 offset=0,size=0,position=0;
+    std::string clip,target;std::ifstream file;u64 offset=0,size=0,position=0,cipher=0;
     plm_t* decoder=nullptr;Ref<RHI::Texture> texture;std::vector<u8> pixels;float lastTime=0;
     ~State(){if(decoder)plm_destroy(decoder);if(!target.empty())AssetManager::SetRuntimeTexture(target,nullptr);}
 };
 std::unordered_map<Scene*,std::unordered_map<EntityID,Scope<State>>> players;
-void Load(plm_buffer_t* buffer,void* user){auto& state=*(State*)user;u8 data[65536];auto amount=std::min<u64>(sizeof(data),state.size-state.position);if(amount){state.file.read((char*)data,amount);auto read=state.file.gcount();state.position+=read;plm_buffer_write(buffer,data,(size_t)read);}if(state.position>=state.size)plm_buffer_signal_end(buffer);}
+void Load(plm_buffer_t* buffer,void* user){auto& state=*(State*)user;u8 data[65536];auto amount=std::min<u64>(sizeof(data),state.size-state.position);if(amount){state.file.read((char*)data,amount);auto read=state.file.gcount();Pak::Decrypt(state.cipher,state.position,data,(u64)read);state.position+=read;plm_buffer_write(buffer,data,(size_t)read);}if(state.position>=state.size)plm_buffer_signal_end(buffer);}
 void Seek(plm_buffer_t*,size_t position,void* user){auto& s=*(State*)user;s.position=std::min<u64>(position,s.size);s.file.clear();s.file.seekg(s.offset+s.position);}
 size_t Tell(plm_buffer_t*,void* user){return(size_t)((State*)user)->position;}
 void Frame(plm_t*,plm_frame_t* frame,void* user){auto& s=*(State*)user;auto* device=AssetManager::Device();if(!device)return;
@@ -29,7 +29,7 @@ void VideoPlayerSystem::Update(Scene& scene,float dt){
         auto& state=players[&scene][e];
         if(!state||state->clip!=c.clip||(!c.targetTexture.empty()&&state->target!=c.targetTexture)){
             state=MakeScope<State>();state->clip=c.clip;state->target=c.targetTexture.empty()?"runtime:video:"+std::to_string(scene.Reg().Get<IDComponent>(e).uuid):c.targetTexture;
-            auto path=AssetManager::ToAbsolute(c.clip),archive=path;if(!Pak::Locate(path,archive,state->offset,state->size)){std::error_code ec;state->size=std::filesystem::file_size(path,ec);if(ec){SD_WARN("Video not found: {}",c.clip);c.playing=false;return;}}
+            auto path=AssetManager::ToAbsolute(c.clip),archive=path;if(!Pak::Locate(path,archive,state->offset,state->size,&state->cipher)){std::error_code ec;state->size=std::filesystem::file_size(path,ec);if(ec){SD_WARN("Video not found: {}",c.clip);c.playing=false;return;}}
             state->file.open(archive,std::ios::binary);state->file.seekg(state->offset);
             auto* buffer=plm_buffer_create_with_callbacks(Load,Seek,Tell,state->size,state.get());state->decoder=plm_create_with_buffer(buffer,TRUE);
             if(!state->decoder||!plm_has_headers(state->decoder)||!plm_get_num_video_streams(state->decoder)){SD_WARN("Unsupported video: {} (expected MPEG-1 .mpg)",c.clip);c.playing=false;return;}

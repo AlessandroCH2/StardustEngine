@@ -25,6 +25,7 @@ struct ProjectConfig {
     std::string icon; // Asset-relative PNG/JPEG/TGA/BMP; empty uses the engine icon.
     std::string lastBuildFolder;
     std::vector<ContentPackConfig> contentPacks;
+    std::string pakKey; // passphrase that encrypts the built paks; empty leaves them readable. Never written into a build.
 };
 
 class Project {

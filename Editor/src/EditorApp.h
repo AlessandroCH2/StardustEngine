@@ -159,6 +159,8 @@ private:
     Ref<Scene> m_EditorScene, m_ActiveScene;
     Scope<SceneRenderer> m_SceneRenderer, m_GameRenderer;
     EditorCamera m_Camera;
+    RenderCamera m_LastSceneCamera; // what the Scene view drew last, for the LOD Group inspector
+    bool m_HasSceneCamera = false;
     EntityID m_Selected = kNullEntity;
     std::vector<EntityID> m_EntitySelection,m_HierarchyRows,m_PreviousHierarchyRows;
     std::vector<std::string> m_AssetSelection,m_AssetClipboard;

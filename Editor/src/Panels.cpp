@@ -52,6 +52,7 @@ static bool LayerMaskField(const char* label, u32& mask) {
     return changed;
 }
 void DrawTerrainVegetationInspector(Scene& scene, EntityID e, TerrainVegetationComponent& c);
+void DrawLODGroupInspector(Scene& scene, EntityID e, LODGroupComponent& g, const RenderCamera* sceneCamera);
 
 // ------------------------------------------------------------------------------------------------ widgets
 
@@ -549,6 +550,7 @@ void EditorApp::DrawInspector() {
     ComponentSection<TerrainComponent>(inspectScene, e, "Terrain", true, [&](TerrainComponent& tc) { DrawTerrainInspector(e, tc); });
     ComponentSection<ProceduralTerrainComponent>(inspectScene,e,"Procedural Terrain Generator",true,[&](auto& c){DrawProceduralTerrainInspector(e,c);});
     ComponentSection<TerrainVegetationComponent>(inspectScene,e,"Terrain Vegetation",true,[&](auto& c){DrawTerrainVegetationInspector(inspectScene,e,c);});
+    ComponentSection<LODGroupComponent>(inspectScene,e,"LOD Group",true,[&](auto& c){DrawLODGroupInspector(inspectScene,e,c,m_HasSceneCamera?&m_LastSceneCamera:nullptr);});
 
     auto physMat = [](PhysicsMaterialProps& m) {
         SliderProp("Friction", m.friction, 0.0f, 1.5f);
@@ -638,6 +640,7 @@ void EditorApp::DrawInspector() {
         if (!reg.Has<MeshRendererComponent>(e) && ImGui::MenuItem("Mesh Renderer")) reg.Add<MeshRendererComponent>(e);
         if(!reg.Has<VideoPlayerComponent>(e)&&ImGui::MenuItem("Video Player"))reg.Add<VideoPlayerComponent>(e);
         if (!reg.Has<SpriteRendererComponent>(e) && ImGui::MenuItem("Sprite Renderer")) reg.Add<SpriteRendererComponent>(e);
+        if (!reg.Has<LODGroupComponent>(e) && ImGui::MenuItem("LOD Group")) reg.Add<LODGroupComponent>(e);
         if (!reg.Has<CameraComponent>(e) && ImGui::MenuItem("Camera")) reg.Add<CameraComponent>(e);
         if (!reg.Has<DirectionalLightComponent>(e) && ImGui::MenuItem("Directional Light")) reg.Add<DirectionalLightComponent>(e);
         if (!reg.Has<EnvironmentComponent>(e) && ImGui::MenuItem("Environment")) reg.Add<EnvironmentComponent>(e);

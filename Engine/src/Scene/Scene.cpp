@@ -16,6 +16,10 @@
 #include "Animation/ModelSkeleton.h"
 #include <glm/gtx/matrix_decompose.hpp>
 #include <random>
+#include <functional>
+#include <unordered_set>
+#include <glm/gtx/component_wise.hpp>
+#include "Renderer/Quality.h"
 
 namespace Stardust {
 
@@ -88,6 +92,7 @@ void Scene::CopyComponents(EntityID src, EntityID dst) {
     if (auto* c = m_Registry.TryGet<EnvironmentComponent>(src)) m_Registry.Add<EnvironmentComponent>(dst, *c);
     if(auto* c=m_Registry.TryGet<ProceduralTerrainComponent>(src))m_Registry.Add<ProceduralTerrainComponent>(dst,*c);
     if(auto* c=m_Registry.TryGet<TerrainVegetationComponent>(src))m_Registry.Add<TerrainVegetationComponent>(dst,*c);
+    if(auto* c=m_Registry.TryGet<LODGroupComponent>(src))m_Registry.Add<LODGroupComponent>(dst,*c);
     if (auto* c = m_Registry.TryGet<TerrainComponent>(src)) m_Registry.Add<TerrainComponent>(dst, *c);
     if (auto* c = m_Registry.TryGet<RigidbodyComponent>(src)) m_Registry.Add<RigidbodyComponent>(dst, *c);
     if (auto* c = m_Registry.TryGet<BoxColliderComponent>(src)) m_Registry.Add<BoxColliderComponent>(dst, *c);
@@ -443,16 +448,73 @@ void Scene::PrepareTerrains(RHI::Device& device) {
     });
 }
 
+void Scene::RecalculateLODBounds(EntityID group) {
+    auto* g = m_Registry.TryGet<LODGroupComponent>(group);
+    if (!g) return;
+    AABB world{ glm::vec3(FLT_MAX), glm::vec3(-FLT_MAX) };
+    std::function<void(EntityID)> add = [&](EntityID e) {
+        if (auto* mr = m_Registry.TryGet<MeshRendererComponent>(e))
+            if (auto mesh = AssetManager::GetMesh(mr->mesh)) {
+                const AABB& b = mesh->Bounds(); const glm::mat4 m = GetWorldMatrix(e);
+                for (int c = 0; c < 8; ++c) {
+                    glm::vec3 p(c & 1 ? b.max.x : b.min.x, c & 2 ? b.max.y : b.min.y, c & 4 ? b.max.z : b.min.z);
+                    p = glm::vec3(m * glm::vec4(p, 1)); world.min = glm::min(world.min, p); world.max = glm::max(world.max, p);
+                }
+            }
+        for (EntityID child : GetChildren(e)) add(child);
+    };
+    for (auto& level : g->levels) for (u64 id : level.renderers) if (EntityID e = FindByUUID(id)) add(e);
+    const glm::mat4 groupWorld = GetWorldMatrix(group);
+    const float scale = std::max({ glm::length(glm::vec3(groupWorld[0])), glm::length(glm::vec3(groupWorld[1])), glm::length(glm::vec3(groupWorld[2])), 1e-4f });
+    if (world.min.x > world.max.x) { g->size = 1; g->localCenter = glm::vec3(0); return; }
+    g->size = glm::compMax(world.max - world.min) / scale;
+    g->localCenter = glm::vec3(glm::inverse(groupWorld) * glm::vec4(world.Center(), 1));
+}
+
+float Scene::LODScreenHeight(EntityID group, const RenderCamera& camera) {
+    auto* g = m_Registry.TryGet<LODGroupComponent>(group);
+    if (!g) return 0;
+    if (g->size <= 0) RecalculateLODBounds(group);
+    const glm::mat4 world = GetWorldMatrix(group);
+    const float scale = std::max({ glm::length(glm::vec3(world[0])), glm::length(glm::vec3(world[1])), glm::length(glm::vec3(world[2])) });
+    const float size = g->size * scale;
+    float height;
+    if (camera.orthographic) height = size / std::max(1e-4f, 2 * camera.orthographicSize);
+    else {
+        const float distance = std::max(1e-3f, glm::distance(camera.position, glm::vec3(world * glm::vec4(g->localCenter, 1))));
+        height = size / (2 * distance * std::tan(camera.fovY * 0.5f));
+    }
+    return height * GraphicsQuality::Current().lodBias;
+}
+
+int Scene::SelectLOD(EntityID group, const RenderCamera& camera) {
+    auto* g = m_Registry.TryGet<LODGroupComponent>(group);
+    if (!g || g->levels.empty()) return 0;
+    const float height = LODScreenHeight(group, camera);
+    for (int i = 0; i < (int)g->levels.size(); ++i) if (height >= g->levels[i].screenHeight) return i;
+    return -1;
+}
+
 void Scene::SubmitToRenderer(SceneRenderer& renderer, RHI::Device& device,bool animationPreview) {
     ComputeWorldMatrices();
     renderer.SyncQuality();
+    // LOD Groups: the levels not chosen for this camera are left out, children included
+    std::unordered_set<EntityID> lodHidden;
+    m_Registry.Each<LODGroupComponent>([&](EntityID e, LODGroupComponent& g) {
+        if (!m_Registry.IsEnabled<LODGroupComponent>(e) || !IsActiveInHierarchy(e) || g.levels.empty()) return;
+        const int level = SelectLOD(e, renderer.Camera());
+        g.currentLevel = level;
+        std::function<void(EntityID, bool)> mark = [&](EntityID r, bool hide) { if (hide) lodHidden.insert(r); else lodHidden.erase(r); for (EntityID child : GetChildren(r)) mark(child, hide); };
+        for (int i = 0; i < (int)g.levels.size(); ++i) if (i != level) for (u64 id : g.levels[i].renderers) if (EntityID r = FindByUUID(id)) mark(r, true);
+        if (level >= 0) for (u64 id : g.levels[level].renderers) if (EntityID r = FindByUUID(id)) mark(r, false); // also listed by another level
+    });
     m_Registry.Each<TerrainComponent>([&](EntityID e, TerrainComponent& t) {
         if (!IsActiveInHierarchy(e)||!(renderer.Camera().cullingMask&(1u<<std::clamp(m_Registry.Get<NameComponent>(e).layer,0,31)))) return;
         u64 uuid = m_Registry.Get<IDComponent>(e).uuid;
         renderer.SetTerrain(AcquireTerrain(*this,e,t,device), glm::vec3(m_WorldCache[e][3]), e);
     });
     m_Registry.Each<MeshRendererComponent>([&](EntityID e, MeshRendererComponent& mr) {
-        if (!IsActiveInHierarchy(e)||!(renderer.Camera().cullingMask&(1u<<std::clamp(m_Registry.Get<NameComponent>(e).layer,0,31)))) return;
+        if (lodHidden.count(e)||!IsActiveInHierarchy(e)||!(renderer.Camera().cullingMask&(1u<<std::clamp(m_Registry.Get<NameComponent>(e).layer,0,31)))) return;
         const Material* mat = &mr.material;
         Ref<Material> loadedMaterial;
         if (!mr.materialPath.empty())

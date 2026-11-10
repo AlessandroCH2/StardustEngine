@@ -17,6 +17,9 @@
 #include <unordered_set>
 #include <span>
 #include <sstream>
+#include <future>
+#include <thread>
+#include <chrono>
 
 #pragma warning(push, 0)
 #define STB_IMAGE_IMPLEMENTATION
@@ -72,9 +75,14 @@ void AssetManager::Shutdown() {
     s_Device = nullptr;
 }
 void AssetManager::RefreshMounts(){static u64 previous=0;auto current=Pak::Generation();if(previous==current||!s_Device)return;previous=current;s_Device->WaitIdle();s_Textures.clear();s_Meshes.clear();s_Materials.clear();s_FbxScenes.clear();s_AnimatedMeshes.clear();ClearSkinning();CanvasRenderer::InvalidateAssets();}
+// Textures decoding on worker threads, by cache key
+struct DecodedTexture { std::vector<u8> pixels; int width = 0, height = 0; double readMs = 0, decodeMs = 0; };
+struct PendingTexture { std::future<DecodedTexture> job; TextureImportSettings settings; bool srgb = false; bool started = false; };
+static std::unordered_map<std::string, PendingTexture> s_PendingTextures;
+
 void AssetManager::Invalidate(const std::string& path) {
     auto erase=[&](auto& entries){std::erase_if(entries,[&](const auto& item){return item.first==path||item.first.starts_with(path+"/")||item.first.starts_with(path+"|");});};
-    erase(s_Textures);erase(s_Meshes);erase(s_Materials);s_FbxScenes.clear();s_AnimatedMeshes.clear();ClearSkinning();
+    erase(s_Textures);erase(s_PendingTextures);erase(s_Meshes);erase(s_Materials);s_FbxScenes.clear();s_AnimatedMeshes.clear();ClearSkinning();
 }
 
 std::string AssetManager::ToRelative(const fs::path& absolute) {
@@ -116,34 +124,95 @@ std::vector<std::string> AssetManager::Find(const std::vector<std::string>& exte
 
 void AssetManager::SetRuntimeTexture(const std::string& path,Ref<RHI::Texture> texture){if(texture){s_Textures[path+"|s"]=texture;s_Textures[path+"|l"]=texture;}else{s_Textures.erase(path+"|s");s_Textures.erase(path+"|l");}}
 void AssetManager::SetRuntimeMesh(const std::string& path,Ref<Mesh> mesh){if(mesh)s_Meshes[path]=std::move(mesh);else s_Meshes.erase(path);}
+// Large textures decode on worker threads: a scene's textures load side by side instead of one after another,
+// and the frame keeps going with the fallback texture meanwhile. Small ones (UI icons) stay immediate.
+namespace {
+constexpr u64 kAsyncTextureBytes = 512 * 1024;
+int RunningDecodes() { int n = 0; for (auto& [key, p] : s_PendingTextures) if (p.started) ++n; return n; }
+
+DecodedTexture DecodeTexture(const fs::path& file, int maxSize) {
+    DecodedTexture out;
+    auto t0 = std::chrono::steady_clock::now();
+    auto bytes = FileSystem::ReadBinary(file);
+    auto t1 = std::chrono::steady_clock::now();
+    int w, h, n;
+    stbi_uc* data = bytes.empty() ? nullptr : stbi_load_from_memory(bytes.data(), (int)bytes.size(), &w, &h, &n, 4);
+    if (!data) return out;
+    if (std::max(w, h) > maxSize) {
+        float scale = (float)maxSize / std::max(w, h);
+        int nw = std::max(1, (int)(w * scale)), nh = std::max(1, (int)(h * scale));
+        out.pixels.resize((size_t)nw * nh * 4);
+        for (int y = 0; y < nh; ++y) for (int x = 0; x < nw; ++x) for (int c = 0; c < 4; ++c)
+            out.pixels[((size_t)y * nw + x) * 4 + c] = data[((size_t)(y * h / nh) * w + x * w / nw) * 4 + c];
+        w = nw; h = nh;
+    } else out.pixels.assign(data, data + (size_t)w * h * 4);
+    stbi_image_free(data);
+    out.width = w; out.height = h;
+    auto ms = [](auto a, auto b) { return std::chrono::duration<double, std::milli>(b - a).count(); };
+    out.readMs = ms(t0, t1); out.decodeMs = ms(t1, std::chrono::steady_clock::now());
+    return out;
+}
+}
+
+static Ref<RHI::Texture> UploadDecoded(RHI::Device& device, const std::string& path, const DecodedTexture& image, const TextureImportSettings& settings, bool srgb) {
+    RHI::TextureDesc d;
+    d.name = path;
+    d.width = (u32)image.width; d.height = (u32)image.height;
+    d.mipLevels = settings.mipmaps ? 1 + (u32)std::floor(std::log2((float)std::max(image.width, image.height))) : 1;
+    d.format = srgb ? RHI::Format::RGBA8_SRGB : RHI::Format::RGBA8_UNORM;
+    d.usage = RHI::TextureUsage::Sampled | RHI::TextureUsage::CopyDst | RHI::TextureUsage::CopySrc;
+    auto tex = device.CreateTexture(d);
+    device.UploadTexture(tex.get(), image.pixels.data(), (u64)image.width * image.height * 4);
+    SD_INFO("Texture loaded: {} ({}x{}, read {:.0f} ms, decode {:.0f} ms)", path, image.width, image.height, image.readMs, image.decodeMs);
+    return tex;
+}
+
 Ref<RHI::Texture> AssetManager::GetTexture(const std::string& path, bool srgb) {
     if (path.empty() || !s_Device) return nullptr;
     std::string key = path + (srgb ? "|s" : "|l");
     if (auto it = s_Textures.find(key); it != s_Textures.end()) return it->second;
 
-    int w, h, n;
-    auto bytes=FileSystem::ReadBinary(ToAbsolute(path));
-    stbi_uc* data = stbi_load_from_memory(bytes.data(),(int)bytes.size(), &w, &h, &n, 4);
-    if (!data) {
-        SD_WARN("Texture not found or unsupported: {}", path);
-        s_Textures[key] = nullptr; // do not retry every frame
-        return nullptr;
+    const fs::path file = ToAbsolute(path);
+    auto pending = s_PendingTextures.find(key);
+    if (pending == s_PendingTextures.end()) {
+        auto settings = TextureImportSettings::Load(path);
+        const bool linear = srgb && settings.srgb;
+        std::error_code ec;
+        const u64 size = Pak::Contains(file) ? Pak::Size(file) : (u64)fs::file_size(file, ec);
+        if (size < kAsyncTextureBytes || ec) {
+            DecodedTexture image = DecodeTexture(file, settings.maxSize);
+            if (image.pixels.empty()) { SD_WARN("Texture not found or unsupported: {}", path); s_Textures[key] = nullptr; return nullptr; } // do not retry every frame
+            return s_Textures[key] = UploadDecoded(*s_Device, path, image, settings, linear);
+        }
+        pending = s_PendingTextures.emplace(key, PendingTexture{ {}, settings, linear, false }).first;
     }
-    auto settings=TextureImportSettings::Load(path);srgb=srgb&&settings.srgb;
-    std::vector<u8> resized;
-    if(std::max(w,h)>settings.maxSize){float scale=(float)settings.maxSize/std::max(w,h);int nw=std::max(1,(int)(w*scale)),nh=std::max(1,(int)(h*scale));resized.resize((size_t)nw*nh*4);for(int y=0;y<nh;++y)for(int x=0;x<nw;++x)for(int c=0;c<4;++c)resized[((size_t)y*nw+x)*4+c]=data[((size_t)(y*h/nh)*w+x*w/nw)*4+c];stbi_image_free(data);data=nullptr;w=nw;h=nh;}
-    RHI::TextureDesc d;
-    d.name = path;
-    d.width = (u32)w; d.height = (u32)h;
-    d.mipLevels = settings.mipmaps?1 + (u32)std::floor(std::log2((float)std::max(w, h))):1;
-    d.format = srgb ? RHI::Format::RGBA8_SRGB : RHI::Format::RGBA8_UNORM;
-    d.usage = RHI::TextureUsage::Sampled | RHI::TextureUsage::CopyDst | RHI::TextureUsage::CopySrc;
-    auto tex = s_Device->CreateTexture(d);
-    s_Device->UploadTexture(tex.get(), resized.empty()?data:resized.data(), (u64)w * h * 4);
-    stbi_image_free(data);
-    s_Textures[key] = tex;
-    SD_INFO("Texture loaded: {} ({}x{})", path, w, h);
-    return tex;
+    PendingTexture& job = pending->second;
+    // Keep one core for the game itself
+    if (!job.started && RunningDecodes() < std::max(1, (int)std::thread::hardware_concurrency() - 1)) {
+        job.job = std::async(std::launch::async, DecodeTexture, file, job.settings.maxSize);
+        job.started = true;
+    }
+    if (!job.started || job.job.wait_for(std::chrono::seconds(0)) != std::future_status::ready) return nullptr;
+    DecodedTexture image = job.job.get();
+    auto settings = job.settings; const bool linear = job.srgb;
+    s_PendingTextures.erase(pending);
+    if (image.pixels.empty()) { SD_WARN("Texture not found or unsupported: {}", path); s_Textures[key] = nullptr; return nullptr; }
+    return s_Textures[key] = UploadDecoded(*s_Device, path, image, settings, linear);
+}
+
+int AssetManager::PendingTextures() { return (int)s_PendingTextures.size(); }
+
+void AssetManager::WaitForTextures() {
+    // Decodes the queue to the end: for tests and loading screens that must not show fallbacks
+    while (!s_PendingTextures.empty()) {
+        std::vector<std::pair<std::string, bool>> keys;
+        for (auto& [key, job] : s_PendingTextures) keys.push_back({ key.substr(0, key.size() - 2), key.ends_with("|s") });
+        for (auto& [path, srgb] : keys) {
+            auto found = s_PendingTextures.find(path + (srgb ? "|s" : "|l"));
+            if (found != s_PendingTextures.end() && found->second.started) found->second.job.wait();
+            GetTexture(path, srgb);
+        }
+    }
 }
 
 u32 AssetManager::DefaultSRV(DefaultTexture t) { return s_Defaults[(int)t] ? s_Defaults[(int)t]->SRV() : 0; }

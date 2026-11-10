@@ -26,6 +26,7 @@ public:
     static void SetPitch(EntityID e, float p);
     static void PlayOneShot(const std::string& clip, const glm::vec3& position, float volume, bool spatial);
     static void SetMasterVolume(float v);
+    static void SetPaused(bool paused); // the whole mix, while the game is in the background
 
     // Editor preview (no scene needed)
     static void PreviewClip(const std::string& clip);

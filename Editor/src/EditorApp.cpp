@@ -333,7 +333,8 @@ void EditorApp::OnRender(RHI::CommandList& cmd) {
     if (m_SceneView.visible) {
         m_SceneRenderer->Resize((u32)m_SceneView.size.x, (u32)m_SceneView.size.y);
         float aspect = m_SceneView.size.x / std::max(1.0f, m_SceneView.size.y);
-        m_SceneRenderer->BeginScene(m_Camera.GetRenderCamera(aspect), env, time);
+        m_LastSceneCamera = m_Camera.GetRenderCamera(aspect); m_HasSceneCamera = true;
+        m_SceneRenderer->BeginScene(m_LastSceneCamera, env, time);
         scene.SubmitToRenderer(*m_SceneRenderer, GetDevice(),bool(m_AnimationPreviewScene));
         CanvasRenderer::Submit(scene,*m_SceneRenderer,GetDevice(),m_SceneView.size,true,m_Camera.Is2D());
         bool grid=m_SceneRenderer->drawGrid;

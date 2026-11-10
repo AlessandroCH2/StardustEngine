@@ -127,6 +127,11 @@ static void WriteEntity(Scene& scene, EntityID e, json& out) {
         j["terrainVegetation"] = { { "grass", c->grass }, { "grassDensity", c->grassDensity }, { "grassHeight", c->grassHeight }, { "grassDistance", c->grassDistance },
                                    { "flowerAmount", c->flowerAmount }, { "grassColor", Vec(c->grassColor) }, { "dryGrassColor", Vec(c->dryGrassColor) },
                                    { "trees", c->trees }, { "treeDensity", c->treeDensity }, { "maxTrees", c->maxTrees }, { "treeSeed", c->treeSeed } };
+    if (auto* c = reg.TryGet<LODGroupComponent>(e)) {
+        json levels = json::array();
+        for (auto& level : c->levels) { json ids = json::array(); for (u64 id : level.renderers) ids.push_back(UUIDStr(id)); levels.push_back({ { "screenHeight", level.screenHeight }, { "renderers", ids } }); }
+        j["lodGroup"] = { { "size", c->size }, { "center", Vec(c->localCenter) }, { "levels", levels } };
+    }
     VisitToggleComponents([&]<typename T>(int,const char* key){if(reg.Has<T>(e)&&!reg.IsEnabled<T>(e))j["disabledComponents"].push_back(key);});
     out.push_back(std::move(j));
 
@@ -376,6 +381,17 @@ static std::vector<EntityID> ReadEntities(Scene& sceneRef, const json& entities,
             c.mountainHeight=m.value("mountainHeight",220.f);c.hillHeight=m.value("hillHeight",14.f);c.meadowRadius=m.value("meadowRadius",260.f);c.seed=m.value("seed",7u);c.generateOnMissing=m.value("generateOnMissing",true);c.proceduralSurface=m.value("proceduralSurface",legacy);
             if(m.contains("layers")&&m["layers"].is_array()&&m["layers"].size()==4&&m["layers"][0].is_number())c.layers=m["layers"].get<std::array<u32,4>>();
         }
+        if (j.contains("lodGroup")) {
+            auto& c = reg.Add<LODGroupComponent>(e); const json& m = j["lodGroup"];
+            c.size = m.value("size", 0.f);
+            if (m.contains("center") && m["center"].is_array() && m["center"].size() == 3) for (int k = 0; k < 3; ++k) c.localCenter[k] = m["center"][k].get<float>();
+            c.levels.clear();
+            for (auto& level : m.value("levels", json::array())) {
+                LODLevel l; l.screenHeight = std::clamp(level.value("screenHeight", 0.5f), 0.f, 1.f);
+                for (auto& id : level.value("renderers", json::array())) if (id.is_string()) try { l.renderers.push_back(std::stoull(id.get<std::string>(), nullptr, 16)); } catch (...) {}
+                c.levels.push_back(std::move(l));
+            }
+        }
         if(j.contains("disabledComponents")&&j["disabledComponents"].is_array())VisitToggleComponents([&]<typename T>(int,const char* key){for(auto& disabled:j["disabledComponents"])if(disabled==key)reg.SetEnabled<T>(e,false);});
         bool linked = false;
         if (j.contains("parent")) {
@@ -399,6 +415,7 @@ static std::vector<EntityID> ReadEntities(Scene& sceneRef, const json& entities,
             }
         };
         for(auto& [uuid,entity]:byUUID)if(auto* terrain=reg.TryGet<TerrainComponent>(entity))for(auto& neighbor:terrain->neighbors){auto found=byUUID.find(neighbor);if(found!=byUUID.end())neighbor=reg.Get<IDComponent>(found->second).uuid;}
+        for(auto& [uuid,entity]:byUUID)if(auto* lod=reg.TryGet<LODGroupComponent>(entity))for(auto& level:lod->levels)for(auto& id:level.renderers){auto found=byUUID.find(id);if(found!=byUUID.end())id=reg.Get<IDComponent>(found->second).uuid;}
         for(auto& [uuid,entity]:byUUID)if(auto* bone=reg.TryGet<BoneComponent>(entity)){auto found=byUUID.find(bone->root);if(found!=byUUID.end())bone->root=reg.Get<IDComponent>(found->second).uuid;}
         for(auto& [uuid,entity]:byUUID)if(auto* button=reg.TryGet<UIButtonComponent>(entity)){auto found=byUUID.find(button->target);if(found!=byUUID.end())button->target=reg.Get<IDComponent>(found->second).uuid;for(auto& action:button->actions){auto target=byUUID.find(action.target);if(target!=byUUID.end())action.target=reg.Get<IDComponent>(target->second).uuid;auto args=json::parse(action.argumentsJson,nullptr,false);if(args.is_array())for(size_t i=0;i<args.size()&&i<action.argumentTypes.size();++i){auto& type=action.argumentTypes[i];auto& arg=args[i];if(arg.is_string()&&(type=="Entity"||type.starts_with("Component:")||type.starts_with("Script:"))){auto ref=byUUID.find(ParseUUID(arg));if(ref!=byUUID.end())arg=UUIDStr(reg.Get<IDComponent>(ref->second).uuid);}}action.argumentsJson=args.is_array()?args.dump():"[]";}}
         for(auto& [uuid,entity]:byUUID)if(auto* link=reg.TryGet<PrefabInstanceComponent>(entity)){auto mapping=json::parse(link->mapping);remap(mapping);link->mapping=mapping.dump();}
