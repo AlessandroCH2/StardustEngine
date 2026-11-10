@@ -370,6 +370,9 @@ void EditorApp::DrawProjectSettings() {
             int axis=action.value("GamepadAxis",-1)+1;if(ImGui::Combo("Gamepad Axis",&axis,"None\0Left X\0Left Y\0Right X\0Right Y\0Left Trigger\0Right Trigger\0")){action["GamepadAxis"]=axis-1;save=true;}
             int button=action.value("GamepadButton",-1);if(ImGui::SliderInt("Gamepad Button",&button,-1,14)){action["GamepadButton"]=button;save=true;}
             float deadzone=action.value("Deadzone",.15f);if(ImGui::SliderFloat("Deadzone",&deadzone,0,.95f)){action["Deadzone"]=deadzone;save=true;}bool invert=action.value("Invert",false);if(ImGui::Checkbox("Invert",&invert)){action["Invert"]=invert;save=true;}
+            float sensitivity=action.value("Sensitivity",3.f);if(ImGui::DragFloat("Sensitivity",&sensitivity,.05f,0,100)){action["Sensitivity"]=sensitivity;save=true;}if(ImGui::IsItemHovered())ImGui::SetTooltip("How fast the keyboard value reaches 1 (per second). 0 = instant");
+            float gravity=action.value("Gravity",3.f);if(ImGui::DragFloat("Gravity",&gravity,.05f,0,100)){action["Gravity"]=gravity;save=true;}if(ImGui::IsItemHovered())ImGui::SetTooltip("How fast it returns to 0 once released (per second). 0 = instant");
+            bool snap=action.value("Snap",true);if(ImGui::Checkbox("Snap",&snap)){action["Snap"]=snap;save=true;}if(ImGui::IsItemHovered())ImGui::SetTooltip("Pressing the opposite key jumps through 0");
             ImGui::TextDisabled("Keyboard codes: Space 32, A-Z 65-90, Enter 257, arrows 262-265.");if(ImGui::Button("Remove Action"))removeInput=name;ImGui::TreePop();}
         if(!renameFrom.empty()){input[renameTo]=input[renameFrom];input.erase(renameFrom);save=true;}
         if(!removeInput.empty()){input.erase(removeInput);save=true;}if(save)FileSystem::WriteText(file,input.dump(2));

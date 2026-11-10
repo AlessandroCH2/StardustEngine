@@ -235,12 +235,14 @@ struct AnimatorLayerRuntime {
     std::string state, previousState, eventState;
     float eventTime = 0;
     float time = 0, previousTime = 0, transitionTime = 0, transitionDuration = 0;
+    float blendDuration = 0; // length of the current blend tree, to keep its phase when the weights change
 };
 struct AnimatorComponent {
     std::string avatar;                       // .avatar asset, needed by humanoid clips
     std::vector<AnimatorLayerRuntime> layers; // runtime state of the layers above the base one
     std::string eventState; float eventTime = 0; // where Animation Events were last checked
     std::string previousState;float previousTime=0,transitionTime=0,transitionDuration=0;
+    float blendDuration = 0; // length of the current blend tree, to keep its phase when the weights change
     std::string controller, state;
     float speed = 1, time = 0;
     bool playing = true;

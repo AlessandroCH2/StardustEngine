@@ -32,6 +32,8 @@ namespace Stardust
         }
         // WASD / arrows as a -1..1 axis, like Unity's "Horizontal" / "Vertical"
         public static float GetAxis(string axis) => InputManager.GetAxis(axis);
+        /// <summary>The axis without smoothing: -1, 0 or 1 for keys.</summary>
+        public static float GetAxisRaw(string axis) => InputManager.GetAxisRaw(axis);
 
     }
 

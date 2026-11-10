@@ -287,6 +287,28 @@ static void TestAnimator() {
           nlohmann::json graph={{"defaultState","Idle"},{"states",{{"Idle",nlohmann::json::object()},{"Run",nlohmann::json::object()}}},{"parameters",nlohmann::json::array({{{"name","Speed"},{"type","Float"},{"default",0.f}},{{"name","Jump"},{"type","Trigger"},{"default",0.f}}})},{"transitions",nlohmann::json::array({{{"from","Idle"},{"to","Run"},{"hasExitTime",true},{"exitTime",.5f},{"conditions",nlohmann::json::array({{{"parameter","Speed"},{"mode",">"},{"threshold",1.f}},{{"parameter","Jump"},{"mode","If"}}})}}})}};
       AnimatorComponent probe;probe.parameters["Speed"]=2;probe.parameters["Jump"]=1;probe.time=.25f;Check(!AnimatorSystem::AdvanceController(probe,graph,1),"exit time ignored");probe.time=.75f;Check(AnimatorSystem::AdvanceController(probe,graph,1)&&probe.state=="Run"&&probe.parameters["Jump"]==0,"typed conditions or trigger consumption failed");
       Scene multi;auto one=multi.CreateEntity("One"),two=multi.CreateEntity("Two"),nested=multi.CreateEntity("Nested");multi.SetParent(nested,one,false);auto selection=SceneSerializer::SelectionToJson(multi,{one,nested,two});auto pasted=SceneSerializer::InstantiateSelection(multi,selection);Check(pasted.size()==2&&multi.Reg().AllEntities().size()==6&&multi.GetChildren(pasted[0]).size()==1,"multi-selection clipboard duplicated children or lost roots");
+    {   // Blend trees: 1D by thresholds, 2D by gradient bands, every child on the same normalized time
+        auto walk=root/"Walk.anim",run=root/"Run.anim";
+        FileSystem::WriteText(walk,R"({"duration":1,"tracks":[{"path":"Child","position":[[0,0,0,0],[1,10,0,0]]}]})");
+        FileSystem::WriteText(run,R"({"duration":2,"tracks":[{"path":"Child","position":[[0,0,0,0],[2,20,0,0]]}]})");
+        nlohmann::json tree={{"type","1D"},{"parameter","Speed"},{"children",nlohmann::json::array({{{"clip",walk.generic_string()},{"threshold",0.f}},{{"clip",run.generic_string()},{"threshold",1.f}}})}};
+        auto w=AnimatorSystem::BlendWeights(tree,{.25f,0});
+        Check(w.size()==2&&std::abs(w[0]-.75f)<1e-4f&&std::abs(w[1]-.25f)<1e-4f,"1D blend weights wrong");
+        Check(std::abs(AnimatorSystem::StateDuration({{"blendTree",tree}},{{"Speed",.5f}})-1.5f)<1e-4f,"blend tree duration is not the weighted length");
+        Scene blendScene;auto body=blendScene.CreateEntity("Body"),limb=blendScene.CreateEntity("Child");blendScene.SetParent(limb,body,false);
+        // Half way through both clips: walk at 5, run at 10, mixed half and half
+        AnimatorSystem::SampleState(blendScene,body,{{"blendTree",tree},{"loop",true}},.75f,{{"Speed",.5f}});
+        Check(std::abs(blendScene.Reg().Get<TransformComponent>(limb).position.x-7.5f)<1e-3f,"1D blend tree pose wrong");
+        for(const char* type:{"2D Freeform Cartesian","2D Freeform Directional","2D Simple Directional"}){
+            nlohmann::json space={{"type",type},{"parameter","X"},{"parameterY","Y"},{"children",nlohmann::json::array({
+                {{"clip",walk.generic_string()},{"position",{0.f,0.f}}},{{"clip",walk.generic_string()},{"position",{0.f,1.f}}},
+                {{"clip",walk.generic_string()},{"position",{1.f,0.f}}},{{"clip",walk.generic_string()},{"position",{-1.f,0.f}}}})}};
+            auto at=[&](glm::vec2 q){return AnimatorSystem::BlendWeights(space,q);};
+            auto exact=at({0,1});Check(std::abs(exact[1]-1)<1e-3f,(std::string(type)+": a motion's own position must give it full weight").c_str());
+            auto mid=at({.5f,0});float sum=0;for(float v:mid)sum+=v;
+            Check(std::abs(sum-1)<1e-4f&&mid[2]>.2f&&mid[0]>.2f&&mid[3]<1e-3f,(std::string(type)+": weights between center and right are wrong").c_str());
+        }
+    }
 animator.playing=false; AnimatorSystem::Update(scene,0.5f);
     Check(std::abs(scene.Reg().Get<TransformComponent>(child).position.x-2.5f)<0.001f,"paused Animator changed transform");
 }

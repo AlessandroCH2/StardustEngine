@@ -25,10 +25,18 @@ public sealed class InputBinding {
     public int GamepadIndex {get;set;}
     public float Deadzone {get;set;}=.15f;
     public bool Invert {get;set;}
+    /// <summary>Units per second the keyboard value moves towards the pressed direction.</summary>
+    public float Sensitivity {get;set;}=3;
+    /// <summary>Units per second the keyboard value falls back to 0 once released.</summary>
+    public float Gravity {get;set;}=3;
+    /// <summary>Pressing the opposite direction jumps through 0 instead of sliding.</summary>
+    public bool Snap {get;set;}=true;
 }
 public static class InputManager {
     static Dictionary<string,InputBinding> bindings;
-    internal static void Reset()=>bindings=null;
+    internal static void Reset(){bindings=null;smoothed.Clear();}
+    sealed class AxisState{public float Value;public float Time=-1;}
+    static readonly Dictionary<string,AxisState> smoothed=new(StringComparer.OrdinalIgnoreCase);
     public static void Reload() {
         bindings=new(StringComparer.OrdinalIgnoreCase){
             ["Horizontal"]=new(){Positive=KeyCode.D,Negative=KeyCode.A,AlternatePositive=KeyCode.RightArrow,AlternateNegative=KeyCode.LeftArrow,GamepadAxis=0},
@@ -42,12 +50,25 @@ public static class InputManager {
     public static void Bind(string action,InputBinding binding){if(bindings==null)Reload();bindings[action]=binding??throw new ArgumentNullException(nameof(binding));}
     public static IReadOnlyDictionary<string,InputBinding> Bindings {get {if(bindings==null)Reload();return bindings;}}
     static bool Key(KeyCode code,bool down)=>code!=0&&(down?Input.GetKeyDown(code):Input.GetKey(code));
-    public static float GetAxis(string action) {
+    // Keys ease in and out like Unity's axes; a gamepad stick is already analog and is returned as it is
+    public static float GetAxis(string action)=>Read(action,true);
+    public static float GetAxisRaw(string action)=>Read(action,false);
+    static float Read(string action,bool smooth) {
         if(bindings==null)Reload();if(!bindings.TryGetValue(action,out var b))return 0;
         float keyboard=(Key(b.Positive,false)||Key(b.AlternatePositive,false)?1:0)-(Key(b.Negative,false)||Key(b.AlternateNegative,false)?1:0);
         float pad=b.GamepadAxis>=0&&b.GamepadAxis<6?Input.GetGamepadAxis((GamepadAxis)b.GamepadAxis,b.GamepadIndex,Math.Clamp(b.Deadzone,0,.95f)):0;
         if(b.GamepadAxis==1)pad=-pad;
-        float value=Math.Abs(keyboard)>Math.Abs(pad)?keyboard:pad;return b.Invert?-value:value;
+        if(b.Invert){keyboard=-keyboard;pad=-pad;}
+        if(!smooth)return Math.Abs(keyboard)>Math.Abs(pad)?keyboard:pad;
+        if(!smoothed.TryGetValue(action,out var state))smoothed[action]=state=new AxisState();
+        // Advance once per frame, however many scripts read the axis
+        if(state.Time!=Time.time){
+            float dt=state.Time<0?Time.deltaTime:Math.Clamp(Time.time-state.Time,0,.1f);state.Time=Time.time;
+            if(b.Snap&&keyboard!=0&&state.Value!=0&&Math.Sign(keyboard)!=Math.Sign(state.Value))state.Value=0;
+            float target=keyboard,rate=keyboard!=0?b.Sensitivity:b.Gravity;
+            state.Value=rate<=0?target:state.Value<target?Math.Min(target,state.Value+rate*dt):Math.Max(target,state.Value-rate*dt);
+        }
+        return Math.Abs(state.Value)>=Math.Abs(pad)?state.Value:pad;
     }
     public static bool GetButton(string action,bool down=false) {
         if(bindings==null)Reload();if(!bindings.TryGetValue(action,out var b))return false;

@@ -21,6 +21,12 @@ namespace Stardust
         public void SetInteger(string parameter,int value) => SetFloat(parameter,value);
         public void SetTrigger(string parameter) => SetFloat(parameter,1);
         public void ResetTrigger(string parameter) => SetFloat(parameter,0);
+        /// <summary>Sets a Vector2 parameter, for example the direction that drives a 2D Blend Tree.</summary>
+        public void SetVector2(string parameter,Vector2 value) { SetFloat(parameter+".x",value.x); SetFloat(parameter+".y",value.y); }
+        public float GetFloat(string parameter) => ComponentProperties.Get(this,12)["parameters"]?[parameter]?.GetValue<float>() ?? 0;
+        public bool GetBool(string parameter) => GetFloat(parameter)!=0;
+        public int GetInteger(string parameter) => (int)GetFloat(parameter);
+        public Vector2 GetVector2(string parameter) => new Vector2(GetFloat(parameter+".x"),GetFloat(parameter+".y"));
         public float speed { get => ComponentProperties.Get(this,12)["speed"]?.GetValue<float>() ?? 1; set => ComponentProperties.Set(this,12,new JsonObject { ["speed"]=value }); }
         public bool playing { get => ComponentProperties.Get(this,12)["playing"]?.GetValue<bool>() ?? false; set => ComponentProperties.Set(this,12,new JsonObject { ["playing"]=value }); }
     }
