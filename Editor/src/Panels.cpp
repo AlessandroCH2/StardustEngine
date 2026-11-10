@@ -21,6 +21,36 @@
 #include <glm/gtc/type_ptr.hpp>
 
 namespace Stardust {
+// Unity's layer mask dropdown: Nothing, Everything and a checkbox per named layer
+static bool LayerMaskField(const char* label, u32& mask) {
+    const auto& names = Project::Config().layers;
+    u32 named = 0;
+    for (int i = 0; i < 32 && i < (int)names.size(); ++i) if (!names[i].empty()) named |= 1u << i;
+    std::string preview;
+    if (mask == 0) preview = "Nothing";
+    else if ((mask & named) == named) preview = "Everything";
+    else {
+        int count = 0;
+        for (int i = 0; i < 32; ++i) if (mask & (1u << i)) { if (count++ == 0) preview = i < (int)names.size() && !names[i].empty() ? names[i] : std::format("Layer {}", i); }
+        if (count > 1) preview = "Mixed...";
+    }
+    bool changed = false;
+    if (Insp::BeginCombo(label, preview.c_str())) {
+        if (ImGui::Selectable("Nothing", mask == 0)) { mask = 0; changed = true; }
+        if (ImGui::Selectable("Everything", (mask & named) == named)) { mask = 0xFFFFFFFFu; changed = true; }
+        ImGui::Separator();
+        ImGui::PushItemFlag(ImGuiItemFlags_AutoClosePopups, false);
+        for (int i = 0; i < 32 && i < (int)names.size(); ++i) {
+            if (names[i].empty()) continue;
+            bool on = (mask >> i) & 1u;
+            // The list stays open, so several layers can be toggled in a row
+            if (ImGui::MenuItem(std::format("{}##layer{}", names[i], i).c_str(), nullptr, &on)) { mask = on ? mask | (1u << i) : mask & ~(1u << i); changed = true; }
+        }
+        ImGui::PopItemFlag();
+        ImGui::EndCombo();
+    }
+    return changed;
+}
 void DrawTerrainVegetationInspector(Scene& scene, EntityID e, TerrainVegetationComponent& c);
 
 // ------------------------------------------------------------------------------------------------ widgets
@@ -463,7 +493,10 @@ void EditorApp::DrawInspector() {
     ComponentSection<VideoPlayerComponent>(inspectScene,e,"Video Player",true,[](auto& c){AssetUI::AssetField("Video Clip (MPEG-1)",c.clip,{".mpg",".mpeg"});Insp::InputText("Target Texture",&c.targetTexture);Insp::Checkbox("Play On Start",&c.playOnStart);Insp::Checkbox("Loop",&c.loop);Insp::Checkbox("Playing",&c.playing);Insp::DragFloat("Speed",&c.speed,.05f,0,8);Insp::SliderFloat("Time",&c.time,0,c.duration);ImGui::TextDisabled("Attach Rect Transform to show video in a Canvas. Audio uses a separate Audio Source.");});
     ComponentSection<SpriteRendererComponent>(inspectScene,e,"Sprite Renderer",true,[](auto& c){AssetUI::AssetField("Sprite",c.sprite,{".sprite",".png",".jpg"});AssetUI::AssetField("Material",c.material,{".mat"});Insp::ColorEdit4("Color",&c.color.x);Insp::DragFloat("Pixels Per Unit",&c.pixelsPerUnit,1,.01f,100000);Insp::Checkbox("Flip X",&c.flipX);Insp::Checkbox("Flip Y",&c.flipY);Insp::InputInt("Sorting Order",&c.sortingOrder);});
     ComponentSection<CameraComponent>(inspectScene, e, "Camera", true, [](CameraComponent& c) {
-        ImGui::InputScalar("Culling Mask (hex)",ImGuiDataType_U32,&c.cullingMask,nullptr,nullptr,"%08X",ImGuiInputTextFlags_CharsHexadecimal);
+        Insp::Combo("Clear Flags",&c.clearFlags,"Skybox\0Solid Color\0");if(ImGui::IsItemHovered())ImGui::SetTooltip("Solid Color skips the sky and the clouds: use it for render textures");
+        if(c.clearFlags==1)Insp::ColorEdit4("Background",&c.background.x);
+        LayerMaskField("Culling Mask",c.cullingMask);
+        Insp::Checkbox("Render Shadows",&c.renderShadows);Insp::Checkbox("Post Processing",&c.postProcessing);if(ImGui::IsItemHovered())ImGui::SetTooltip("Bloom, vignette and FXAA");
         AssetUI::AssetField("Target Texture",c.targetTexture,{".rendertexture"});Insp::InputInt("Target Width",&c.targetWidth);Insp::InputInt("Target Height",&c.targetHeight);
         BoolProp("Orthographic (2D)",c.orthographic);if(c.orthographic)FloatProp("Size",c.orthographicSize,.1f,.01f,100000);else SliderProp("Field of View", c.fovDegrees, 10.0f, 120.0f);FloatProp("Far Clip",c.farPlane,1,c.nearPlane+.1f,1000000);
         FloatProp("Near Clip", c.nearPlane, 0.01f, 0.01f, 10.0f);

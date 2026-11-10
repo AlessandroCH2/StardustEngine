@@ -3,6 +3,7 @@ add_custom_target(StardustScriptCore ALL
     COMMAND ${DOTNET_EXE} build ${CMAKE_CURRENT_SOURCE_DIR}/Stardust.ScriptCore.csproj
             -c $<IF:$<CONFIG:Debug>,Debug,Release>
             -o ${STARDUST_BIN_DIR}/$<CONFIG>
+            -p:Version=${PROJECT_VERSION}
             --nologo -v:minimal
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     COMMENT "Building Stardust.ScriptCore (C#)"

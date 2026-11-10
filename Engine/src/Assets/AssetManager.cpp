@@ -464,6 +464,9 @@ void AssetManager::FlushSkinning(RHI::CommandList& cmd) {
     }
     s_SkinQueue.clear();
     cmd.MemoryBarrier();
+    // Instances of scenes that are gone (an animation preview copy, a closed scene) free their buffers after a while
+    const u64 now = s_Device->FrameNumber();
+    if (now % 600 == 0) std::erase_if(s_SkinInstances, [&](const auto& item) { return item.second.frame + 600 < now; });
 }
 
 Ref<Mesh> AssetManager::GetPosedFbx(const std::string& asset, u64 instance, const std::unordered_map<u32, glm::mat4>& pose) {

@@ -57,6 +57,8 @@ struct Frustum {
 
 struct RenderCamera {
     u32 cullingMask=~0u;
+    bool solidColor=false; glm::vec4 background{0,0,0,1};
+    bool shadows=true, postProcessing=true;
     glm::mat4 view{ 1.0f };
     glm::mat4 projection{ 1.0f };
     glm::vec3 position{ 0.0f };

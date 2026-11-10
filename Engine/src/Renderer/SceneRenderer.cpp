@@ -295,10 +295,13 @@ void SceneRenderer::Render(CommandList& cmd) {
     fc.ambientIntensity = m_Env.ambientIntensity;
     fc.pad0=std::clamp(m_Env.shadowStrength,0.f,1.f);fc.pad1=std::max(0.f,m_Env.minimumAmbient);fc.skyZenith=m_Env.ambientSky;fc.skyHorizon=m_Env.ambientHorizon;fc.groundColor=m_Env.ambientGround;
     fc.viewport = { (float)m_Width, (float)m_Height, 1.0f / m_Width, 1.0f / m_Height };
-    bool shadows = m_Env.castShadows && fc.sunDir.y > -0.05f;
+    // A camera that sees few objects should not pay for the whole pipeline: no shadow pass when nothing casts one
+    const bool anyCaster = !m_ActiveTerrains.empty() || std::any_of(m_Draws.begin(), m_Draws.end(), [](const DrawItem& d) { return d.castShadows; });
+    bool shadows = m_Env.castShadows && m_Camera.shadows && anyCaster && fc.sunDir.y > -0.05f;
     if (shadows) ComputeCascades(fc, (float)m_Width / (float)m_Height);
     fc.shadowInfo = { m_ShadowMap->SRV(), kShadowCascades, shadows ? 1u : 0u, m_ShadowSize };
-    bool clouds = m_Env.cloudCoverage > 0.001f;
+    const bool skybox = !m_Camera.solidColor;
+    bool clouds = skybox && m_Env.cloudCoverage > 0.001f;
     fc.atmosphereInfo = { m_Sky->TransmittanceSRV(), m_Sky->SkyViewSRV(), m_Sky->AmbientBuffer(), clouds ? m_Sky->CloudsSRV() : 0xFFFFFFFFu };
     fc.fogParams = { m_Env.fogDensity, m_Env.fogHeightFalloff, m_Env.cloudCoverage, m_Env.cloudDensity };
     glm::vec2 wd = glm::length(m_Env.windDirection) > 0 ? glm::normalize(m_Env.windDirection) : glm::vec2(1, 0);
@@ -324,7 +327,10 @@ void SceneRenderer::Render(CommandList& cmd) {
     {
         ScopedGpuTimer t(m_Device, "Opaque");
         RenderingDesc rd;
-        rd.colors.push_back({ m_HDR.get(), LoadOp::Clear, { 0, 0, 0, 1 } });
+        // Solid Color: the background is given in sRGB, the HDR target is linear
+        glm::vec4 clear(0, 0, 0, 1);
+        if (!skybox) clear = glm::vec4(glm::pow(glm::max(glm::vec3(m_Camera.background), glm::vec3(0)), glm::vec3(2.2f)) / std::max(0.001f, m_Env.exposure), m_Camera.background.a);
+        rd.colors.push_back({ m_HDR.get(), LoadOp::Clear, { clear.r, clear.g, clear.b, clear.a } });
         rd.colors.push_back({ m_EntityId.get(), LoadOp::Clear, { 0, 0, 0, 0 } });
         rd.depth = { m_Depth.get(), LoadOp::Clear, 0.0f };
         cmd.BeginRendering(rd);
@@ -336,8 +342,8 @@ void SceneRenderer::Render(CommandList& cmd) {
         SkyPush skyPush;skyPush.materialProperties={m_MaterialBuffers[fi]->Index(),skyPropertyOffset,skyPropertyCount,0};skyPush.frame=frameBuf->Index();skyPush.mode=m_Env.skyMode;skyPush.color=m_Env.skyColor;skyPush.parameters={glm::radians(m_Env.skyRotation),m_Env.skyExposure,0,0};Ref<RHI::Pipeline> customSky;
         if(m_Env.skyMode==3)for(int side=0;side<6;++side){auto texture=AssetManager::GetTexture(m_Env.skyFaces[side],true);auto id=texture?texture->SRV():~0u;if(side<4)skyPush.facesA[side]=id;else skyPush.facesB[side-4]=id;}
         if(m_Env.skyMode==2)if(auto material=AssetManager::GetMaterial(m_Env.skyMaterial)){skyPush.color=material->color;auto tex=AssetManager::GetTexture(material->albedoMap,true);skyPush.facesB.z=tex?tex->SRV():~0u;if(!material->customPixelShader.empty()){std::error_code ec;auto stamp=std::filesystem::last_write_time(AssetManager::ToAbsolute(material->customPixelShader),ec);if(!ec||Pak::Contains(AssetManager::ToAbsolute(material->customPixelShader))){auto key="sky:"+material->customPixelShader+std::to_string(ec?Pak::Generation():stamp.time_since_epoch().count());auto& pipe=m_CustomPipelines[key];if(!pipe){GraphicsPipelineDesc d;d.name=key;d.vs="Fullscreen.vs";d.ps="asset:"+material->customPixelShader;d.colorFormats={kHDRFormat,kIdFormat};d.depthFormat=kDepthFormat;d.depthWrite=false;d.cull=CullMode::None;pipe=m_Device.CreateGraphicsPipeline(d);}customSky=pipe;}}}
-        cmd.SetPipeline(customSky?customSky.get():m_SkyPipeline.get());cmd.Push(skyPush);
-        cmd.Draw(3);
+        if(skybox){cmd.SetPipeline(customSky?customSky.get():m_SkyPipeline.get());cmd.Push(skyPush);
+        cmd.Draw(3);}
         cmd.EndRendering();
         bool hasWater=std::any_of(m_Draws.begin(),m_Draws.end(),[](auto& draw){return draw.shader==ShaderType::Water;});
         if(hasWater){cmd.CopyTexture(m_HDR.get(),m_OpaqueColor.get());cmd.CopyTexture(m_Depth.get(),m_OpaqueDepth.get());cmd.Barrier(m_OpaqueColor.get(),ResourceState::ShaderRead);cmd.Barrier(m_OpaqueDepth.get(),ResourceState::ShaderRead);}
@@ -361,6 +367,7 @@ void SceneRenderer::Render(CommandList& cmd) {
     ps.saturation = m_Env.saturation;
     ps.vignette = m_Env.vignette;
     ps.fxaa = m_Env.fxaa;
+    if (!m_Camera.postProcessing) { ps.bloomIntensity = 0; ps.vignette = 0; ps.fxaa = false; }
     m_Post->Execute(cmd, m_HDR.get(), m_Output.get(), ps);
 
     if (selectedEntity) {

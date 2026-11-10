@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(StardustEngine VERSION 0.6.0 LANGUAGES C CXX)
+project(StardustEngine VERSION 0.6.2 LANGUAGES C CXX)
 if(WIN32)
     enable_language(RC)
     configure_file(Engine/Resources/EngineIcon.rc.in ${CMAKE_BINARY_DIR}/EngineIcon.rc @ONLY)

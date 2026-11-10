@@ -1,5 +1,6 @@
 // Stardust Player: runs a scene full-screen without the editor.
 #include "Renderer/Quality.h"
+#include "Version.h"
 #include "Core/Application.h"
 #include "Core/Log.h"
 #include "Scene/Scene.h"
@@ -146,6 +147,7 @@ private:
 
 int main() {
     try {
+        SD_INFO("Stardust Player {}", STARDUST_VERSION_FULL);
         Stardust::PlayerApp app;
         app.Run();
     } catch (const std::exception& e) {

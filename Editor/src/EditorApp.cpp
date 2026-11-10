@@ -1,4 +1,5 @@
 #include "EditorApp.h"
+#include "Version.h"
 #include "Renderer/Quality.h"
 #include "TitleBar.h"
 #include "Core/FileSystem.h"
@@ -226,7 +227,7 @@ public class {} : ScriptBehaviour
 void EditorApp::UpdateTitle() {
     std::string file = m_ScenePath.empty() ? "Untitled" : FileSystem::Utf8(m_ScenePath.filename());
     std::string project = Project::IsLoaded() ? Project::Config().name : "No project";
-    GetWindow().SetTitle(std::format("Stardust Editor 0.6.0 - {} - {}{} - Vulkan", project, file, m_SceneDirty ? "*" : ""));
+    GetWindow().SetTitle(std::format("Stardust Editor " STARDUST_VERSION_FULL " - {} - {}{} - Vulkan", project, file, m_SceneDirty ? "*" : ""));
 }
 
 void EditorApp::Play() {
@@ -556,7 +557,7 @@ void EditorApp::DrawMenuBar() {
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Help")) {
-        ImGui::TextDisabled("Stardust Engine 0.6.0 - Vulkan 1.3");
+        ImGui::TextDisabled("Stardust Engine " STARDUST_VERSION_FULL " - Vulkan 1.3");
         ImGui::TextDisabled("%s", GetDevice().GetAdapterName());
         ImGui::EndMenu();
     }

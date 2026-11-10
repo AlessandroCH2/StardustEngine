@@ -58,7 +58,7 @@ static void WriteEntity(Scene& scene, EntityID e, json& out) {
     if(auto* c=reg.TryGet<VideoPlayerComponent>(e))j["videoPlayer"]={{"clip",c->clip},{"targetTexture",c->targetTexture},{"playOnStart",c->playOnStart},{"loop",c->loop},{"speed",c->speed}};
     if(auto* c=reg.TryGet<SpriteRendererComponent>(e))j["spriteRenderer"]={{"sprite",c->sprite},{"material",c->material},{"color",Vec(c->color)},{"pixelsPerUnit",c->pixelsPerUnit},{"flipX",c->flipX},{"flipY",c->flipY},{"sortingOrder",c->sortingOrder}};
     if (auto* c = reg.TryGet<CameraComponent>(e))
-        j["camera"] = { {"cullingMask",c->cullingMask},{"targetTexture",c->targetTexture},{"targetWidth",c->targetWidth},{"targetHeight",c->targetHeight}, {"orthographic",c->orthographic},{"orthographicSize",c->orthographicSize},{"far",c->farPlane}, { "fov", c->fovDegrees }, { "near", c->nearPlane }, { "primary", c->primary } };
+        j["camera"] = { {"cullingMask",c->cullingMask},{"clearFlags",c->clearFlags},{"background",{c->background.r,c->background.g,c->background.b,c->background.a}},{"renderShadows",c->renderShadows},{"postProcessing",c->postProcessing},{"targetTexture",c->targetTexture},{"targetWidth",c->targetWidth},{"targetHeight",c->targetHeight}, {"orthographic",c->orthographic},{"orthographicSize",c->orthographicSize},{"far",c->farPlane}, { "fov", c->fovDegrees }, { "near", c->nearPlane }, { "primary", c->primary } };
     if (auto* c = reg.TryGet<DirectionalLightComponent>(e))
         j["directionalLight"] = { { "color", Vec(c->color) }, { "intensity", c->intensity },
                                   { "castShadows", c->castShadows }, { "shadowDistance", c->shadowDistance } };
@@ -240,7 +240,9 @@ static std::vector<EntityID> ReadEntities(Scene& sceneRef, const json& entities,
         if (j.contains("camera")) {
             const json& m = j["camera"];
             auto& c = reg.Add<CameraComponent>(e);
-            c.cullingMask=m.value("cullingMask",~0u);c.targetTexture=m.value("targetTexture","");c.targetWidth=std::clamp(m.value("targetWidth",512),16,8192);c.targetHeight=std::clamp(m.value("targetHeight",512),16,8192);c.orthographic=m.value("orthographic",false);c.orthographicSize=m.value("orthographicSize",5.f);c.farPlane=m.value("far",1000.f);c.fovDegrees = m.value("fov", c.fovDegrees);
+            c.cullingMask=m.value("cullingMask",~0u);c.clearFlags=std::clamp(m.value("clearFlags",0),0,1);c.renderShadows=m.value("renderShadows",true);c.postProcessing=m.value("postProcessing",true);
+            if(m.contains("background")&&m["background"].is_array()&&m["background"].size()==4)for(int k=0;k<4;++k)c.background[k]=m["background"][k].get<float>();
+            c.targetTexture=m.value("targetTexture","");c.targetWidth=std::clamp(m.value("targetWidth",512),16,8192);c.targetHeight=std::clamp(m.value("targetHeight",512),16,8192);c.orthographic=m.value("orthographic",false);c.orthographicSize=m.value("orthographicSize",5.f);c.farPlane=m.value("far",1000.f);c.fovDegrees = m.value("fov", c.fovDegrees);
             c.nearPlane = m.value("near", c.nearPlane);
             c.primary = m.value("primary", c.primary);
         }

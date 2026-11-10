@@ -14,7 +14,10 @@ EntityID hovered=0,pressed=0,focused=0;
 bool hoveredInteractable=true;
 struct Batch {Material material;std::vector<Vertex> vertices;std::vector<u32> indices;std::string key;};
 struct Cached {u64 hash=0;Ref<Mesh> mesh;};
-std::unordered_map<std::string,std::vector<Cached>> cache;
+// One cache per renderer: a render texture camera sharing the Game view's entries would evict them every frame
+struct CacheSlot {std::vector<Cached> entries;u64 used=0;};
+std::unordered_map<std::string,CacheSlot> cache;
+u64 s_SubmitCount=0;
 // Screen overlays are drawn after tone mapping into a UNORM target, so their images must not be decoded from sRGB
 bool s_GammaSpace=false;
 glm::vec2 Point(const glm::mat4& m,glm::vec2 p){return glm::vec2(m*glm::vec4(p,0,1));}
@@ -146,7 +149,8 @@ glm::mat4 CanvasRenderer::CanvasWorld(Scene& scene,EntityID canvas,glm::vec2 log
     return scene.GetWorldMatrix(canvas)*glm::scale(glm::mat4(1),glm::vec3(1/std::max(1.f,c.pixelsPerUnit)))*glm::translate(glm::mat4(1),glm::vec3(-c.referenceResolution*.5f,0));}
 bool CanvasRenderer::MouseOnCanvas(Scene& scene,EntityID canvas,const RenderCamera& camera,glm::vec2 origin,glm::vec2 size,glm::vec2 mouse,glm::vec2& point,glm::vec2 logicalSize){auto ndc=(mouse-origin)/size*2.f-1.f;ndc.y=-ndc.y;auto inverse=glm::inverse(camera.projection*camera.view);auto a=inverse*glm::vec4(ndc,1,1),b=inverse*glm::vec4(ndc,.5,1);auto local=glm::inverse(CanvasWorld(scene,canvas,logicalSize));auto start=glm::vec3(local*glm::vec4(glm::vec3(a)/a.w,1));auto direction=glm::vec3(local*glm::vec4(glm::vec3(b)/b.w-glm::vec3(a)/a.w,0));if(std::abs(direction.z)<1e-8)return false;float distance=-start.z/direction.z;if(distance<0)return false;point=glm::vec2(start+direction*distance);return true;}
 void CanvasRenderer::Submit(Scene& scene,SceneRenderer& renderer,RHI::Device& device,glm::vec2 viewport,bool sceneView,bool alwaysOnTop,bool includeOverlay){
-    auto rectangles=Layout(scene,viewport,sceneView);std::unordered_set<std::string> live;
+    auto rectangles=Layout(scene,viewport,sceneView);std::unordered_set<std::string> live;++s_SubmitCount;
+    const std::string owner=std::string(sceneView?":scene#":":game#")+std::to_string((uintptr_t)&renderer);
     for(auto& r:rectangles){auto& reg=scene.Reg();if(!includeOverlay&&reg.Get<CanvasComponent>(r.canvas).renderMode==0)continue;s_GammaSpace=alwaysOnTop||(!sceneView&&reg.Get<CanvasComponent>(r.canvas).renderMode==0);if(!(renderer.Camera().cullingMask&(1u<<std::clamp(reg.Get<NameComponent>(r.entity).layer,0,31))))continue;if(r.alpha<=0)continue;std::vector<Batch> batches;
         auto* maskOwner=reg.TryGetEnabled<UIMaskComponent>(r.entity);
         if(auto* image=reg.TryGetEnabled<UIImageComponent>(r.entity);image&&(!maskOwner||maskOwner->showGraphic)){
@@ -167,12 +171,13 @@ void CanvasRenderer::Submit(Scene& scene,SceneRenderer& renderer,RHI::Device& de
             auto textRect=content;textRect.localToCanvas*=glm::translate(glm::mat4(1),glm::vec3(-input->scrollX,0,0));text.overflow=1;Text(batches,textRect,text,device);
             if(focused==r.entity&&input->interactable&&!sceneView&&std::fmod(ImGui::GetTime(),1.)<.5){auto font=UIFont::Get(device,input->font);float x=0,y=input->multiline?content.size.y-input->fontSize*1.2f:(content.size.y-input->fontSize)*.5f;auto prefix=input->text.substr(0,std::clamp(input->cursor,0,(int)input->text.size()));for(auto& token:ParseRichText(prefix,{},false)){if(token.codepoint=='\n'){x=0;y-=input->fontSize*1.2f;}else if(font)x+=font->Glyph(device,input->password?'*':token.codepoint).advance*input->fontSize/48.f;}auto caret=BaseMaterial("",input->color);Quad(batches,caret,content,{std::clamp(x-input->scrollX,0.f,content.size.x-2),y},{1.5f,input->fontSize},{0,0,1,1},true);}
         }
-        auto key=std::to_string(reg.Get<IDComponent>(r.entity).uuid)+(sceneView?":scene":":game");live.insert(key);auto& entries=cache[key];entries.resize(batches.size());
+        auto key=std::to_string(reg.Get<IDComponent>(r.entity).uuid)+owner;live.insert(key);auto& slot=cache[key];slot.used=s_SubmitCount;auto& entries=slot.entries;entries.resize(batches.size());
         auto& canvas=reg.Get<CanvasComponent>(r.canvas);bool overlay=alwaysOnTop||(!sceneView&&canvas.renderMode==0);
         auto transform=alwaysOnTop?renderer.Camera().projection*renderer.Camera().view*CanvasWorld(scene,r.canvas,r.canvasSize):overlay?glm::ortho(0.f,r.canvasSize.x,0.f,r.canvasSize.y,-1.f,1.f):CanvasWorld(scene,r.canvas,r.canvasSize);
         for(size_t i=0;i<batches.size();++i){auto& batch=batches[i];u64 hash=14695981039346656037ull;auto add=[&](const void* p,size_t n){auto* b=(const u8*)p;for(size_t k=0;k<n;++k){hash^=b[k];hash*=1099511628211ull;}};add(batch.vertices.data(),batch.vertices.size()*sizeof(Vertex));add(batch.indices.data(),batch.indices.size()*4);if(!entries[i].mesh||entries[i].hash!=hash){entries[i].mesh=MakeRef<Mesh>(device,batch.vertices,batch.indices,"Canvas Geometry");entries[i].hash=hash;}renderer.SubmitUI(entries[i].mesh,transform,batch.material,r.entity,overlay);}
     }
-    std::erase_if(cache,[&](const auto& item){return item.first.ends_with(sceneView?":scene":":game")&&!live.contains(item.first);});
+    // Entries of this renderer that were not drawn, and entries of renderers gone for a while
+    std::erase_if(cache,[&](const auto& item){return (item.first.ends_with(owner)&&!live.contains(item.first))||s_SubmitCount-item.second.used>2000;});
     UIFont::Flush(device);
 }
 EntityID CanvasRenderer::HandleInput(Scene& scene,glm::vec2 origin,glm::vec2 size,const RenderCamera& camera,bool sceneView,bool interactive){

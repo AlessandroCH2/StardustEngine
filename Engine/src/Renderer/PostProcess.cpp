@@ -50,6 +50,9 @@ void PostProcess::Execute(CommandList& cmd, Texture* hdr, Texture* output, const
     ScopedGpuTimer timer(m_Device, "Post");
     cmd.Barrier(hdr, ResourceState::ShaderRead);
 
+    // No bloom: skip the whole chain, the tone map multiplies it by zero anyway
+    if (s.bloomIntensity <= 0.0f) cmd.Barrier(m_UpChain[0].get(), ResourceState::ShaderRead);
+    else {
     // Bloom down chain
     cmd.SetPipeline(m_Down.get());
     Texture* src = hdr;
@@ -73,6 +76,7 @@ void PostProcess::Execute(CommandList& cmd, Texture* hdr, Texture* output, const
         cmd.Dispatch((dst->Width() + 7) / 8, (dst->Height() + 7) / 8, 1);
         cmd.Barrier(dst, ResourceState::ShaderRead);
         low = dst;
+    }
     }
 
     TonemapPush tp{ hdr->SRV(), m_UpChain[0]->SRV(), s.exposure, s.bloomIntensity, s.contrast, s.saturation, s.vignette, 0 };

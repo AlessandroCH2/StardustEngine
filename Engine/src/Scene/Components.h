@@ -59,6 +59,9 @@ struct MeshRendererComponent {
 
 struct CameraComponent {
     u32 cullingMask=~0u;
+    int clearFlags=0;                          // 0 Skybox, 1 Solid Color: no sky or clouds, much cheaper for render textures
+    glm::vec4 background{0.19f,0.30f,0.47f,1}; // Solid Color background
+    bool renderShadows=true, postProcessing=true;
     std::string targetTexture;
     int targetWidth=512,targetHeight=512;
     bool orthographic=false;float orthographicSize=5,farPlane=1000;

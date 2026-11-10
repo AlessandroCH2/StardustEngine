@@ -393,7 +393,7 @@ bool Scene::GetCamera(EntityID e,RenderCamera& out,float aspect){
     out.nearPlane = c.nearPlane;
     out.orthographic=c.orthographic;out.orthographicSize=std::max(.001f,c.orthographicSize);out.farPlane=std::max(c.nearPlane+.01f,c.farPlane);
     float h=out.orthographicSize;out.projection=c.orthographic?OrthoReverseZ(-h*aspect,h*aspect,-h,h,c.nearPlane,out.farPlane):PerspectiveReverseZ(out.fovY, aspect, c.nearPlane,out.farPlane);
-    out.cullingMask=c.cullingMask;return true;
+    out.cullingMask=c.cullingMask;out.solidColor=c.clearFlags==1;out.background=c.background;out.shadows=c.renderShadows;out.postProcessing=c.postProcessing;return true;
 }
 bool Scene::GetPrimaryCamera(RenderCamera& out,float aspect){
     for(auto e:m_Registry.AllEntities())if(auto* c=m_Registry.TryGet<CameraComponent>(e);c&&c->primary&&c->targetTexture.empty()&&GetCamera(e,out,aspect))return true;
@@ -406,7 +406,12 @@ void Scene::RenderCameraTargets(RHI::Device& device,RHI::CommandList& cmd,float 
         auto uuid=m_Registry.Get<IDComponent>(e).uuid;live.insert(uuid);livePaths.insert(c.targetTexture);auto& renderer=m_CameraTargets[uuid];
         if(!renderer)renderer=MakeScope<SceneRenderer>(device);
         auto width=std::clamp(c.targetWidth,16,8192),height=std::clamp(c.targetHeight,16,8192);
-        if(c.targetTexture.ends_with(".rendertexture")){auto settings=nlohmann::json::parse(FileSystem::ReadText(AssetManager::ToAbsolute(c.targetTexture)),nullptr,false);if(settings.is_object()){width=std::clamp(settings.value("width",width),16,8192);height=std::clamp(settings.value("height",height),16,8192);}}
+        if(c.targetTexture.ends_with(".rendertexture")){
+            // Cached by modification time: reading it from disk every frame costs more than it should
+            static std::unordered_map<std::string,std::pair<std::filesystem::file_time_type,glm::ivec2>> sizes;
+            auto file=AssetManager::ToAbsolute(c.targetTexture);std::error_code ec;auto stamp=std::filesystem::last_write_time(file,ec);auto& cached=sizes[c.targetTexture];
+            if(cached.second.x==0||cached.first!=stamp){cached.first=stamp;cached.second={width,height};auto settings=nlohmann::json::parse(FileSystem::ReadText(file),nullptr,false);if(settings.is_object())cached.second={std::clamp(settings.value("width",width),16,8192),std::clamp(settings.value("height",height),16,8192)};}
+            width=cached.second.x;height=cached.second.y;}
 
         renderer->Resize(width,height);RenderCamera camera;if(!GetCamera(e,camera,(float)width/height))return;
         renderer->BeginScene(camera,GatherEnvironment(),time);SubmitToRenderer(*renderer,device);CanvasRenderer::Submit(*this,*renderer,device,{width,height},false,false,false);renderer->Render(cmd);
@@ -455,7 +460,7 @@ void Scene::SubmitToRenderer(SceneRenderer& renderer, RHI::Device& device,bool a
         Material tintedCopy;
         auto tinted=[&](const Material& source)->const Material&{if(mr.tint==glm::vec4(1))return source;tintedCopy=source;tintedCopy.color*=mr.tint;return tintedCopy;};
         auto* animator = m_Registry.TryGet<AnimatorComponent>(e);
-        auto mesh = m_Registry.Has<FbxRigComponent>(e)?AssetManager::GetPosedFbx(mr.mesh,m_Registry.Get<IDComponent>(e).uuid,ModelSkeleton::Pose(*this,e)):animator && (m_Running||animationPreview) ? AssetManager::GetAnimatedFbx(mr.mesh,animator->time,animator->state) : AssetManager::GetMesh(mr.mesh);
+        auto mesh = m_Registry.Has<FbxRigComponent>(e)?AssetManager::GetPosedFbx(mr.mesh,m_Registry.Get<IDComponent>(e).uuid^((u64)(uintptr_t)this*0x9E3779B97F4A7C15ull),ModelSkeleton::Pose(*this,e)):animator && (m_Running||animationPreview) ? AssetManager::GetAnimatedFbx(mr.mesh,animator->time,animator->state) : AssetManager::GetMesh(mr.mesh);
         if(mesh&&!mesh->SubMeshes().empty()){for(auto& part:mesh->SubMeshes()){auto material=part.materialSlot<mr.materials.size()?AssetManager::GetMaterial(mr.materials[part.materialSlot]):nullptr;renderer.Submit(mesh,m_WorldCache[e],tinted(material?*material:*mat),e,mr.castShadows,part.firstIndex,part.indexCount,mr.receiveShadows);}}
         else {auto material=!mr.materials.empty()?AssetManager::GetMaterial(mr.materials[0]):nullptr;renderer.Submit(mesh,m_WorldCache[e],tinted(material?*material:*mat),e,mr.castShadows,0,0,mr.receiveShadows);}
     });

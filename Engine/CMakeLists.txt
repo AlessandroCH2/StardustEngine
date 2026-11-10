@@ -5,7 +5,17 @@ file(GLOB_RECURSE ENGINE_SOURCES CONFIGURE_DEPENDS
 add_library(StardustEngine STATIC ${ENGINE_SOURCES})
 source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR}/src FILES ${ENGINE_SOURCES})
 
-target_include_directories(StardustEngine PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_include_directories(StardustEngine PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_BINARY_DIR}/generated)
+
+# Version.h: engine version plus the git commit, refreshed on every build
+set(STARDUST_VERSION_HEADER ${CMAKE_BINARY_DIR}/generated/Version.h)
+add_custom_target(StardustVersion
+    COMMAND ${CMAKE_COMMAND} -DSOURCE_DIR=${CMAKE_SOURCE_DIR} -DOUTPUT=${STARDUST_VERSION_HEADER} -DVERSION=${PROJECT_VERSION}
+            -P ${CMAKE_SOURCE_DIR}/cmake/GenerateVersion.cmake
+    BYPRODUCTS ${STARDUST_VERSION_HEADER}
+    COMMENT "Stamping engine version"
+    VERBATIM)
+add_dependencies(StardustEngine StardustVersion)
 target_link_libraries(StardustEngine PUBLIC ${CMAKE_DL_LIBS} glfw Vulkan::Vulkan vma glm::glm nlohmann_json::nlohmann_json imgui stb nethost Jolt assetlibs)
 target_compile_definitions(StardustEngine PUBLIC
     STARDUST_DXC_PATH="${Vulkan_dxc_EXECUTABLE}"
