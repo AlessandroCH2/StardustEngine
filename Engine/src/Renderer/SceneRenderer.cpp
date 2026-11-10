@@ -1,4 +1,5 @@
 #include "Renderer/SceneRenderer.h"
+#include "Renderer/Quality.h"
 #include "Assets/TextureImport.h"
 #include "Renderer/Nature/SkyRenderer.h"
 #include "Renderer/Nature/TerrainRenderer.h"
@@ -87,14 +88,7 @@ SceneRenderer::SceneRenderer(Device& device) : m_Device(device) {
     shadow.depthBiasSlope = -2.0f;
     m_ShadowPipeline = device.CreateGraphicsPipeline(shadow);
 
-    TextureDesc sm;
-    sm.name = "ShadowCascades";
-    sm.width = sm.height = kShadowMapSize;
-    sm.arrayLayers = kShadowCascades;
-    sm.dim = TextureDim::Tex2DArray;
-    sm.format = kDepthFormat;
-    sm.usage = TextureUsage::DepthStencil | TextureUsage::Sampled | TextureUsage::CopySrc;
-    m_ShadowMap = device.CreateTexture(sm);
+    CreateShadowMap(GraphicsQuality::Current().shadowMapSize);
 
     for (u32 i = 0; i < kFramesInFlight; ++i) {
         m_FrameBuffers[i] = device.CreateBuffer({ sizeof(FrameConstants), BufferUsage::Storage, MemoryUsage::CPUToGPU, "FrameConstants" });
@@ -112,6 +106,23 @@ SceneRenderer::SceneRenderer(Device& device) : m_Device(device) {
 }
 
 SceneRenderer::~SceneRenderer() = default;
+
+void SceneRenderer::SyncQuality() {
+    if (GraphicsQuality::Current().shadowMapSize != m_ShadowSize) CreateShadowMap(GraphicsQuality::Current().shadowMapSize);
+}
+
+void SceneRenderer::CreateShadowMap(u32 size) {
+    if (m_ShadowMap) m_Device.WaitIdle(); // quality changed: the old map may still be in use
+    m_ShadowSize = size;
+    TextureDesc sm;
+    sm.name = "ShadowCascades";
+    sm.width = sm.height = size;
+    sm.arrayLayers = kShadowCascades;
+    sm.dim = TextureDim::Tex2DArray;
+    sm.format = kDepthFormat;
+    sm.usage = TextureUsage::DepthStencil | TextureUsage::Sampled | TextureUsage::CopySrc;
+    m_ShadowMap = m_Device.CreateTexture(sm);
+}
 
 void SceneRenderer::Resize(u32 width, u32 height) {
     width = std::max(width, 1u); height = std::max(height, 1u);
@@ -133,6 +144,7 @@ void SceneRenderer::Resize(u32 width, u32 height) {
     m_Sky->Resize(width, height);
     m_Post->Resize(width, height);
 }
+
 
 void SceneRenderer::BeginScene(const RenderCamera& camera, const EnvironmentSettings& env, float time) {
     m_TextureSamplers.clear();
@@ -254,6 +266,7 @@ void SceneRenderer::SetTerrain(const Ref<TerrainData>& terrain, const glm::vec3&
 
 void SceneRenderer::Render(CommandList& cmd) {
     AssetManager::FlushSkinning(cmd);
+    m_Sky->Resize(m_Width, m_Height); // picks up a changed cloud quality
     ScopedGpuTimer frameTimer(m_Device, "Scene");
     m_Stats = {};
 
@@ -284,7 +297,7 @@ void SceneRenderer::Render(CommandList& cmd) {
     fc.viewport = { (float)m_Width, (float)m_Height, 1.0f / m_Width, 1.0f / m_Height };
     bool shadows = m_Env.castShadows && fc.sunDir.y > -0.05f;
     if (shadows) ComputeCascades(fc, (float)m_Width / (float)m_Height);
-    fc.shadowInfo = { m_ShadowMap->SRV(), kShadowCascades, shadows ? 1u : 0u, kShadowMapSize };
+    fc.shadowInfo = { m_ShadowMap->SRV(), kShadowCascades, shadows ? 1u : 0u, m_ShadowSize };
     bool clouds = m_Env.cloudCoverage > 0.001f;
     fc.atmosphereInfo = { m_Sky->TransmittanceSRV(), m_Sky->SkyViewSRV(), m_Sky->AmbientBuffer(), clouds ? m_Sky->CloudsSRV() : 0xFFFFFFFFu };
     fc.fogParams = { m_Env.fogDensity, m_Env.fogHeightFalloff, m_Env.cloudCoverage, m_Env.cloudDensity };
@@ -433,15 +446,15 @@ void SceneRenderer::ComputeCascades(FrameConstants& fc, float aspect) {
 
         glm::mat4 vp = lightProj * lightView;
         glm::vec4 origin = vp * glm::vec4(0, 0, 0, 1);
-        origin *= kShadowMapSize * 0.5f;
+        origin *= m_ShadowSize * 0.5f;
         glm::vec2 rounded = glm::round(glm::vec2(origin));
-        glm::vec2 offset = (rounded - glm::vec2(origin)) * (2.0f / kShadowMapSize);
+        glm::vec2 offset = (rounded - glm::vec2(origin)) * (2.0f / m_ShadowSize);
         lightProj[3][0] += offset.x;
         lightProj[3][1] += offset.y;
 
         fc.cascadeViewProj[c] = lightProj * lightView;
         fc.cascadeSplits[c] = zf;
-        fc.cascadeTexelSize[c] = 2.0f * radius / kShadowMapSize;
+        fc.cascadeTexelSize[c] = 2.0f * radius / m_ShadowSize;
         m_CascadeSpheres[c] = glm::vec4(center, radius + casterRange);
     }
 }

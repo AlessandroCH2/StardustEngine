@@ -1,3 +1,4 @@
+#include "Renderer/Quality.h"
 #include "Renderer/Nature/SkyRenderer.h"
 
 namespace Stardust {
@@ -30,7 +31,8 @@ SkyRenderer::SkyRenderer(Device& device) : m_Device(device) {
 }
 
 void SkyRenderer::Resize(u32 width, u32 height) {
-    u32 w = std::max(1u, width / kCloudDownscale), h = std::max(1u, height / kCloudDownscale);
+    const u32 downscale = std::max(1u, GraphicsQuality::Current().cloudDownscale);
+    u32 w = std::max(1u, width / downscale), h = std::max(1u, height / downscale);
     if (w == m_CloudW && h == m_CloudH) return;
     m_CloudW = w; m_CloudH = h;
     TextureDesc d;

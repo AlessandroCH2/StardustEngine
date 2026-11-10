@@ -1,4 +1,5 @@
 // Stardust Player: runs a scene full-screen without the editor.
+#include "Renderer/Quality.h"
 #include "Core/Application.h"
 #include "Core/Log.h"
 #include "Scene/Scene.h"
@@ -94,7 +95,7 @@ protected:
     void OnRender(RHI::CommandList& cmd) override {
         m_Scene->RenderCameraTargets(GetDevice(),cmd,(float)TotalTime());
         auto& w = GetWindow();
-        m_Renderer->Resize(w.Width(), w.Height());
+        { float scale = GraphicsQuality::Current().renderScale; m_Renderer->Resize((u32)(w.Width() * scale), (u32)(w.Height() * scale)); }
         float aspect = (float)w.Width() / std::max(1u, w.Height());
         RenderCamera cam;
         if (!m_Scene->GetPrimaryCamera(cam, aspect)) cam.projection = PerspectiveReverseZ(cam.fovY, aspect, cam.nearPlane);

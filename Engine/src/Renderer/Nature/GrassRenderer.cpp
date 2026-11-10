@@ -1,3 +1,4 @@
+#include "Renderer/Quality.h"
 #include "Renderer/Nature/GrassRenderer.h"
 #include <cmath>
 #include <algorithm>
@@ -53,8 +54,9 @@ void GrassRenderer::Generate(CommandList& cmd, Buffer* frameBuffer, const Terrai
     m_Active = s.grass && s.grassDensity > 0.0f && s.grassDistance > 1.0f;
     if (!m_Active) return;
 
-    float spacing = 0.085f / std::sqrt(std::clamp(s.grassDensity, 0.05f, 4.0f));
-    float radius = std::clamp(s.grassDistance, 5.0f, 150.0f);
+    const GraphicsQuality& quality = GraphicsQuality::Current();
+    float spacing = 0.085f / std::sqrt(std::clamp(s.grassDensity * quality.grassDensity, 0.05f, 4.0f));
+    float radius = std::clamp(s.grassDistance * quality.grassDistance, 5.0f, 150.0f);
     u32 dim = (u32)std::ceil(2.0f * radius / spacing);
     glm::vec2 cam(cameraPos.x, cameraPos.z);
     glm::vec2 gridOrigin = glm::floor((cam - radius) / spacing) * spacing;

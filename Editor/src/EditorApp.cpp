@@ -1,4 +1,5 @@
 #include "EditorApp.h"
+#include "Renderer/Quality.h"
 #include "TitleBar.h"
 #include "Core/FileSystem.h"
 #include "EditorIcons.h"
@@ -340,7 +341,7 @@ void EditorApp::OnRender(RHI::CommandList& cmd) {
         m_SceneRenderer->drawGrid=grid;
     }
     if (m_GameView.visible) {
-        m_GameRenderer->Resize((u32)m_GameRenderSize.x, (u32)m_GameRenderSize.y);
+        { float scale = GraphicsQuality::Current().renderScale; m_GameRenderer->Resize((u32)(m_GameRenderSize.x * scale), (u32)(m_GameRenderSize.y * scale)); }
         float aspect = m_GameRenderSize.x / std::max(1.0f, m_GameRenderSize.y);
         RenderCamera cam;
         if (!scene.GetPrimaryCamera(cam, aspect)) cam = m_Camera.GetRenderCamera(aspect);

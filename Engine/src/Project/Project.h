@@ -20,6 +20,7 @@ struct ProjectConfig {
     u32 windowWidth = 1600, windowHeight = 900;
     bool fullscreen = false;
     bool vsync = true;
+    int quality = 2; // 0 Low, 1 Medium, 2 High (see Renderer/Quality.h)
     std::string buildTarget="Windows";
     std::string icon; // Asset-relative PNG/JPEG/TGA/BMP; empty uses the engine icon.
     std::string lastBuildFolder;

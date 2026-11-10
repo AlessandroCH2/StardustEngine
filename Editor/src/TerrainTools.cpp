@@ -25,10 +25,57 @@ void EditorApp::DrawTerrainInspector(EntityID e, TerrainComponent& tc) {
     auto data = TerrainData::Find(uuid);
     TerrainSettings& s = tc.settings;
 
-    int category=m_TerrainTool==TerrainBrush::Paint?1:m_TerrainTool==TerrainBrush::Trees?2:m_TerrainTool==TerrainBrush::None?3:0;
-    const char* tips[]={"Sculpt terrain","Paint texture","Paint trees","Terrain settings"};for(int tab=0;tab<4;++tab){if(tab)ImGui::SameLine(0,3);ImGui::PushID(tab);auto p=ImGui::GetCursorScreenPos();if(tab==category)ImGui::PushStyleColor(ImGuiCol_Button,{.25f,.4f,.55f,1});if(ImGui::Button("##terrainTab",{46,34})){m_TerrainTool=tab==0?TerrainBrush::Raise:tab==1?TerrainBrush::Paint:tab==2?TerrainBrush::Trees:TerrainBrush::None;}if(tab==category)ImGui::PopStyleColor();auto* d=ImGui::GetWindowDrawList();auto color=IM_COL32(225,230,235,255);if(tab==0){d->AddTriangle({p.x+8,p.y+25},{p.x+23,p.y+8},{p.x+37,p.y+25},color,2);}if(tab==1){d->AddLine({p.x+15,p.y+25},{p.x+32,p.y+8},color,4);d->AddCircleFilled({p.x+13,p.y+27},5,color);}if(tab==2){d->AddCircle({p.x+23,p.y+13},8,color,12,2);d->AddLine({p.x+23,p.y+20},{p.x+23,p.y+29},color,3);}if(tab==3){d->AddCircle({p.x+23,p.y+17},9,color,8,3);d->AddCircle({p.x+23,p.y+17},3,color,12,2);}if(ImGui::IsItemHovered())ImGui::SetTooltip("%s",tips[tab]);ImGui::PopID();}
-    if(category==0){int operation=m_TerrainTool==TerrainBrush::Smooth?1:m_TerrainTool==TerrainBrush::Flatten?2:m_TerrainTool==TerrainBrush::SetHeight?3:0;ImGui::SetNextItemWidth(-1);if(Insp::Combo("##SculptOperation",&operation,"Raise / Lower Terrain\0Smooth Height\0Flatten Height\0Set Height\0"))m_TerrainTool=operation==0?TerrainBrush::Raise:operation==1?TerrainBrush::Smooth:operation==2?TerrainBrush::Flatten:TerrainBrush::SetHeight;}
-    ImGui::TextWrapped(category==1?"Paint the selected terrain layer. Shift erases.":category==2?"Place trees. Shift removes trees.":category==3?"Terrain geometry, neighbors and rendering settings.":"Sculpt the heightmap. Hold Shift to lower terrain.");
+    // Unity's five terrain tools: neighbors, paint terrain, paint trees, paint details, settings
+    static int tab = 1;
+    if (m_TerrainTool == TerrainBrush::Trees) tab = 2;
+    else if (m_TerrainTool != TerrainBrush::None) tab = 1;
+    else if (tab == 2) tab = 4;
+    {
+        const char* tips[] = { "Create Neighbor Terrains", "Paint Terrain", "Paint Trees", "Paint Details", "Terrain Settings" };
+        const float width = (ImGui::GetContentRegionAvail().x - 4 * 3) / 5;
+        for (int i = 0; i < 5; ++i) {
+            if (i) ImGui::SameLine(0, 3);
+            ImGui::PushID(i);
+            ImVec2 p = ImGui::GetCursorScreenPos();
+            const bool active = i == tab;
+            if (active) ImGui::PushStyleColor(ImGuiCol_Button, { .18f, .5f, .93f, 1 });
+            if (ImGui::Button("##terrainTab", { width, 30 })) {
+                tab = i;
+                m_TerrainTool = i == 1 ? TerrainBrush::Raise : i == 2 ? TerrainBrush::Trees : TerrainBrush::None;
+            }
+            if (active) ImGui::PopStyleColor();
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tips[i]);
+            auto* d = ImGui::GetWindowDrawList();
+            const ImU32 color = IM_COL32(225, 230, 235, 255);
+            const ImVec2 c(p.x + width * 0.5f, p.y + 15);
+            if (i == 0) for (int k = 0; k < 4; ++k) { ImVec2 o(c.x + (k % 2 ? 1 : -9), c.y + (k / 2 ? 1 : -9)); d->AddRect(o, { o.x + 8, o.y + 8 }, color); }
+            if (i == 1) { d->AddTriangle({ c.x - 12, c.y + 8 }, { c.x - 3, c.y - 7 }, { c.x + 6, c.y + 8 }, color, 1.6f); d->AddLine({ c.x + 4, c.y + 2 }, { c.x + 12, c.y - 8 }, color, 3); }
+            if (i == 2) { d->AddCircle({ c.x, c.y - 3 }, 7, color, 12, 1.6f); d->AddLine({ c.x, c.y + 4 }, { c.x, c.y + 10 }, color, 2.5f); }
+            if (i == 3) for (int k = -1; k <= 1; ++k) d->AddLine({ c.x + k * 5.0f, c.y + 9 }, { c.x + k * 8.0f, c.y - 8 + std::abs(k) * 4.0f }, color, 1.8f);
+            if (i == 4) { d->AddCircle(c, 8, color, 8, 2.5f); d->AddCircle(c, 3, color, 12, 1.6f); }
+            ImGui::PopID();
+        }
+    }
+    if (tab == 1) {
+        int operation = m_TerrainTool == TerrainBrush::Paint ? 1 : m_TerrainTool == TerrainBrush::SetHeight ? 2 : m_TerrainTool == TerrainBrush::Smooth ? 3 : m_TerrainTool == TerrainBrush::Flatten ? 4 : 0;
+        ImGui::SetNextItemWidth(-1);
+        if (ImGui::Combo("##terrainOperation", &operation, "Raise or Lower Terrain\0Paint Texture\0Set Height\0Smooth Height\0Flatten Height\0") || m_TerrainTool == TerrainBrush::None)
+            m_TerrainTool = operation == 1 ? TerrainBrush::Paint : operation == 2 ? TerrainBrush::SetHeight : operation == 3 ? TerrainBrush::Smooth : operation == 4 ? TerrainBrush::Flatten : TerrainBrush::Raise;
+    }
+    const char* help[] = { "Add terrains next to this one and connect their edges.",
+                           m_TerrainTool == TerrainBrush::Paint ? "Paint the selected terrain layer. Shift erases." : "Click and drag in the Scene view. Hold Shift to lower.",
+                           "Click to place trees. Hold Shift to remove them.",
+                           "Grass and flowers come from the Terrain Vegetation component.",
+                           "Size, resolution, drawing and collision of this terrain." };
+    ImGui::TextWrapped("%s", help[tab]);
+    if (tab == 3) {
+        if (reg.Has<TerrainVegetationComponent>(e)) ImGui::TextDisabled("Edit them in the Terrain Vegetation component below.\nGrass grows where the first terrain layer is painted.");
+        else if (ImGui::Button("Add Terrain Vegetation", { -1, 0 })) reg.Add<TerrainVegetationComponent>(e);
+    }
+    if (tab == 2) {
+        if (data) { ImGui::Text("%zu trees on this terrain", data->Trees().size()); if (ImGui::Button("Clear All Trees")) data->ClearTrees(); }
+        ImGui::TextDisabled("To fill the terrain automatically, use Terrain Vegetation.");
+    }
     if(m_TerrainTool!=TerrainBrush::None){ImGui::SeparatorText("Brushes");const char* labels[]={"Soft Round","Hard Round","Soft Falloff","Noise","Star","Custom Mask"};for(int brush=0;brush<6;++brush){if(brush&&brush%4)ImGui::SameLine(0,4);ImGui::PushID(brush);auto p=ImGui::GetCursorScreenPos();if(ImGui::Button("##brush",{44,44}))m_BrushStamp.shape=brush;auto* d=ImGui::GetWindowDrawList();TerrainBrushStamp stamp;stamp.shape=brush;for(int y=0;y<12;++y)for(int x=0;x<12;++x){float weight=TerrainData::BrushWeight({(x-5.5f)/5.5f,(y-5.5f)/5.5f},stamp);if(weight>0)d->AddRectFilled({p.x+4+x*3.f,p.y+4+y*3.f},{p.x+7+x*3.f,p.y+7+y*3.f},IM_COL32(220,225,235,(int)(weight*255)));}if(m_BrushStamp.shape==brush)d->AddRect(p,{p.x+44,p.y+44},IM_COL32(80,170,255,255),0,0,2);if(ImGui::IsItemHovered())ImGui::SetTooltip("%s",labels[brush]);ImGui::PopID();}if(m_BrushStamp.shape==5)AssetUI::AssetField("Brush Mask",m_BrushStamp.texture,{".png",".jpg",".tga",".bmp"});Row("Rotation");Insp::SliderFloat("##rotation",&m_BrushStamp.rotation,0,360,"%.0f deg");}
     if (m_TerrainTool != TerrainBrush::None) {
         ImGui::TextDisabled("Left mouse in the Scene view to apply.  Esc / click the tool again to stop.");
@@ -48,7 +95,7 @@ void EditorApp::DrawTerrainInspector(EntityID e, TerrainComponent& tc) {
     }
 
     // ---------------------------------------------------------------- layers
-    if (ImGui::CollapsingHeader("Layers", ImGuiTreeNodeFlags_DefaultOpen)) {
+    if (tab == 1 && m_TerrainTool == TerrainBrush::Paint && ImGui::CollapsingHeader("Terrain Layers", ImGuiTreeNodeFlags_DefaultOpen)) {
         ImGui::TextDisabled("Surface: Stardust / Terrain");float thumbnail=std::clamp((ImGui::GetContentRegionAvail().x-18)/4,48.f,90.f);for(size_t i=0;i<s.layers.size();++i){if(i%4)ImGui::SameLine(0,4);ImGui::PushID((int)i);auto& layer=s.layers[i];auto tex=AssetManager::GetTexture(layer.albedoMap,true);auto p=ImGui::GetCursorScreenPos();bool clicked=false;if(tex)clicked=ImGui::ImageButton("##layerPreview",(ImTextureID)GetDevice().ImGuiTexture(tex.get()),{thumbnail,thumbnail});else{ImGui::PushStyleColor(ImGuiCol_Button,{layer.tint.x,layer.tint.y,layer.tint.z,1});clicked=ImGui::Button("##layerPreview",{thumbnail+8,thumbnail+8});ImGui::PopStyleColor();}if(clicked){m_PaintLayer=(int)i;m_TerrainTool=TerrainBrush::Paint;}if(m_PaintLayer==(int)i)ImGui::GetWindowDrawList()->AddRect(p,{p.x+thumbnail+8,p.y+thumbnail+8},IM_COL32(80,170,255,255),0,0,3);if(ImGui::IsItemHovered())ImGui::SetTooltip("%s",layer.name.c_str());ImGui::PopID();}
         for (u32 l = 0; l < s.layers.size(); ++l) {if(l!=(u32)std::clamp(m_PaintLayer,0,(int)s.layers.size()-1))continue;
             TerrainLayer& layer = s.layers[l];
@@ -71,35 +118,11 @@ void EditorApp::DrawTerrainInspector(EntityID e, TerrainComponent& tc) {
         ImGui::TextDisabled("Up to 16 editable layers. Remove remaps painted weights.");
     }
 
-    if(ImGui::CollapsingHeader("Neighbors")){const char* sides[]={"Left","Right","Bottom","Top"};for(int side=0;side<4;++side){ImGui::PushID(side);ImGui::TextUnformatted(sides[side]);nlohmann::json ref=tc.neighbors[side]?std::format("{:016x}",tc.neighbors[side]):"0";if(AssetUI::EntityField(ActiveScene(),"Entity",ref)){auto id=std::strtoull(ref.get<std::string>().c_str(),nullptr,16);auto target=ActiveScene().FindByUUID(id);if(!id||(target&&reg.Has<TerrainComponent>(target)))tc.neighbors[side]=id;}ImGui::PopID();}
+    if(tab==0){const char* sides[]={"Left","Right","Bottom","Top"};for(int side=0;side<4;++side){ImGui::PushID(side);ImGui::TextUnformatted(sides[side]);nlohmann::json ref=tc.neighbors[side]?std::format("{:016x}",tc.neighbors[side]):"0";if(AssetUI::EntityField(ActiveScene(),"Entity",ref)){auto id=std::strtoull(ref.get<std::string>().c_str(),nullptr,16);auto target=ActiveScene().FindByUUID(id);if(!id||(target&&reg.Has<TerrainComponent>(target)))tc.neighbors[side]=id;}ImGui::PopID();}
       if(ImGui::Button("Auto Connect"))TerrainNeighbors::AutoConnect(ActiveScene());ImGui::SameLine();if(ImGui::Button("Stitch Edges")){auto count=TerrainNeighbors::Stitch(ActiveScene(),e);SD_INFO("Stitched {} terrain edges (tiles need equal size and resolution)",count);}
       ImGui::TextUnformatted("Create Neighbor");for(int side=0;side<4;++side){if(side)ImGui::SameLine();ImGui::PushID(side);if(ImGui::Button(sides[side])){auto settings=tc;settings.neighbors={};settings.dataPath.clear();auto world=ActiveScene().GetWorldMatrix(e);world[3]+=glm::vec4(side==0?-s.size:side==1?s.size:0,0,side==2?-s.size:side==3?s.size:0,0);auto created=ActiveScene().CreateEntity("Terrain "+std::string(sides[side]));reg.Add<TerrainComponent>(created)=settings;ActiveScene().SetWorldMatrix(created,world);TerrainNeighbors::AutoConnect(ActiveScene());ActiveScene().PrepareTerrains(GetDevice());TerrainNeighbors::Stitch(ActiveScene(),created);m_Selected=created;ImGui::PopID();return;}ImGui::PopID();}}
-    // ---------------------------------------------------------------- grass / trees
-    if (ImGui::CollapsingHeader("Grass & Flowers")) {
-        Row("Enabled"); Insp::Checkbox("##ge", &s.grass);
-        Row("Density"); Insp::SliderFloat("##gd", &s.grassDensity, 0.1f, 3.0f);
-        Row("Height"); Insp::SliderFloat("##gh", &s.grassHeight, 0.1f, 2.0f);
-        Row("Distance"); Insp::SliderFloat("##gdi", &s.grassDistance, 10.0f, 150.0f);
-        Row("Flowers"); Insp::SliderFloat("##gf", &s.flowerAmount, 0.0f, 0.5f);
-        Row("Color"); Insp::ColorEdit3("##gc", glm::value_ptr(s.grassColor));
-        Row("Dry Color"); Insp::ColorEdit3("##gdc", glm::value_ptr(s.dryGrassColor));
-        ImGui::TextDisabled("Grass grows where the first layer is painted.");
-    }
-    if (ImGui::CollapsingHeader("Trees")) {
-        Row("Visible"); Insp::Checkbox("##te", &s.trees);
-        Row("Scatter Density"); Insp::SliderFloat("##td", &s.treeDensity, 0.0f, 3.0f);
-        Row("Max Trees"); { int v = (int)s.maxTrees; if (Insp::DragInt("##tm", &v, 10.0f, 0, 40000)) s.maxTrees = (u32)v; }
-        Row("Seed"); { int v = (int)s.treeSeed; if (Insp::DragInt("##ts", &v, 1.0f, 0, 100000)) s.treeSeed = (u32)v; }
-        if (data) {
-            ImGui::Text("%zu trees", data->Trees().size());
-            if (ImGui::Button("Scatter Trees")) { data->SetSettings(s); data->ScatterTrees(); }
-            ImGui::SameLine();
-            if (ImGui::Button("Clear Trees")) data->ClearTrees();
-        }
-    }
-
     // ---------------------------------------------------------------- create / generate
-    if (ImGui::CollapsingHeader("Create & Generate")) {
+    if (tab == 4 && ImGui::CollapsingHeader("Mesh Resolution", ImGuiTreeNodeFlags_DefaultOpen)) {
         Row("Size (m)"); Insp::DragFloat("##sz", &s.size, 4.0f, 64.0f, 16384.0f, "%.0f");
         Row("Resolution");
         const u32 resolutions[] = { 256, 512, 1024, 2048 };
@@ -114,10 +137,45 @@ void EditorApp::DrawTerrainInspector(EntityID e, TerrainComponent& tc) {
         ImGui::TextDisabled("Procedural generation is available as a separate component.");
     }
 
-    if (ImGui::CollapsingHeader("Data & Physics")) {
+    if (tab == 4 && ImGui::CollapsingHeader("Basic Terrain", ImGuiTreeNodeFlags_DefaultOpen)) {
+        Row("Draw Trees"); Insp::Checkbox("##drawTrees", &s.trees);
         Row("Collider"); Insp::Checkbox("##col", &tc.collider);
         Row("Data File"); ImGui::TextDisabled("%s", tc.dataPath.empty() ? "(created when the scene is saved)" : tc.dataPath.c_str());
         if (data) ImGui::TextDisabled("%ux%u samples, heights %.1f .. %.1f m", data->Resolution(), data->Resolution(), data->MinHeight(), data->MaxHeight());
+    }
+}
+
+void DrawTerrainVegetationInspector(Scene& scene, EntityID e, TerrainVegetationComponent& c) {
+    auto* terrain = scene.Reg().TryGet<TerrainComponent>(e);
+    if (!terrain) { ImGui::TextColored({ 1, .65f, .3f, 1 }, "Needs a Terrain component on this object."); return; }
+    ImGui::SeparatorText("Grass & Flowers");
+    Insp::Checkbox("Grass", &c.grass);
+    if (c.grass) {
+        Insp::SliderFloat("Density", &c.grassDensity, 0.1f, 3.0f);
+        Insp::SliderFloat("Height", &c.grassHeight, 0.1f, 2.0f);
+        Insp::SliderFloat("Distance", &c.grassDistance, 10.0f, 150.0f);
+        Insp::SliderFloat("Flowers", &c.flowerAmount, 0.0f, 0.5f);
+        Insp::ColorEdit3("Color", glm::value_ptr(c.grassColor));
+        Insp::ColorEdit3("Dry Color", glm::value_ptr(c.dryGrassColor));
+        ImGui::TextDisabled("Grass grows where the first terrain layer is painted.");
+    }
+    ImGui::SeparatorText("Trees");
+    Insp::Checkbox("Scatter Trees", &c.trees);
+    if (c.trees) {
+        Insp::SliderFloat("Tree Density", &c.treeDensity, 0.0f, 3.0f);
+        int maxTrees = (int)c.maxTrees, seed = (int)c.treeSeed;
+        if (Insp::DragInt("Max Trees", &maxTrees, 10.0f, 0, 40000)) c.maxTrees = (u32)std::max(0, maxTrees);
+        if (Insp::DragInt("Seed", &seed, 1.0f, 0, 100000)) c.treeSeed = (u32)std::max(0, seed);
+        if (auto data = TerrainData::Find(scene.Reg().Get<IDComponent>(e).uuid)) {
+            ImGui::Text("%zu trees", data->Trees().size());
+            if (ImGui::Button("Scatter Now")) {
+                TerrainSettings settings = data->Settings();
+                settings.treeDensity = c.treeDensity; settings.maxTrees = c.maxTrees; settings.treeSeed = c.treeSeed;
+                data->SetSettings(settings);
+                data->ScatterTrees();
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Replaces every tree on the terrain, hand-placed ones included");
+        }
     }
 }
 

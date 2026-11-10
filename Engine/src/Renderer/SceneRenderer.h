@@ -84,7 +84,6 @@ static_assert(sizeof(LocalLight) == 64);
 static constexpr u32 kMaxLocalLights = 256;
 
 static constexpr u32 kShadowCascades = 4;
-static constexpr u32 kShadowMapSize = 2048;
 
 struct RenderStats {
     u32 drawCalls = 0;
@@ -100,6 +99,7 @@ public:
     ~SceneRenderer();
 
     void Resize(u32 width, u32 height);
+    void SyncQuality(); // call outside a render pass, before submitting
     void BeginScene(const RenderCamera& camera, const EnvironmentSettings& env, float time);
     void Submit(const Ref<Mesh>& mesh, const glm::mat4& transform, const Material& material, u32 entityId, bool castShadows = true,u32 firstIndex=0,u32 indexCount=0,bool receiveShadows=true,int sortingOrder=0);
     const RenderCamera& Camera()const{return m_Camera;}
@@ -159,6 +159,8 @@ private:
     std::array<Ref<RHI::Buffer>, RHI::kFramesInFlight> m_LightBuffers;
     Ref<RHI::Pipeline> m_OutlinePipeline;
     Ref<RHI::Texture> m_ShadowMap;
+    u32 m_ShadowSize = 0;
+    void CreateShadowMap(u32 size);
     std::array<Ref<RHI::Buffer>, RHI::kFramesInFlight> m_FrameBuffers;
     std::array<glm::vec4, kShadowCascades> m_CascadeSpheres{}; // xyz center, w radius (for caster culling)
 

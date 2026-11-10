@@ -116,16 +116,17 @@ static void WriteEntity(Scene& scene, EntityID e, json& out) {
     if (auto* c = reg.TryGet<TerrainComponent>(e)) {
         const TerrainSettings& s = c->settings;
         j["terrain"] = { { "size", s.size }, { "resolution", s.resolution },
-                         { "grass", s.grass }, { "grassDensity", s.grassDensity }, { "grassHeight", s.grassHeight },
-                         { "grassDistance", s.grassDistance }, { "flowerAmount", s.flowerAmount },
-                         { "grassColor", Vec(s.grassColor) }, { "dryGrassColor", Vec(s.dryGrassColor) },
-                         { "trees", s.trees }, { "treeDensity", s.treeDensity }, { "maxTrees", s.maxTrees }, { "treeSeed", s.treeSeed },
+                         { "drawTrees", s.trees },
                          { "dataPath", c->dataPath }, { "collider", c->collider } };
         json layers = json::array();
         for (const TerrainLayer& l : s.layers)
             layers.push_back({ { "name", l.name }, {"asset",l.assetPath}, { "albedoMap", l.albedoMap }, { "tint", Vec(l.tint) }, { "tiling", l.tiling }, { "roughness", l.roughness } });
         j["terrain"]["layers"] = layers;j["terrain"]["neighbors"]={UUIDStr(c->neighbors[0]),UUIDStr(c->neighbors[1]),UUIDStr(c->neighbors[2]),UUIDStr(c->neighbors[3])};
     }
+    if (auto* c = reg.TryGet<TerrainVegetationComponent>(e))
+        j["terrainVegetation"] = { { "grass", c->grass }, { "grassDensity", c->grassDensity }, { "grassHeight", c->grassHeight }, { "grassDistance", c->grassDistance },
+                                   { "flowerAmount", c->flowerAmount }, { "grassColor", Vec(c->grassColor) }, { "dryGrassColor", Vec(c->dryGrassColor) },
+                                   { "trees", c->trees }, { "treeDensity", c->treeDensity }, { "maxTrees", c->maxTrees }, { "treeSeed", c->treeSeed } };
     VisitToggleComponents([&]<typename T>(int,const char* key){if(reg.Has<T>(e)&&!reg.IsEnabled<T>(e))j["disabledComponents"].push_back(key);});
     out.push_back(std::move(j));
 
@@ -349,17 +350,24 @@ static std::vector<EntityID> ReadEntities(Scene& sceneRef, const json& entities,
             s.meadowRadius = m.value("meadowRadius", s.meadowRadius);
             s.seed = m.value("seed", s.seed);
             s.resolution = m.value("resolution", s.resolution);
-            s.grass = m.value("grass", s.grass);
-            s.grassDensity = m.value("grassDensity", s.grassDensity);
-            s.grassHeight = m.value("grassHeight", s.grassHeight);
-            s.grassDistance = m.value("grassDistance", s.grassDistance);
-            s.flowerAmount = m.value("flowerAmount", s.flowerAmount);
-            s.grassColor = Vec3(m.value("grassColor", json()), s.grassColor);
-            s.dryGrassColor = Vec3(m.value("dryGrassColor", json()), s.dryGrassColor);
-            s.trees = m.value("trees", s.trees);
-            s.treeDensity = m.value("treeDensity", s.treeDensity);
-            s.maxTrees = m.value("maxTrees", s.maxTrees);
-            s.treeSeed = m.value("treeSeed", s.treeSeed);
+            s.trees = m.value("drawTrees", true);
+            // Scenes saved before the Terrain Vegetation component kept these values on the terrain
+            const json& v = j.contains("terrainVegetation") ? j["terrainVegetation"] : m;
+            const bool legacy = !j.contains("terrainVegetation") && m.contains("grass");
+            if (j.contains("terrainVegetation") || (legacy && (m.value("grass", false) || m.value("trees", false)))) {
+                auto& c = reg.Add<TerrainVegetationComponent>(e);
+                c.grass = v.value("grass", c.grass);
+                c.grassDensity = v.value("grassDensity", c.grassDensity);
+                c.grassHeight = v.value("grassHeight", c.grassHeight);
+                c.grassDistance = v.value("grassDistance", c.grassDistance);
+                c.flowerAmount = v.value("flowerAmount", c.flowerAmount);
+                c.grassColor = Vec3(v.value("grassColor", json()), c.grassColor);
+                c.dryGrassColor = Vec3(v.value("dryGrassColor", json()), c.dryGrassColor);
+                c.trees = v.value("trees", c.trees);
+                c.treeDensity = v.value("treeDensity", c.treeDensity);
+                c.maxTrees = v.value("maxTrees", c.maxTrees);
+                c.treeSeed = v.value("treeSeed", c.treeSeed);
+            }
         }
         if(j.contains("proceduralTerrain")||(j.contains("terrain")&&j["terrain"].contains("mountainHeight"))){
             bool legacy=!j.contains("proceduralTerrain");auto& m=legacy?j["terrain"]:j["proceduralTerrain"];auto& c=reg.Add<ProceduralTerrainComponent>(e);

@@ -1,4 +1,5 @@
 // Project Hub, Build Settings, Project Settings, player builds and undo/redo
+#include "Renderer/Quality.h"
 #include "EditorApp.h"
 #include "EditorIcons.h"
 #include "Project/BuildCooker.h"
@@ -214,6 +215,9 @@ void EditorApp::DrawBuildSettings() {
     changed |= ImGui::Checkbox("Fullscreen", &cfg.fullscreen);
     ImGui::SameLine();
     changed |= ImGui::Checkbox("VSync", &cfg.vsync);
+    ImGui::SetNextItemWidth(220);
+    if (ImGui::Combo("Graphics Quality", &cfg.quality, "Low (older GPUs)\0Medium\0High\0")) { GraphicsQuality::Apply(cfg.quality); changed = true; }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Low and Medium render the Game view and the built player at a lower 3D resolution,\nwith smaller shadow maps, cheaper clouds and sparser grass.");
     if (changed) Project::Save();
 
     }

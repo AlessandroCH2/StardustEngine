@@ -116,6 +116,16 @@ struct TerrainComponent {
     bool collider = true;   // static heightfield collider in play mode
 };
 
+// Automatic grass and scattered trees for the Terrain on the same object
+struct TerrainVegetationComponent {
+    bool grass = true;
+    float grassDensity = 1.0f, grassHeight = 0.55f, grassDistance = 55.0f, flowerAmount = 0.03f;
+    glm::vec3 grassColor{ 0.13f, 0.24f, 0.04f }, dryGrassColor{ 0.38f, 0.37f, 0.12f };
+    bool trees = true;
+    float treeDensity = 1.0f;
+    u32 maxTrees = 6000, treeSeed = 3;
+};
+
 struct ProceduralTerrainComponent {
     float mountainHeight=220,hillHeight=14,meadowRadius=260;
     u32 seed=7;

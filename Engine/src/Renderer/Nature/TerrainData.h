@@ -36,7 +36,7 @@ struct TerrainSettings {
     glm::vec3 grassColor{ 0.13f, 0.24f, 0.04f };
     glm::vec3 dryGrassColor{ 0.38f, 0.37f, 0.12f };
 
-    bool trees = false;
+    bool trees = true;             // draw the trees of this terrain
     float treeDensity = 1.0f;
     u32 maxTrees = 6000;
     u32 treeSeed = 3;

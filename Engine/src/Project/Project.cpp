@@ -1,3 +1,4 @@
+#include "Renderer/Quality.h"
 #include "Project/Project.h"
 #include "Core/FileSystem.h"
 #include "Core/Log.h"
@@ -37,6 +38,8 @@ bool Project::Load(const fs::path& file) {
         c.windowHeight = p.value("height", c.windowHeight);
         c.fullscreen = p.value("fullscreen", c.fullscreen);
         c.vsync = p.value("vsync", c.vsync);
+        c.quality = p.value("quality", c.quality);
+        GraphicsQuality::Apply(c.quality);
         c.icon = p.value("icon", c.icon);
         c.buildTarget=p.value("target",std::string("Windows"));
     }
@@ -73,11 +76,11 @@ bool Project::Save() {
     j["lastOpenedScene"] = s_Config.lastOpenedScene;
     j["lastBuildFolder"] = s_Config.lastBuildFolder;
     j["player"] = { { "width", s_Config.windowWidth }, { "height", s_Config.windowHeight },
-                    { "fullscreen", s_Config.fullscreen }, { "vsync", s_Config.vsync }, {"icon", s_Config.icon},{"target",s_Config.buildTarget} };
+                    { "fullscreen", s_Config.fullscreen }, { "vsync", s_Config.vsync }, { "quality", s_Config.quality }, {"icon", s_Config.icon},{"target",s_Config.buildTarget} };
     return FileSystem::WriteText(s_File, j.dump(2));
 }
 
-bool Project::WriteRuntime(const fs::path& file,const ProjectConfig& c){json j={{"name",c.name},{"company",c.company},{"version",c.version},{"assemblyName",c.assemblyName},{"tags",c.tags},{"layers",c.layers},{"player",{{"width",c.windowWidth},{"height",c.windowHeight},{"fullscreen",c.fullscreen},{"vsync",c.vsync},{"icon",c.icon},{"target",c.buildTarget}}}};j["scenes"]=json::array();for(size_t i=0;i<c.scenes.size();++i)j["scenes"].push_back({{"path",c.scenes[i]},{"enabled",i>=c.scenesEnabled.size()||c.scenesEnabled[i]}});auto bytes=json::to_cbor(j);fs::create_directories(file.parent_path());std::ofstream out(file,std::ios::binary);out.write((const char*)bytes.data(),bytes.size());return out.good();}
+bool Project::WriteRuntime(const fs::path& file,const ProjectConfig& c){json j={{"name",c.name},{"company",c.company},{"version",c.version},{"assemblyName",c.assemblyName},{"tags",c.tags},{"layers",c.layers},{"player",{{"width",c.windowWidth},{"height",c.windowHeight},{"fullscreen",c.fullscreen},{"vsync",c.vsync},{"quality",c.quality},{"icon",c.icon},{"target",c.buildTarget}}}};j["scenes"]=json::array();for(size_t i=0;i<c.scenes.size();++i)j["scenes"].push_back({{"path",c.scenes[i]},{"enabled",i>=c.scenesEnabled.size()||c.scenesEnabled[i]}});auto bytes=json::to_cbor(j);fs::create_directories(file.parent_path());std::ofstream out(file,std::ios::binary);out.write((const char*)bytes.data(),bytes.size());return out.good();}
 bool Project::LoadRuntime(const fs::path& dataDir){if(!Load(dataDir/"Assets/__runtime.sdruntime"))return false;s_Dir=fs::absolute(dataDir);SetRuntimeLayout(s_Dir/"Assets",s_Dir/"Managed"/(s_Config.assemblyName+".dll"));return true;}
 void Project::WriteScriptProject(const fs::path& csproj, const std::string& assembly) {
     std::string bin = FileSystem::ExecutableDir().generic_string();

@@ -135,7 +135,7 @@ void TerrainData::ScatterTrees() {
     m_Trees.clear();
     m_TreesVersion++;
     const TerrainSettings& s = m_Settings;
-    if (!s.trees || s.treeDensity <= 0) return;
+    if (s.treeDensity <= 0) return;
     Perlin2D forestNoise(s.treeSeed * 104729u + 5u);
     const float spacing = 5.5f;
     const float half = s.size * 0.47f;

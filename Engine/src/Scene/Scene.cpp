@@ -87,6 +87,7 @@ void Scene::CopyComponents(EntityID src, EntityID dst) {
     if (auto* c = m_Registry.TryGet<DirectionalLightComponent>(src)) m_Registry.Add<DirectionalLightComponent>(dst, *c);
     if (auto* c = m_Registry.TryGet<EnvironmentComponent>(src)) m_Registry.Add<EnvironmentComponent>(dst, *c);
     if(auto* c=m_Registry.TryGet<ProceduralTerrainComponent>(src))m_Registry.Add<ProceduralTerrainComponent>(dst,*c);
+    if(auto* c=m_Registry.TryGet<TerrainVegetationComponent>(src))m_Registry.Add<TerrainVegetationComponent>(dst,*c);
     if (auto* c = m_Registry.TryGet<TerrainComponent>(src)) m_Registry.Add<TerrainComponent>(dst, *c);
     if (auto* c = m_Registry.TryGet<RigidbodyComponent>(src)) m_Registry.Add<RigidbodyComponent>(dst, *c);
     if (auto* c = m_Registry.TryGet<BoxColliderComponent>(src)) m_Registry.Add<BoxColliderComponent>(dst, *c);
@@ -422,6 +423,12 @@ static Ref<TerrainData> AcquireTerrain(Scene& scene,EntityID e,TerrainComponent&
     TerrainData::ResolveLayers(settings);
     if(generator){settings.mountainHeight=generator->mountainHeight;settings.hillHeight=generator->hillHeight;settings.meadowRadius=generator->meadowRadius;settings.seed=generator->seed;settings.proceduralAppearance=generator->proceduralSurface;}
     else settings.proceduralAppearance=false;
+    // Grass and scattered trees exist only through the Terrain Vegetation component
+    if(auto* vegetation=scene.Reg().TryGetEnabled<TerrainVegetationComponent>(e)){
+        settings.grass=vegetation->grass;settings.grassDensity=vegetation->grassDensity;settings.grassHeight=vegetation->grassHeight;settings.grassDistance=vegetation->grassDistance;
+        settings.flowerAmount=vegetation->flowerAmount;settings.grassColor=vegetation->grassColor;settings.dryGrassColor=vegetation->dryGrassColor;
+        settings.treeDensity=vegetation->trees?vegetation->treeDensity:0;settings.maxTrees=vegetation->maxTrees;settings.treeSeed=vegetation->treeSeed;
+    }else{settings.grass=false;settings.treeDensity=0;}
     return TerrainData::Acquire(device,scene.Reg().Get<IDComponent>(e).uuid,settings,terrain.dataPath,generator&&generator->generateOnMissing,generator?generator->layers:std::array<u32,4>{0,1,2,3});
 }
 
@@ -433,6 +440,7 @@ void Scene::PrepareTerrains(RHI::Device& device) {
 
 void Scene::SubmitToRenderer(SceneRenderer& renderer, RHI::Device& device,bool animationPreview) {
     ComputeWorldMatrices();
+    renderer.SyncQuality();
     m_Registry.Each<TerrainComponent>([&](EntityID e, TerrainComponent& t) {
         if (!IsActiveInHierarchy(e)||!(renderer.Camera().cullingMask&(1u<<std::clamp(m_Registry.Get<NameComponent>(e).layer,0,31)))) return;
         u64 uuid = m_Registry.Get<IDComponent>(e).uuid;

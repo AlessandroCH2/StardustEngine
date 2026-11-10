@@ -20,6 +20,7 @@
 #include <glm/gtc/type_ptr.hpp>
 
 namespace Stardust {
+void DrawTerrainVegetationInspector(Scene& scene, EntityID e, TerrainVegetationComponent& c);
 
 // ------------------------------------------------------------------------------------------------ widgets
 
@@ -513,6 +514,7 @@ void EditorApp::DrawInspector() {
 
     ComponentSection<TerrainComponent>(inspectScene, e, "Terrain", true, [&](TerrainComponent& tc) { DrawTerrainInspector(e, tc); });
     ComponentSection<ProceduralTerrainComponent>(inspectScene,e,"Procedural Terrain Generator",true,[&](auto& c){DrawProceduralTerrainInspector(e,c);});
+    ComponentSection<TerrainVegetationComponent>(inspectScene,e,"Terrain Vegetation",true,[&](auto& c){DrawTerrainVegetationInspector(inspectScene,e,c);});
 
     auto physMat = [](PhysicsMaterialProps& m) {
         SliderProp("Friction", m.friction, 0.0f, 1.5f);
@@ -607,6 +609,7 @@ void EditorApp::DrawInspector() {
         if (!reg.Has<EnvironmentComponent>(e) && ImGui::MenuItem("Environment")) reg.Add<EnvironmentComponent>(e);
         if (!reg.Has<TerrainComponent>(e) && ImGui::MenuItem("Terrain")) reg.Add<TerrainComponent>(e);
         if(!reg.Has<ProceduralTerrainComponent>(e)&&ImGui::MenuItem("Procedural Terrain Generator"))reg.Add<ProceduralTerrainComponent>(e);
+        if(!reg.Has<TerrainVegetationComponent>(e)&&ImGui::MenuItem("Terrain Vegetation"))reg.Add<TerrainVegetationComponent>(e);
         if (!reg.Has<PointLightComponent>(e) && ImGui::MenuItem("Point Light")) reg.Add<PointLightComponent>(e);
         if (!reg.Has<SpotLightComponent>(e) && ImGui::MenuItem("Spot Light")) reg.Add<SpotLightComponent>(e);
         ImGui::SeparatorText("Audio");
@@ -703,7 +706,7 @@ static bool AssetReferenceField(const char* label,const std::string& kind,nlohma
   {"Asset:RenderTexture",{".rendertexture"}},{"Asset:Sprite",{".sprite",".png",".jpg",".jpeg",".tga",".bmp"}},{"Asset:Prefab",{".prefab"}},
   {"Asset:Material",{".mat"}},{"Asset:Texture",{".png",".jpg",".jpeg",".tga",".bmp"}},{"Asset:Texture2D",{".png",".jpg",".jpeg",".tga",".bmp"}},
   {"Asset:AudioClip",{".wav",".mp3",".flac",".ogg"}},{"Asset:Font",{".ttf",".otf"}},{"Asset:Mesh",{".obj",".gltf",".glb",".fbx"}},
-  {"Asset:AnimationClip",{".anim"}},{"Asset:AnimatorController",{".controller"}}};
+  {"Asset:AnimationClip",{".anim"}},{"Asset:TextAsset",{".txt",".json",".xml",".csv",".md",".yaml",".yml",".ini",".bytes"}},{"Asset:AnimatorController",{".controller"}}};
  if(auto found=kinds.find(kind);found!=kinds.end())changed=AssetUI::AssetField(label,path,found->second);
  else {ImGui::SetNextItemWidth(-1);changed=Insp::InputText(label,&path);if(ImGui::BeginDragDropTarget()){if(auto* p=ImGui::AcceptDragDropPayload(AssetUI::kAssetPayload)){path=(const char*)p->Data;changed=true;}ImGui::EndDragDropTarget();}}
  if(changed)value={{"asset",path}};return changed;
@@ -1001,27 +1004,49 @@ void EditorApp::DrawProject() {
         if (ImGui::SmallButton((FileSystem::Utf8(part)+"##crumb"+FileSystem::Utf8(accum)).c_str())) m_ProjectCurrentDir = accum;
     }
     ImGui::SameLine();
-    ImGui::TextDisabled("  (drag files onto Inspector fields; right-click to create)");
+    static std::string projectSearch;
+    ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX() + 8, ImGui::GetWindowWidth() - 268));
+    ImGui::SetNextItemWidth(236);
+    ImGui::InputTextWithHint("##projectSearch", "Search assets...", &projectSearch);
+    if (!projectSearch.empty()) { ImGui::SameLine(0, 2); if (ImGui::SmallButton("x##clearSearch")) projectSearch.clear(); }
     ImGui::Separator();
 
     float cell = 92.0f;
     int cols = std::max(1, (int)(ImGui::GetContentRegionAvail().x / cell));
     ImGui::BeginChild("##files");
     if (ImGui::BeginTable("##grid", cols)) {
-        std::vector<fs::directory_entry> entries;
+        // Listing folders and resolving asset paths is slow, so the listing is kept and refreshed about once a second
+        static std::vector<fs::directory_entry> entries;
+        static std::vector<std::string> order;
+        static std::set<std::string> expandedModels;
+        static std::set<fs::path> modelChildren;
+        static fs::path listedDir;
+        static std::string listedSearch;
+        static double listedAt = -10;
+        static bool listingStale = true;
+        if (listingStale || listedDir != m_ProjectCurrentDir || listedSearch != projectSearch || ImGui::GetTime() - listedAt > 1.0) {
+        listingStale = false; listedDir = m_ProjectCurrentDir; listedSearch = projectSearch; listedAt = ImGui::GetTime();
+        entries.clear(); modelChildren.clear();
         std::error_code ec;
-        for (auto& de : fs::directory_iterator(m_ProjectCurrentDir, ec)) {
-            // Files that belong to a model are shown under its arrow, or not at all
-            if (de.is_directory() && de.path().extension() == ".fbm") continue;
-            if (FileSystem::Utf8(de.path().filename()).ends_with(".rig.json")) continue;
-            entries.push_back(de);
+        auto hidden = [](const fs::directory_entry& de) { // files that belong to a model are shown under its arrow, or not at all
+            return (de.is_directory() && de.path().extension() == ".fbm") || FileSystem::Utf8(de.path().filename()).ends_with(".rig.json");
+        };
+        if (projectSearch.empty()) {
+            for (auto& de : fs::directory_iterator(m_ProjectCurrentDir, ec)) if (!hidden(de)) entries.push_back(de);
+        } else {
+            // Searching looks through every folder of the project
+            auto lower = [](std::string text) { std::transform(text.begin(), text.end(), text.begin(), [](unsigned char c) { return (char)std::tolower(c); }); return text; };
+            const std::string needle = lower(projectSearch);
+            for (auto it = fs::recursive_directory_iterator(m_ProjectRoot, fs::directory_options::skip_permission_denied, ec); !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
+                if (hidden(*it)) { if (it->is_directory()) it.disable_recursion_pending(); continue; }
+                if (lower(FileSystem::Utf8(it->path().filename())).find(needle) != std::string::npos) entries.push_back(*it);
+                if (entries.size() >= 500) break;
+            }
         }
         std::sort(entries.begin(), entries.end(), [](auto& a, auto& b) {
             if (a.is_directory() != b.is_directory()) return a.is_directory();
             return a.path().filename() < b.path().filename();
         });
-        static std::set<std::string> expandedModels;
-        std::set<fs::path> modelChildren;
         for (size_t i = 0; i < entries.size(); ++i) {
             if (entries[i].is_directory() || !expandedModels.count(AssetManager::ToRelative(entries[i].path()))) continue;
             size_t insertAt = i + 1;
@@ -1032,12 +1057,14 @@ void EditorApp::DrawProject() {
             }
             i = insertAt - 1;
         }
-        std::vector<std::string> order;for(auto& de:entries)order.push_back(AssetManager::ToRelative(de.path()));
+        order.clear();for(auto& de:entries)order.push_back(AssetManager::ToRelative(de.path()));
+        }
         if(ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)&&!ImGui::GetIO().WantTextInput&&ImGui::GetIO().KeyCtrl&&ImGui::IsKeyPressed(ImGuiKey_A))m_AssetSelection=order;
-        for (auto& de : entries) {
+        for (size_t entryIndex = 0; entryIndex < entries.size() && entryIndex < order.size(); ++entryIndex) {
+            const fs::directory_entry de = entries[entryIndex]; // copies: clicks below may refresh the listing
             ImGui::TableNextColumn();
             std::string fname = FileSystem::Utf8(de.path().filename());
-            std::string relPath = AssetManager::ToRelative(de.path());
+            std::string relPath = order[entryIndex];
             ImGui::PushID(relPath.c_str());
             if (modelChildren.count(de.path())) ImGui::TableSetBgColor(ImGuiTableBgTarget_CellBg, IM_COL32(38, 54, 78, 255));
             bool dir = de.is_directory();
@@ -1070,7 +1097,7 @@ void EditorApp::DrawProject() {
                 ImGui::EndDragDropSource();
             }
             if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0)) {
-                if (dir) m_ProjectCurrentDir = de.path();
+                if (dir) { m_ProjectCurrentDir = de.path(); projectSearch.clear(); }
                 else if (ext == ".scene") OpenScene(de.path());
                 else if (ext == ".prefab") OpenPrefab(de.path());
                 else if (ext == ".sprite") {m_SpriteEditorPath=relPath;m_SpriteEditorOpen=true;}
@@ -1092,7 +1119,7 @@ void EditorApp::DrawProject() {
                 if (isOpen) arrowDraw->AddTriangleFilled({ cx + 3, midY - 5 }, { cx + 3, midY + 5 }, { cx - 3, midY }, arrowColor);
                 else arrowDraw->AddTriangleFilled({ cx - 3, midY - 5 }, { cx - 3, midY + 5 }, { cx + 3, midY }, arrowColor);
                 if (overArrow) ImGui::SetTooltip("%s", isOpen ? "Hide materials and textures" : "Show materials and textures");
-                if (overArrow && ImGui::IsMouseClicked(0)) { if (!expandedModels.erase(relPath)) expandedModels.insert(relPath); }
+                if (overArrow && ImGui::IsMouseClicked(0)) { if (!expandedModels.erase(relPath)) expandedModels.insert(relPath); listingStale = true; }
             }
             ImGui::TextWrapped("%s", fname.c_str());
             ImGui::PopID();

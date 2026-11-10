@@ -40,6 +40,7 @@ std::string AssetTypeName(const std::string& ext) {
     if (ext == ".spv") return "Shader";
     if (ext == ".prefab") return "Prefab";
     if (ext == ".avatar") return "Avatar";
+    if (ext == ".txt" || ext == ".json" || ext == ".xml" || ext == ".csv" || ext == ".md" || ext == ".yaml" || ext == ".yml" || ext == ".ini" || ext == ".bytes") return "Text Asset";
     if (ext == ".cs") return "Script";
     if (ext == ".terrainlayer") return "Terrain Layer";
     if (ext == ".terrain") return "Terrain Data";

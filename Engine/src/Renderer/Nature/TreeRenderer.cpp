@@ -1,5 +1,6 @@
 #include "Renderer/Nature/TreeRenderer.h"
 #include "Renderer/SceneRenderer.h"
+#include "Renderer/Quality.h"
 #include "Core/Log.h"
 #include "Core/Noise.h"
 #include <glm/gtc/constants.hpp>
@@ -290,7 +291,7 @@ void TreeRenderer::Prepare(const TerrainData& terrain, const glm::vec3& origin, 
         }
         if (!shadows) continue;
         for (u32 c = 0; c < kShadowCascades; ++c) {
-            float halfExtent = fc.cascadeTexelSize[c] * kShadowMapSize * 0.5f;
+            float halfExtent = fc.cascadeTexelSize[c] * GraphicsQuality::Current().shadowMapSize * 0.5f;
             if (dist > fc.cascadeSplits[c] + halfExtent + radius) continue;
             glm::vec4 clip = fc.cascadeViewProj[c] * glm::vec4(center, 1.0f);
             float r = radius / halfExtent;
