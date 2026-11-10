@@ -34,6 +34,7 @@ std::string AssetTypeName(const std::string& ext) {
     if (ext == ".sprite") return "Sprite";
     if (ext == ".ttf" || ext == ".otf") return "Font";
     if (ext == ".wav" || ext == ".mp3" || ext == ".flac" || ext == ".ogg") return "Audio Clip";
+    if (ext == ".mp4" || ext == ".m4v" || ext == ".mov" || ext == ".wmv" || ext == ".avi" || ext == ".mpg" || ext == ".mpeg") return "Video Clip";
     if (ext == ".anim") return "Animation Clip";
     if (ext == ".controller") return "Animator Controller";
     if (ext == ".obj" || ext == ".gltf" || ext == ".glb" || ext == ".fbx") return "Mesh";

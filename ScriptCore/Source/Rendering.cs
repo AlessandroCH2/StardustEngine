@@ -74,6 +74,7 @@ public sealed class RenderTexture : Asset {
     public static implicit operator RenderTexture(string path)=>new(path);
 }
 
+public enum VideoRenderMode { RenderTexture, MaterialOverride }
 public sealed class VideoPlayer : Component {
     public string clip {get=>P.Value(this,26,"clip","");set=>P.Property(this,26,"clip",JsonValue.Create(value));}
     public string targetTexture {get=>P.Value(this,26,"targetTexture","");set=>P.Property(this,26,"targetTexture",JsonValue.Create(value));}
@@ -82,6 +83,10 @@ public sealed class VideoPlayer : Component {
     public float time {get=>P.Value(this,26,"time",0f);set=>P.Property(this,26,"time",JsonValue.Create(value));}
     public float length=>P.Value(this,26,"duration",0f);
     public float playbackSpeed {get=>P.Value(this,26,"speed",1f);set=>P.Property(this,26,"speed",JsonValue.Create(value));}
+    /// <summary>0 Render Texture, 1 Material Override.</summary>
+    public VideoRenderMode renderMode {get=>(VideoRenderMode)P.Value(this,26,"renderMode",0);set=>P.Property(this,26,"renderMode",JsonValue.Create((int)value));}
+    public bool audioEnabled {get=>P.Value(this,26,"audio",true);set=>P.Property(this,26,"audio",JsonValue.Create(value));}
+    public float volume {get=>P.Value(this,26,"volume",1f);set=>P.Property(this,26,"volume",JsonValue.Create(value));}
     public void Play()=>isPlaying=true;
     public void Pause()=>isPlaying=false;
     public void Stop(){isPlaying=false;time=0;}

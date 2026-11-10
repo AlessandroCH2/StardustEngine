@@ -386,6 +386,29 @@ static void TestLODGroup() {
     auto& dup=scene.Reg().Get<LODGroupComponent>(pasted[0]);EntityID dupNear=scene.FindByUUID(dup.levels[0].renderers[0]);
     Check(dupNear&&dupNear!=near&&scene.GetParent(dupNear)==pasted[0],"duplicated LOD Group still points at the original renderers");
 }
+static void TestVideoDecoding() {
+    auto mpeg=VideoPlayerSystem::Probe((FileSystem::EngineRoot()/"Tests/Fixtures/VideoTest.mpg").generic_string());
+    Check(mpeg.width>0&&mpeg.framesDecoded>0,"MPEG-1 clip does not decode");
+#ifdef _WIN32
+    auto mp4=FileSystem::EngineRoot()/"SandboxProject/Assets/Video/2026-07-16 15-32-19.mp4";
+    if(std::filesystem::exists(mp4)){
+        auto probeStart=std::chrono::steady_clock::now();        auto info=VideoPlayerSystem::Probe(mp4.generic_string());auto probeMs=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-probeStart).count();
+        std::cout<<"MP4: "<<info.width<<"x"<<info.height<<", "<<info.duration<<" s, "<<info.channels<<" ch "<<info.sampleRate<<" Hz, "<<info.framesDecoded<<" frames in 1 s, "<<probeMs<<" ms\n";
+        Check(info.width>0&&info.duration>0&&info.framesDecoded>0,"MP4 clip does not decode through Media Foundation");
+    }
+    // Streaming an MP4 out of an encrypted pak
+    std::filesystem::path small="C:/Windows/SystemApps/Microsoft.Windows.CloudExperienceHost_cw5n1h2txyewy/media/oobe-intro.mp4";
+    if(std::filesystem::exists(small)){
+        auto root=TestRoot()/"VideoPak";std::filesystem::create_directories(root/"src");std::filesystem::copy_file(small,root/"src/Intro.mp4",std::filesystem::copy_options::overwrite_existing);
+        auto loose=VideoPlayerSystem::Probe((root/"src/Intro.mp4").generic_string());
+        Pak::SetPassphrase("video key");Check(Pak::Build(root/"src",root/"video.pak",true)&&Pak::Mount(root/"video.pak",root/"mounted"),"video pak failed");
+        auto packed=VideoPlayerSystem::Probe((root/"mounted/Intro.mp4").generic_string());
+        std::cout<<"MP4 in pak: "<<packed.width<<"x"<<packed.height<<", "<<packed.framesDecoded<<" frames\n";
+        Check(packed.width==loose.width&&packed.framesDecoded==loose.framesDecoded&&packed.firstPixel==loose.firstPixel&&packed.framesDecoded>0,"MP4 from an encrypted pak differs from the loose file");
+        Pak::Unmount(root/"video.pak");Pak::SetPassphrase("");
+    }
+#endif
+}
 static void TestPrefabLinks(){
     auto file=TestRoot()/"PrefabTests/Linked.prefab";
     Scene source;auto root=source.CreateEntity("Linked Root");auto child=source.CreatePrimitive(PrimitiveType::Cube,"Child");source.SetParent(child,root,false);source.Reg().Get<MeshRendererComponent>(child).material.roughness=.4f;
@@ -564,6 +587,7 @@ int main() {
         TestFbx();
         TestAnimator();
         TestAssetMeta();
+        TestVideoDecoding();
         TestLODGroup();
         TestPakEncryption();
         TestPrefabLinks();

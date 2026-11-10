@@ -12,6 +12,7 @@
 #include "Scripting/ScriptEngine.h"
 #include "Scene/SceneSerializer.h"
 #include "Project/Project.h"
+#include "UI/VideoPlayer.h"
 #include "Audio/AudioEngine.h"
 #include "Core/FileSystem.h"
 #include <nlohmann/json.hpp>
@@ -491,7 +492,23 @@ void EditorApp::DrawInspector() {
     });
 
     auto& layer=reg.Get<NameComponent>(e).layer;auto& layerNames=Project::Config().layers;if(Insp::BeginCombo("Layer",(layer<(int)layerNames.size()&&!layerNames[layer].empty()?layerNames[layer]:std::to_string(layer)).c_str())){for(int i=0;i<32;++i)if(ImGui::Selectable((std::to_string(i)+" "+(i<(int)layerNames.size()?layerNames[i]:"")).c_str(),layer==i))layer=i;ImGui::EndCombo();}
-    ComponentSection<VideoPlayerComponent>(inspectScene,e,"Video Player",true,[](auto& c){AssetUI::AssetField("Video Clip (MPEG-1)",c.clip,{".mpg",".mpeg"});Insp::InputText("Target Texture",&c.targetTexture);Insp::Checkbox("Play On Start",&c.playOnStart);Insp::Checkbox("Loop",&c.loop);Insp::Checkbox("Playing",&c.playing);Insp::DragFloat("Speed",&c.speed,.05f,0,8);Insp::SliderFloat("Time",&c.time,0,c.duration);ImGui::TextDisabled("Attach Rect Transform to show video in a Canvas. Audio uses a separate Audio Source.");});
+    ComponentSection<VideoPlayerComponent>(inspectScene,e,"Video Player",true,[&](auto& c){
+        std::vector<std::string> formats;for(const char* ext:VideoPlayerSystem::SupportedExtensions())formats.push_back(ext);
+        AssetUI::AssetField("Video Clip",c.clip,formats);
+        if(ImGui::IsItemHovered())ImGui::SetTooltip("%s",VideoPlayerSystem::SupportedExtensions().size()>2?"MP4, MOV, WMV, AVI (Windows codecs) and MPEG-1":"MPEG-1 (.mpg) only on Linux");
+        const bool ui=inspectScene.Reg().Has<RectTransformComponent>(e);
+        if(ui)ImGui::TextDisabled("Shown in this object's UI Image");
+        else{
+            Insp::Combo("Render Mode",&c.renderMode,"Render Texture\0Material Override\0");
+            if(c.renderMode==0){AssetUI::AssetField("Target Texture",c.targetTexture,{".rendertexture"});if(c.targetTexture.empty())ImGui::TextDisabled("Pick a Render Texture, then use it in a material or a UI Image.");}
+            else if(!inspectScene.Reg().Has<MeshRendererComponent>(e))ImGui::TextColored({1,.75f,.3f,1},"Material Override needs a Mesh Renderer on this object.");
+            else ImGui::TextDisabled("Replaces the main texture of this object's material.");
+        }
+        Insp::Checkbox("Play On Awake",&c.playOnStart);Insp::Checkbox("Loop",&c.loop);
+        Insp::DragFloat("Playback Speed",&c.speed,.05f,0,8);
+        Insp::Checkbox("Audio",&c.audio);if(c.audio)Insp::SliderFloat("Volume",&c.volume,0,1);
+        if(ActiveScene().IsRunning()){Insp::Checkbox("Playing",&c.playing);Insp::SliderFloat("Time",&c.time,0,std::max(.01f,c.duration));}
+        else ImGui::TextDisabled("Plays in Play mode.");});
     ComponentSection<SpriteRendererComponent>(inspectScene,e,"Sprite Renderer",true,[](auto& c){AssetUI::AssetField("Sprite",c.sprite,{".sprite",".png",".jpg"});AssetUI::AssetField("Material",c.material,{".mat"});Insp::ColorEdit4("Color",&c.color.x);Insp::DragFloat("Pixels Per Unit",&c.pixelsPerUnit,1,.01f,100000);Insp::Checkbox("Flip X",&c.flipX);Insp::Checkbox("Flip Y",&c.flipY);Insp::InputInt("Sorting Order",&c.sortingOrder);});
     ComponentSection<CameraComponent>(inspectScene, e, "Camera", true, [](CameraComponent& c) {
         Insp::Combo("Clear Flags",&c.clearFlags,"Skybox\0Solid Color\0");if(ImGui::IsItemHovered())ImGui::SetTooltip("Solid Color skips the sky and the clouds: use it for render textures");

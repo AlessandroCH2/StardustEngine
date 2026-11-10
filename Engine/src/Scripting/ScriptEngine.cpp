@@ -536,7 +536,7 @@ static void InitNativeApi() {
         if(type==101)data={{"layers",Project::Config().layers}};
         if(type==100){data["connected"]=Input::GamepadConnected((int)id);data["axes"]=j::array();data["buttons"]=j::array();data["pressed"]=j::array();for(int i=0;i<6;++i)data["axes"].push_back(Input::GamepadAxis((int)id,i));for(int i=0;i<15;++i){data["buttons"].push_back(Input::GamepadButton((int)id,i));data["pressed"].push_back(Input::GamepadButton((int)id,i,true));}}
         if(e){auto& r=S()->Reg();
-            if(type==26)if(auto* c=r.TryGet<VideoPlayerComponent>(e))data={{"clip",c->clip},{"targetTexture",c->targetTexture},{"playing",c->playing},{"loop",c->loop},{"time",c->time},{"duration",c->duration},{"speed",c->speed}};
+            if(type==26)if(auto* c=r.TryGet<VideoPlayerComponent>(e))data={{"clip",c->clip},{"targetTexture",c->targetTexture},{"renderMode",c->renderMode},{"playing",c->playing},{"loop",c->loop},{"time",c->time},{"duration",c->duration},{"speed",c->speed},{"audio",c->audio},{"volume",c->volume}};
             auto vec3=[](glm::vec3 v){return j::array({v.x,v.y,v.z});};
             auto collider=[&](const auto* c){if(c)data={{"isTrigger",c->material.isTrigger},{"friction",c->material.friction},{"restitution",c->material.restitution}};};
             if(type==3)if(auto* c=r.TryGet<BoxColliderComponent>(e)){collider(c);data["size"]=vec3(c->size);data["center"]=vec3(c->center);}
@@ -572,7 +572,7 @@ static void InitNativeApi() {
         auto v2=[&](const char* name,glm::vec2& v){if(data.contains(name)&&data[name].is_array()&&data[name].size()==2)v={data[name][0].get<float>(),data[name][1].get<float>()};};
         auto v4=[&](const char* name,glm::vec4& v){if(data.contains(name)&&data[name].is_array()&&data[name].size()==4)v={data[name][0].get<float>(),data[name][1].get<float>(),data[name][2].get<float>(),data[name][3].get<float>()};};
         try{auto& r=S()->Reg();
-            if(type==26)if(auto* c=r.TryGet<VideoPlayerComponent>(e)){c->clip=data.value("clip",c->clip);c->targetTexture=data.value("targetTexture",c->targetTexture);c->playing=data.value("playing",c->playing);c->loop=data.value("loop",c->loop);c->time=data.value("time",c->time);c->speed=data.value("speed",c->speed);}
+            if(type==26)if(auto* c=r.TryGet<VideoPlayerComponent>(e)){c->clip=data.value("clip",c->clip);c->targetTexture=data.value("targetTexture",c->targetTexture);c->playing=data.value("playing",c->playing);c->loop=data.value("loop",c->loop);c->time=data.value("time",c->time);c->speed=data.value("speed",c->speed);c->renderMode=std::clamp(data.value("renderMode",c->renderMode),0,1);c->audio=data.value("audio",c->audio);c->volume=data.value("volume",c->volume);}
             auto v3=[&](const char* name,glm::vec3& v){if(data.contains(name)&&data[name].is_array()&&data[name].size()==3)v={data[name][0].get<float>(),data[name][1].get<float>(),data[name][2].get<float>()};};
             auto collider=[&](auto* c){if(c){c->material.isTrigger=data.value("isTrigger",c->material.isTrigger);c->material.friction=std::max(0.f,data.value("friction",c->material.friction));c->material.restitution=std::clamp(data.value("restitution",c->material.restitution),0.f,1.f);}};
             if(type==3)if(auto* c=r.TryGet<BoxColliderComponent>(e)){collider(c);v3("size",c->size);v3("center",c->center);RebuildBody(e);}

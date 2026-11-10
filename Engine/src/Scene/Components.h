@@ -77,8 +77,11 @@ struct SpriteRendererComponent {
     int sortingOrder=0;
 };
 struct VideoPlayerComponent {
-    std::string clip,targetTexture;
+    std::string clip;
+    int renderMode=0;          // 0 Render Texture, 1 Material Override (this object's mesh). A UI object always shows it in its Image.
+    std::string targetTexture; // Render Texture mode: the .rendertexture asset that receives the frames
     bool playOnStart=true,playing=true,loop=true;
+    bool audio=true;float volume=1;
     float speed=1,time=0,duration=0;
 };
 

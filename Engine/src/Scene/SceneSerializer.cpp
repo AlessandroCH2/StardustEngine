@@ -55,7 +55,7 @@ static void WriteEntity(Scene& scene, EntityID e, json& out) {
         j["meshRenderer"] = { {"materials",c->materials}, { "mesh", c->mesh }, { "material", c->materialPath }, { "castShadows", c->castShadows },{"receiveShadows",c->receiveShadows},
                               { "embeddedMaterial", mat } };
     }
-    if(auto* c=reg.TryGet<VideoPlayerComponent>(e))j["videoPlayer"]={{"clip",c->clip},{"targetTexture",c->targetTexture},{"playOnStart",c->playOnStart},{"loop",c->loop},{"speed",c->speed}};
+    if(auto* c=reg.TryGet<VideoPlayerComponent>(e))j["videoPlayer"]={{"clip",c->clip},{"renderMode",c->renderMode},{"targetTexture",c->targetTexture},{"playOnStart",c->playOnStart},{"loop",c->loop},{"speed",c->speed},{"audio",c->audio},{"volume",c->volume}};
     if(auto* c=reg.TryGet<SpriteRendererComponent>(e))j["spriteRenderer"]={{"sprite",c->sprite},{"material",c->material},{"color",Vec(c->color)},{"pixelsPerUnit",c->pixelsPerUnit},{"flipX",c->flipX},{"flipY",c->flipY},{"sortingOrder",c->sortingOrder}};
     if (auto* c = reg.TryGet<CameraComponent>(e))
         j["camera"] = { {"cullingMask",c->cullingMask},{"clearFlags",c->clearFlags},{"background",{c->background.r,c->background.g,c->background.b,c->background.a}},{"renderShadows",c->renderShadows},{"postProcessing",c->postProcessing},{"targetTexture",c->targetTexture},{"targetWidth",c->targetWidth},{"targetHeight",c->targetHeight}, {"orthographic",c->orthographic},{"orthographicSize",c->orthographicSize},{"far",c->farPlane}, { "fov", c->fovDegrees }, { "near", c->nearPlane }, { "primary", c->primary } };
@@ -240,7 +240,7 @@ static std::vector<EntityID> ReadEntities(Scene& sceneRef, const json& entities,
                 c.material.emissive = Vec3(m.value("emissive", json()));
             }
         }
-        if(j.contains("videoPlayer")){auto& c=reg.Add<VideoPlayerComponent>(e);auto& m=j["videoPlayer"];c.clip=m.value("clip","");c.targetTexture=m.value("targetTexture","");c.playing=c.playOnStart=m.value("playOnStart",true);c.loop=m.value("loop",true);c.speed=m.value("speed",1.f);}
+        if(j.contains("videoPlayer")){auto& c=reg.Add<VideoPlayerComponent>(e);auto& m=j["videoPlayer"];c.clip=m.value("clip","");c.targetTexture=m.value("targetTexture","");c.playing=c.playOnStart=m.value("playOnStart",true);c.loop=m.value("loop",true);c.speed=m.value("speed",1.f);c.renderMode=std::clamp(m.value("renderMode",0),0,1);c.audio=m.value("audio",true);c.volume=m.value("volume",1.f);}
         if(j.contains("spriteRenderer")){auto& c=reg.Add<SpriteRendererComponent>(e);auto& m=j["spriteRenderer"];c.sprite=m.value("sprite","");c.material=m.value("material","");c.color=Vec4(m.value("color",json()),glm::vec4(1));c.pixelsPerUnit=m.value("pixelsPerUnit",0.f);c.flipX=m.value("flipX",false);c.flipY=m.value("flipY",false);c.sortingOrder=m.value("sortingOrder",0);}
         if (j.contains("camera")) {
             const json& m = j["camera"];

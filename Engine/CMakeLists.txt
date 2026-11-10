@@ -17,6 +17,10 @@ add_custom_target(StardustVersion
     VERBATIM)
 add_dependencies(StardustEngine StardustVersion)
 target_link_libraries(StardustEngine PUBLIC ${CMAKE_DL_LIBS} glfw Vulkan::Vulkan vma glm::glm nlohmann_json::nlohmann_json imgui stb nethost Jolt assetlibs)
+if(WIN32)
+    # Media Foundation decodes MP4 / MOV / WMV / AVI for the Video Player
+    target_link_libraries(StardustEngine PUBLIC mfplat mfreadwrite mfuuid shlwapi ole32)
+endif()
 target_compile_definitions(StardustEngine PUBLIC
     STARDUST_DXC_PATH="${Vulkan_dxc_EXECUTABLE}"
     GLM_FORCE_DEPTH_ZERO_TO_ONE

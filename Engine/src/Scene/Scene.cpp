@@ -307,6 +307,8 @@ void Scene::OnRuntimeStart() {
     SceneManager::SetActiveSceneName(m_Name);
     m_Running = true;
     m_FixedAccumulator = 0.0f;
+    // Video Players start from the beginning, playing only with Play On Awake
+    m_Registry.Each<VideoPlayerComponent>([](EntityID,VideoPlayerComponent& c){c.playing=c.playOnStart;c.time=0;});
     ComputeWorldMatrices();
     m_Physics = MakeScope<PhysicsWorld>(*this);
     timeScale = 1.0f;
@@ -520,7 +522,9 @@ void Scene::SubmitToRenderer(SceneRenderer& renderer, RHI::Device& device,bool a
         if (!mr.materialPath.empty())
             if ((loadedMaterial = AssetManager::GetMaterial(mr.materialPath))) mat = loadedMaterial.get();
         Material tintedCopy;
-        auto tinted=[&](const Material& source)->const Material&{if(mr.tint==glm::vec4(1))return source;tintedCopy=source;tintedCopy.color*=mr.tint;return tintedCopy;};
+        Ref<RHI::Texture> video;
+        if(auto* player=m_Registry.TryGetEnabled<VideoPlayerComponent>(e);player&&player->renderMode==1)video=VideoPlayerSystem::Output(*this,e);
+        auto tinted=[&](const Material& source)->const Material&{if(mr.tint==glm::vec4(1)&&!video)return source;tintedCopy=source;tintedCopy.color*=mr.tint;if(video)tintedCopy.runtimeAlbedo=video;return tintedCopy;};
         auto* animator = m_Registry.TryGet<AnimatorComponent>(e);
         auto mesh = m_Registry.Has<FbxRigComponent>(e)?AssetManager::GetPosedFbx(mr.mesh,m_Registry.Get<IDComponent>(e).uuid^((u64)(uintptr_t)this*0x9E3779B97F4A7C15ull),ModelSkeleton::Pose(*this,e)):animator && (m_Running||animationPreview) ? AssetManager::GetAnimatedFbx(mr.mesh,animator->time,animator->state) : AssetManager::GetMesh(mr.mesh);
         if(mesh&&!mesh->SubMeshes().empty()){for(auto& part:mesh->SubMeshes()){auto material=part.materialSlot<mr.materials.size()?AssetManager::GetMaterial(mr.materials[part.materialSlot]):nullptr;renderer.Submit(mesh,m_WorldCache[e],tinted(material?*material:*mat),e,mr.castShadows,part.firstIndex,part.indexCount,mr.receiveShadows);}}
