@@ -1,3 +1,4 @@
+#include "Assets/AssetMeta.h"
 #include "Animation/AvatarSystem.h"
 #include "Assets/AssetManager.h"
 #include "Core/FileSystem.h"
@@ -287,10 +288,8 @@ json BakeVectorChannel(const std::vector<float>& times, const std::vector<glm::v
 // ---------------------------------------------------------------- settings
 FbxImportSettings FbxImportSettings::Load(const std::string& asset) {
     FbxImportSettings s;
-    auto path = AssetManager::ToAbsolute(asset + ".rig.json");
-    if (!fs::exists(path)) return s;
-    json j = json::parse(FileSystem::ReadText(path), nullptr, false);
-    if (!j.is_object()) return s;
+    json j = AssetMeta::Read(asset, "model");
+    if (j.empty()) return s;
     s.animationType = j.value("animationType", (int)Generic);
     s.avatar = j.value("avatar", std::string());
     s.inPlace = j.value("inPlace", false);
@@ -300,8 +299,7 @@ FbxImportSettings FbxImportSettings::Load(const std::string& asset) {
 bool FbxImportSettings::Save(const std::string& asset) const {
     json loops = json::object();
     for (auto& [take, value] : loop) loops[take] = value;
-    return FileSystem::WriteText(AssetManager::ToAbsolute(asset + ".rig.json"),
-        json({ { "animationType", animationType }, { "avatar", avatar }, { "inPlace", inPlace }, { "loop", loops } }).dump(2));
+    return AssetMeta::Write(asset, "model", json({ { "animationType", animationType }, { "avatar", avatar }, { "inPlace", inPlace }, { "loop", loops } }));
 }
 
 // ---------------------------------------------------------------- avatar authoring

@@ -10,12 +10,17 @@
 #include "Project/Project.h"
 #include "UI/UIAssets.h"
 #include <imgui.h>
+#include <imgui_internal.h>
+#include "UI/CanvasRenderer.h"
+#include <format>
 #include <imgui_stdlib.h>
 namespace Stardust {
 void EditorApp::DrawAssetInspector() {
     namespace fs = std::filesystem;
     auto path = AssetManager::ToAbsolute(m_SelectedAsset);
-    ImGui::TextWrapped("%s",m_SelectedAsset.c_str()); ImGui::Separator();
+    ImGui::TextWrapped("%s",m_SelectedAsset.c_str());
+    if(m_AssetSelection.size()>1&&std::find(m_AssetSelection.begin(),m_AssetSelection.end(),m_SelectedAsset)!=m_AssetSelection.end())ImGui::TextDisabled("%d assets selected",(int)m_AssetSelection.size());
+    ImGui::Separator();
     if (ImGui::Button("Open")) ShellExecuteFile(path);
     ImGui::SameLine(); if (ImGui::Button("Show Folder")) ShellExecuteFile(path.parent_path());
     ImGui::SameLine();if(ImGui::Button("Delete Asset"))RequestDeleteAsset(m_SelectedAsset);
@@ -31,12 +36,59 @@ void EditorApp::DrawAssetInspector() {
     if (!ec) ImGui::TextDisabled("%llu bytes",(unsigned long long)bytes);
     auto ext = path.extension().string();
     if(AssetManager::IsTextureFile(path)){
-        auto settings=TextureImportSettings::Load(m_SelectedAsset);bool changed=false;
-        ImGui::SeparatorText("Texture Import Settings");changed|=Insp::Combo("Texture Type",&settings.type,"Default\0Normal Map\0Sprite (2D/UI)\0");
-        changed|=Insp::Checkbox("sRGB (Color)",&settings.srgb);changed|=Insp::Checkbox("Generate Mip Maps",&settings.mipmaps);changed|=Insp::InputInt("Max Size",&settings.maxSize);
-        changed|=Insp::Combo("Filter Mode",&settings.filter,"Point\0Bilinear\0Anisotropic\0");changed|=Insp::Combo("Wrap Mode",&settings.wrap,"Clamp\0Repeat\0");
-        if(changed&&settings.Save(m_SelectedAsset)){GetDevice().WaitIdle();AssetManager::Invalidate(m_SelectedAsset);}
-        if(settings.type==2&&ImGui::Button("Create Sprite Asset")){SpriteAsset sprite;sprite.texture=m_SelectedAsset;sprite.Save(m_SelectedAsset+".sprite");}
+        // With several textures selected, a change applies to all of them, field by field
+        std::vector<std::string> targets;
+        for(auto& asset:m_AssetSelection)if(AssetManager::IsTextureFile(AssetManager::ToAbsolute(asset)))targets.push_back(asset);
+        if(std::find(targets.begin(),targets.end(),m_SelectedAsset)==targets.end())targets={m_SelectedAsset};
+        std::vector<TextureImportSettings> all;for(auto& t:targets)all.push_back(TextureImportSettings::Load(t));
+        auto settings=TextureImportSettings::Load(m_SelectedAsset);const auto before=settings;bool changed=false;
+        auto differs=[&](auto get){for(auto& s:all)if(get(s)!=get(all[0]))return true;return false;};
+        // Values that differ between the selected textures are drawn in amber (checkboxes show a dash)
+        auto field=[&](bool mixed,auto draw){if(mixed){ImGui::PushStyleColor(ImGuiCol_Text,ImVec4(1,.75f,.35f,1));ImGui::PushItemFlag(ImGuiItemFlags_MixedValue,true);}bool c=draw();if(mixed){ImGui::PopItemFlag();ImGui::PopStyleColor();if(ImGui::IsItemHovered())ImGui::SetTooltip("Different in the selected textures");}changed|=c;};
+        ImGui::SeparatorText(targets.size()>1?std::format("Texture Import Settings ({} textures)",targets.size()).c_str():"Texture Import Settings");
+        field(differs([](auto& s){return s.type;}),[&]{return Insp::Combo("Texture Type",&settings.type,"Default\0Normal Map\0Sprite (2D and UI)\0");});
+        field(differs([](auto& s){return s.srgb;}),[&]{return Insp::Checkbox("sRGB (Color)",&settings.srgb);});
+        field(differs([](auto& s){return s.mipmaps;}),[&]{return Insp::Checkbox("Generate Mip Maps",&settings.mipmaps);});
+        field(differs([](auto& s){return s.maxSize;}),[&]{return Insp::InputInt("Max Size",&settings.maxSize);});
+        field(differs([](auto& s){return s.filter;}),[&]{return Insp::Combo("Filter Mode",&settings.filter,"Point\0Bilinear\0Anisotropic\0");});
+        field(differs([](auto& s){return s.wrap;}),[&]{return Insp::Combo("Wrap Mode",&settings.wrap,"Clamp\0Repeat\0");});
+        if(changed){
+            GetDevice().WaitIdle();
+            for(size_t i=0;i<targets.size();++i){auto s=all[i];
+                if(settings.type!=before.type){s.type=settings.type;if(s.type==2&&before.type!=2){s.mipmaps=false;s.wrap=0;}}
+                if(settings.srgb!=before.srgb)s.srgb=settings.srgb;if(settings.mipmaps!=before.mipmaps)s.mipmaps=settings.mipmaps;
+                if(settings.maxSize!=before.maxSize)s.maxSize=std::clamp(settings.maxSize,16,16384);if(settings.filter!=before.filter)s.filter=settings.filter;if(settings.wrap!=before.wrap)s.wrap=settings.wrap;
+                if(s.Save(targets[i]))AssetManager::Invalidate(targets[i]);}
+            CanvasRenderer::Clear();
+            settings=TextureImportSettings::Load(m_SelectedAsset);
+        }
+        if(settings.type==2){
+            // The sprite lives in the texture's .meta: no separate asset, use the texture itself in Image fields
+            std::vector<std::string> sprites;for(auto& t:targets)if(TextureImportSettings::Load(t).type==2)sprites.push_back(t);
+            std::vector<SpriteAsset> current;for(auto& t:sprites)current.push_back(SpriteAsset::Load(t));
+            auto sprite=SpriteAsset::Load(m_SelectedAsset);const auto old=sprite;bool edited=false;
+            auto spriteDiffers=[&](auto get){for(auto& s:current)if(get(s)!=get(current[0]))return true;return false;};
+            auto spriteField=[&](bool mixed,auto draw){if(mixed)ImGui::PushStyleColor(ImGuiCol_Text,ImVec4(1,.75f,.35f,1));bool c=draw();if(mixed){ImGui::PopStyleColor();if(ImGui::IsItemHovered())ImGui::SetTooltip("Different in the selected textures");}edited|=c;};
+            ImGui::SeparatorText("Sprite");
+            spriteField(spriteDiffers([](auto& s){return s.pixelsPerUnit;}),[&]{return Insp::DragFloat("Pixels Per Unit",&sprite.pixelsPerUnit,1,1,10000,"%.0f");});
+            static const char* pivots[]={"Center","Top Left","Top","Top Right","Left","Right","Bottom Left","Bottom","Bottom Right","Custom"};
+            static const glm::vec2 pivotValues[]={{.5f,.5f},{0,1},{.5f,1},{1,1},{0,.5f},{1,.5f},{0,0},{.5f,0},{1,0}};
+            int pivotIndex=9;for(int i=0;i<9;++i)if(glm::all(glm::lessThan(glm::abs(sprite.pivot-pivotValues[i]),glm::vec2(1e-4f))))pivotIndex=i;
+            const bool pivotMixed=spriteDiffers([](auto& s){return glm::vec2(s.pivot);});
+            spriteField(pivotMixed,[&]{if(!Insp::BeginCombo("Pivot",pivots[pivotIndex]))return false;bool c=false;for(int i=0;i<9;++i)if(ImGui::Selectable(pivots[i],pivotIndex==i)){sprite.pivot=pivotValues[i];c=true;}ImGui::EndCombo();return c;});
+            if(pivotIndex==9)spriteField(pivotMixed,[&]{return Insp::DragFloat2("Custom Pivot",&sprite.pivot.x,.01f,0,1);});
+            spriteField(spriteDiffers([](auto& s){return glm::vec4(s.border);}),[&]{return Insp::DragFloat4("Border (L B R T)",&sprite.border.x,1,0,8192,"%.0f");});
+            if(edited){
+                for(size_t i=0;i<sprites.size();++i){auto s=current[i];
+                    if(sprite.pixelsPerUnit!=old.pixelsPerUnit)s.pixelsPerUnit=std::max(1.f,sprite.pixelsPerUnit);
+                    if(sprite.pivot!=old.pivot)s.pivot=glm::clamp(sprite.pivot,glm::vec2(0),glm::vec2(1));
+                    if(sprite.border!=old.border)s.border=glm::max(sprite.border,glm::vec4(0));
+                    s.Save(sprites[i]);}
+                CanvasRenderer::Clear();
+            }
+            if(sprites.size()==1&&ImGui::Button("Sprite Editor")){m_SpriteEditorPath=m_SelectedAsset;m_SpriteEditorOpen=true;}
+            ImGui::TextDisabled("Drop the texture on an Image or Sprite Renderer to use it.");
+        }
     }
     if(ext==".rendertexture"){
         auto j=nlohmann::json::parse(FileSystem::ReadText(path),nullptr,false);if(!j.is_object())j=nlohmann::json::object();int width=j.value("width",512),height=j.value("height",512);bool changed=Insp::InputInt("Width",&width);changed|=Insp::InputInt("Height",&height);if(changed)FileSystem::WriteText(path,nlohmann::json({{"width",std::clamp(width,16,8192)},{"height",std::clamp(height,16,8192)}}).dump(2));if(auto texture=AssetManager::GetTexture(m_SelectedAsset,false)){float w=std::min(360.f,ImGui::GetContentRegionAvail().x);ImGui::Image((ImTextureID)GetDevice().ImGuiTexture(texture.get()),{w,w*height/std::max(1,width)});}return;
@@ -50,7 +102,7 @@ void EditorApp::DrawAssetInspector() {
         if (auto tex=AssetManager::GetTexture(m_SelectedAsset,true)) {
             float width=std::max(1.0f,ImGui::GetContentRegionAvail().x);
             ImGui::Image((ImTextureID)GetDevice().ImGuiTexture(tex.get()),{width,width*tex->Height()/std::max(1u,tex->Width())});
-            if(ImGui::Button("Create Sprite")){SpriteAsset sprite;sprite.texture=m_SelectedAsset;sprite.rect={0,0,tex->Width(),tex->Height()};auto destination=path;destination.replace_extension(".sprite");sprite.Save(AssetManager::ToRelative(destination));}
+            if(TextureImportSettings::Load(m_SelectedAsset).type!=2&&ImGui::Button("Create Sprite")){SpriteAsset sprite;sprite.texture=m_SelectedAsset;sprite.rect={0,0,tex->Width(),tex->Height()};auto destination=path;destination.replace_extension(".sprite");sprite.Save(AssetManager::ToRelative(destination));}
             static int cell[2]={64,64};static int gap=0;
             ImGui::InputInt2("Slice Cell",cell);Insp::InputInt("Slice Gap",&gap);
             if(ImGui::Button("Slice Grid Into Sprites")){

@@ -103,6 +103,8 @@ VulkanTexture::VulkanTexture(VulkanDevice& dev, const TextureDesc& desc) : m_Dev
     ci.mipLevels = desc.mipLevels;
     ci.arrayLayers = desc.dim == TextureDim::Cube ? desc.arrayLayers * 6 : desc.arrayLayers;
     if (desc.dim == TextureDim::Cube) ci.flags |= VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
+    const bool srgb = desc.format == Format::RGBA8_SRGB || desc.format == Format::BGRA8_SRGB;
+    if (srgb && Any(desc.usage & TextureUsage::Sampled)) ci.flags |= VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT;
     ci.samples = VK_SAMPLE_COUNT_1_BIT;
     ci.tiling = VK_IMAGE_TILING_OPTIMAL;
     ci.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
@@ -138,6 +140,11 @@ void VulkanTexture::CreateViews() {
         vi.format = ToVk(m_Desc.format);
         vi.subresourceRange = { m_Aspect, 0, m_Desc.mipLevels, 0, layers };
         VK_CHECK(vkCreateImageView(d, &vi, nullptr, &srvView));
+        if (m_Desc.format == Format::RGBA8_SRGB || m_Desc.format == Format::BGRA8_SRGB) {
+            VkImageViewCreateInfo ui = vi;
+            ui.format = m_Desc.format == Format::RGBA8_SRGB ? VK_FORMAT_R8G8B8A8_UNORM : VK_FORMAT_B8G8R8A8_UNORM;
+            VK_CHECK(vkCreateImageView(d, &ui, nullptr, &imguiView));
+        }
         m_SRV = m_Dev.SrvAllocator().Allocate();
         u32 binding = m_Desc.dim == TextureDim::Tex2DArray ? kBindTex2DArray
                     : m_Desc.dim == TextureDim::Tex3D ? kBindTex3D
@@ -184,6 +191,7 @@ VulkanTexture::~VulkanTexture() {
     std::vector<VkImageView> views = m_UAVViews;
     for (auto& [k, v] : m_AttachmentViews) views.push_back(v);
     if (srvView) views.push_back(srvView);
+    if (imguiView) views.push_back(imguiView);
     VkImage img = m_OwnsImage ? image : VK_NULL_HANDLE;
     VmaAllocation alloc = allocation;
     u32 srv = m_SRV;

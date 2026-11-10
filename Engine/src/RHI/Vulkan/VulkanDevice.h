@@ -47,6 +47,7 @@ public:
     VkImage image = VK_NULL_HANDLE;
     VmaAllocation allocation = nullptr;
     VkImageView srvView = VK_NULL_HANDLE;
+    VkImageView imguiView = VK_NULL_HANDLE; // UNORM view of an sRGB texture: the editor UI draws to a UNORM swapchain
     VkDescriptorSet imguiSet = VK_NULL_HANDLE;
 
 private:

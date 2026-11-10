@@ -914,7 +914,7 @@ void* VulkanDevice::ImGuiTexture(Texture* tex) {
     auto* t = (VulkanTexture*)tex;
     if (!t || !t->srvView) return nullptr;
     if (!t->imguiSet)
-        t->imguiSet = ImGui_ImplVulkan_AddTexture(Sampler(SamplerIndex::LinearClamp), t->srvView, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL);
+        t->imguiSet = ImGui_ImplVulkan_AddTexture(Sampler(SamplerIndex::LinearClamp), t->imguiView ? t->imguiView : t->srvView, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL);
     return (void*)t->imguiSet;
 }
 

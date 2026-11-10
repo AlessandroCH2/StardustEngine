@@ -1,6 +1,7 @@
 #include "EditorApp.h"
 #include "Animation/ModelSkeleton.h"
 #include "Assets/AssetManager.h"
+#include "AssetUI.h"
 #include "Core/FileSystem.h"
 #include "Scene/SceneSerializer.h"
 #include "Scripting/ScriptEngine.h"
@@ -34,7 +35,7 @@ bool EditorApp::HandleAssetDropOnEntity(EntityID target, const std::string& asse
         m_Selected = target;
         return true;
     }
-    if(ext==".sprite"||AssetManager::IsTextureFile(p))if(auto* image=reg.TryGet<UIImageComponent>(target)){if(ext==".sprite")image->sprite=asset;else{image->sprite.clear();image->texture=asset;}return true;}
+    if(ext==".sprite"||AssetManager::IsTextureFile(p))if(auto* image=reg.TryGet<UIImageComponent>(target)){if(ext==".sprite"||AssetUI::IsSpriteTexture(asset))image->sprite=asset;else{image->sprite.clear();image->texture=asset;}return true;}
     if(ext==".ttf"||ext==".otf")if(auto* text=reg.TryGet<UITextComponent>(target)){text->font=asset;return true;}
     if (ext == ".mat") {
         if(auto* image=reg.TryGet<UIImageComponent>(target)){image->material=asset;return true;}

@@ -5,7 +5,7 @@
 
 namespace Stardust {
 
-// Per-FBX import choices, stored next to the model as <file>.rig.json
+// Per-FBX import choices, stored in the "model" section of the model's .meta file
 struct FbxImportSettings {
     enum Type { None = 0, Generic = 1, Humanoid = 2 };
     int animationType = Generic;

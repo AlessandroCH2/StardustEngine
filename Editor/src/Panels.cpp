@@ -1,3 +1,4 @@
+#include "Assets/AssetMeta.h"
 #include "EditorApp.h"
 #include <set>
 #include "EditorIcons.h"
@@ -1029,7 +1030,7 @@ void EditorApp::DrawProject() {
         entries.clear(); modelChildren.clear();
         std::error_code ec;
         auto hidden = [](const fs::directory_entry& de) { // files that belong to a model are shown under its arrow, or not at all
-            return (de.is_directory() && de.path().extension() == ".fbm") || FileSystem::Utf8(de.path().filename()).ends_with(".rig.json");
+            return (de.is_directory() && de.path().extension() == ".fbm") || (!de.is_directory() && AssetMeta::IsSideFile(de.path()));
         };
         if (projectSearch.empty()) {
             for (auto& de : fs::directory_iterator(m_ProjectCurrentDir, ec)) if (!hidden(de)) entries.push_back(de);
@@ -1078,6 +1079,13 @@ void EditorApp::DrawProject() {
                 void* id = tex ? GetDevice().ImGuiTexture(tex.get()) : nullptr;
                 if (id) ImGui::ImageButton("##thumb", (ImTextureID)id, ImVec2(size.x - 8, size.y - 8));
                 else ImGui::Button("IMG", size);
+                if (AssetUI::IsSpriteTexture(relPath)) {
+                    auto* badgeDraw = ImGui::GetWindowDrawList();
+                    ImVec2 corner = ImGui::GetItemRectMin(); corner.x += 3; corner.y += 3;
+                    badgeDraw->AddRectFilled(corner, { corner.x + 22, corner.y + 14 }, IM_COL32(60, 120, 200, 230), 3);
+                    badgeDraw->AddText({ corner.x + 4, corner.y }, IM_COL32(255, 255, 255, 255), "2D");
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Sprite (double-click to edit)");
+                }
             } else {
                 AssetUI::IconButton(de.path(),dir,selected,{size.x,size.y});
             }
@@ -1100,7 +1108,7 @@ void EditorApp::DrawProject() {
                 if (dir) { m_ProjectCurrentDir = de.path(); projectSearch.clear(); }
                 else if (ext == ".scene") OpenScene(de.path());
                 else if (ext == ".prefab") OpenPrefab(de.path());
-                else if (ext == ".sprite") {m_SpriteEditorPath=relPath;m_SpriteEditorOpen=true;}
+                else if (ext == ".sprite" || AssetUI::IsSpriteTexture(relPath)) {m_SpriteEditorPath=relPath;m_SpriteEditorOpen=true;}
                 else if (ext == ".anim" || ext == ".controller") {m_AnimationAsset=relPath;m_ShowAnimationEditor=true;}
                 else if (ext == ".cs") ShellExecuteFile(de.path());
                 else if (ext == ".wav" || ext == ".mp3" || ext == ".ogg" || ext == ".flac") AudioEngine::PreviewClip(relPath);

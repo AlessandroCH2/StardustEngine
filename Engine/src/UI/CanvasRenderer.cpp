@@ -15,6 +15,8 @@ bool hoveredInteractable=true;
 struct Batch {Material material;std::vector<Vertex> vertices;std::vector<u32> indices;std::string key;};
 struct Cached {u64 hash=0;Ref<Mesh> mesh;};
 std::unordered_map<std::string,std::vector<Cached>> cache;
+// Screen overlays are drawn after tone mapping into a UNORM target, so their images must not be decoded from sRGB
+bool s_GammaSpace=false;
 glm::vec2 Point(const glm::mat4& m,glm::vec2 p){return glm::vec2(m*glm::vec4(p,0,1));}
 std::array<glm::vec2,4> Corners(const glm::mat4& m,glm::vec2 s){return {Point(m,{0,0}),Point(m,{s.x,0}),Point(m,s),Point(m,{0,s.y})};}
 std::string MaterialKey(const Material& m){nlohmann::json j;m.ToJson(j);return j.dump()+std::to_string(m.runtimeAlbedo?m.runtimeAlbedo->SRV():0);}
@@ -41,7 +43,7 @@ void Quad(std::vector<Batch>& batches,const Material& material,const UIRect& rec
 }
 void Image(std::vector<Batch>& batches,const UIRect& r,const UIImageComponent& image,RHI::Device& device,glm::vec2 position=glm::vec2(0),glm::vec2 overrideSize=glm::vec2(-1),glm::vec4 multiply=glm::vec4(1)) {
     auto sprite=SpriteAsset::Load(image.sprite.empty()?image.texture:image.sprite);
-    auto texture=AssetManager::GetTexture(sprite.texture,true);
+    auto texture=AssetManager::GetTexture(sprite.texture,!s_GammaSpace);
     glm::vec2 textureSize=texture?glm::vec2(texture->Width(),texture->Height()):glm::vec2(1);
     if(sprite.rect.z<=0||sprite.rect.w<=0)sprite.rect={0,0,textureSize.x,textureSize.y};
     glm::vec2 size=overrideSize.x<0?r.size:overrideSize;
@@ -145,7 +147,7 @@ glm::mat4 CanvasRenderer::CanvasWorld(Scene& scene,EntityID canvas,glm::vec2 log
 bool CanvasRenderer::MouseOnCanvas(Scene& scene,EntityID canvas,const RenderCamera& camera,glm::vec2 origin,glm::vec2 size,glm::vec2 mouse,glm::vec2& point,glm::vec2 logicalSize){auto ndc=(mouse-origin)/size*2.f-1.f;ndc.y=-ndc.y;auto inverse=glm::inverse(camera.projection*camera.view);auto a=inverse*glm::vec4(ndc,1,1),b=inverse*glm::vec4(ndc,.5,1);auto local=glm::inverse(CanvasWorld(scene,canvas,logicalSize));auto start=glm::vec3(local*glm::vec4(glm::vec3(a)/a.w,1));auto direction=glm::vec3(local*glm::vec4(glm::vec3(b)/b.w-glm::vec3(a)/a.w,0));if(std::abs(direction.z)<1e-8)return false;float distance=-start.z/direction.z;if(distance<0)return false;point=glm::vec2(start+direction*distance);return true;}
 void CanvasRenderer::Submit(Scene& scene,SceneRenderer& renderer,RHI::Device& device,glm::vec2 viewport,bool sceneView,bool alwaysOnTop,bool includeOverlay){
     auto rectangles=Layout(scene,viewport,sceneView);std::unordered_set<std::string> live;
-    for(auto& r:rectangles){auto& reg=scene.Reg();if(!includeOverlay&&reg.Get<CanvasComponent>(r.canvas).renderMode==0)continue;if(!(renderer.Camera().cullingMask&(1u<<std::clamp(reg.Get<NameComponent>(r.entity).layer,0,31))))continue;if(r.alpha<=0)continue;std::vector<Batch> batches;
+    for(auto& r:rectangles){auto& reg=scene.Reg();if(!includeOverlay&&reg.Get<CanvasComponent>(r.canvas).renderMode==0)continue;s_GammaSpace=alwaysOnTop||(!sceneView&&reg.Get<CanvasComponent>(r.canvas).renderMode==0);if(!(renderer.Camera().cullingMask&(1u<<std::clamp(reg.Get<NameComponent>(r.entity).layer,0,31))))continue;if(r.alpha<=0)continue;std::vector<Batch> batches;
         auto* maskOwner=reg.TryGetEnabled<UIMaskComponent>(r.entity);
         if(auto* image=reg.TryGetEnabled<UIImageComponent>(r.entity);image&&(!maskOwner||maskOwner->showGraphic)){
             glm::vec4 tint(1,1,1,r.alpha);

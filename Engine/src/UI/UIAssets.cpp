@@ -1,5 +1,6 @@
 #include "UI/UIAssets.h"
 #include "Core/FileSystem.h"
+#include "Assets/AssetMeta.h"
 #include "Core/Log.h"
 #include <nlohmann/json.hpp>
 #define STB_TRUETYPE_IMPLEMENTATION
@@ -8,16 +9,21 @@
 namespace Stardust {
 SpriteAsset SpriteAsset::Load(const std::string& path) {
     SpriteAsset s;
-    if(!path.ends_with(".sprite")) {s.texture=path; return s;}
-    auto j=nlohmann::json::parse(FileSystem::ReadText(AssetManager::ToAbsolute(path)),nullptr,false);
-    if(!j.is_object()) return s;
-    s.texture=j.value("texture",""); s.pixelsPerUnit=j.value("pixelsPerUnit",100.0f);
+    const bool embedded=!path.ends_with(".sprite");
+    // A texture imported as Sprite keeps its sprite in its own .meta, like Unity: no extra file
+    auto j=embedded?AssetMeta::Read(path,"sprite"):nlohmann::json::parse(FileSystem::ReadText(AssetManager::ToAbsolute(path)),nullptr,false);
+    if(embedded)s.texture=path;
+    if(!j.is_object()||j.empty()) return s;
+    if(!embedded)s.texture=j.value("texture","");
+    s.pixelsPerUnit=j.value("pixelsPerUnit",100.0f);
     auto read=[&](const char* key,float* value,int count){if(j.contains(key)&&j[key].is_array()&&j[key].size()==count) for(int i=0;i<count;++i)value[i]=j[key][i].get<float>();};
     try {read("rect",&s.rect.x,4);read("border",&s.border.x,4);read("pivot",&s.pivot.x,2);}catch(...){}
     return s;
 }
 bool SpriteAsset::Save(const std::string& path) const {
-    nlohmann::json j={{"texture",texture},{"rect",{rect.x,rect.y,rect.z,rect.w}},{"border",{border.x,border.y,border.z,border.w}},{"pivot",{pivot.x,pivot.y}},{"pixelsPerUnit",pixelsPerUnit}};
+    nlohmann::json j={{"rect",{rect.x,rect.y,rect.z,rect.w}},{"border",{border.x,border.y,border.z,border.w}},{"pivot",{pivot.x,pivot.y}},{"pixelsPerUnit",pixelsPerUnit}};
+    if(!path.ends_with(".sprite"))return AssetMeta::Write(path,"sprite",j);
+    j["texture"]=texture;
     return FileSystem::WriteText(AssetManager::ToAbsolute(path),j.dump(2));
 }
 struct UIFont::Impl {std::vector<u8> bytes; stbtt_fontinfo info{}; float scale=1;};

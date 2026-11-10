@@ -1,4 +1,5 @@
 // Project Hub, Build Settings, Project Settings, player builds and undo/redo
+#include "Assets/AssetMeta.h"
 #include "Renderer/Quality.h"
 #include "EditorApp.h"
 #include "EditorIcons.h"
@@ -96,6 +97,7 @@ void EditorApp::OpenProject(const fs::path& file, bool isNew) {
     if (m_State != PlayState::Edit) Stop();
     if (Project::IsLoaded() && m_EditorScene) SaveProjectState();
     if (!Project::Load(file)) return;
+    AssetMeta::MigrateFolder(Project::AssetsDir());
     PackageManager::EnsureDefault();
     Project::WriteEditorScriptProject();
     Project::AddRecent(file);

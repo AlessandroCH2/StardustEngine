@@ -14,6 +14,8 @@ namespace Stardust::AssetUI {
 // Combo listing project assets with the given extensions, plus drag & drop from the Project panel.
 // Returns true when the path changed.
 bool AssetField(const char* label, std::string& path, const std::vector<std::string>& extensions, const char* noneLabel = "None");
+// A texture whose Texture Type is Sprite: it can be used wherever a .sprite is expected
+bool IsSpriteTexture(const std::string& path);
 
 // Shader dropdown + the properties that shader exposes. Returns true when anything changed.
 bool MaterialEditor(Material& m);

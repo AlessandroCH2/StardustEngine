@@ -19,6 +19,8 @@
 #include "Scene/SceneSerializer.h"
 #include "Scripting/ScriptEngine.h"
 #include "Animation/AnimatorSystem.h"
+#include "Assets/AssetMeta.h"
+#include "Assets/TextureImport.h"
 #include "Project/PackageManager.h"
 #include "Scene/PrefabSystem.h"
 #include "UI/CanvasRenderer.h"
@@ -313,6 +315,27 @@ animator.playing=false; AnimatorSystem::Update(scene,0.5f);
     Check(std::abs(scene.Reg().Get<TransformComponent>(child).position.x-2.5f)<0.001f,"paused Animator changed transform");
 }
 
+static void TestAssetMeta() {
+    auto root=TestRoot()/"MetaTest";
+    auto texture=(root/"Icon.png").generic_string(),model=(root/"Hero.fbx").generic_string();
+    FileSystem::WriteText(texture,"x");FileSystem::WriteText(model,"x");
+    FileSystem::WriteText(texture+".import.json",R"({"srgb":false,"maxSize":512})");
+    FileSystem::WriteText(model+".rig.json",R"({"animationType":2,"inPlace":true})");
+    auto settings=TextureImportSettings::Load(texture);
+    Check(!settings.srgb&&settings.maxSize==512,"legacy texture settings were not read");
+    Check(std::filesystem::exists(texture+".meta")&&!std::filesystem::exists(texture+".import.json"),"texture settings were not moved to .meta");
+    Check(AssetMeta::MigrateFolder(root)==1&&!std::filesystem::exists(model+".rig.json"),"folder migration missed the model");
+    auto meta=nlohmann::json::parse(FileSystem::ReadText(model+".meta"));
+    Check(meta["model"].value("animationType",0)==2&&meta.value("guid",std::string()).size()==32,"model .meta lost its settings or id");
+    settings.maxSize=256;settings.Save(texture);
+    auto saved=nlohmann::json::parse(FileSystem::ReadText(texture+".meta"));
+    Check(saved["texture"].value("maxSize",0)==256&&saved.value("guid",std::string())==nlohmann::json::parse(FileSystem::ReadText(texture+".meta")).value("guid",std::string()),"saving settings rewrote the .meta badly");
+    Check(TextureImportSettings::Load(texture).maxSize==256,"saved settings not read back");
+    Check(AssetMeta::IsSideFile(texture+".meta")&&!AssetMeta::IsSideFile(texture),"side file detection wrong");
+    {SpriteAsset sprite=SpriteAsset::Load(texture);Check(sprite.texture==texture,"embedded sprite lost its texture");sprite.pixelsPerUnit=32;sprite.border={1,2,3,4};Check(sprite.Save(texture),"embedded sprite not saved");
+     auto back=SpriteAsset::Load(texture);Check(back.pixelsPerUnit==32&&back.border.w==4&&back.texture==texture&&TextureImportSettings::Load(texture).maxSize==256,"embedded sprite not read back from the .meta, or it replaced the texture settings");
+     Check(!std::filesystem::exists(texture+".sprite"),"embedded sprite wrote a separate file");}
+}
 static void TestPrefabLinks(){
     auto file=TestRoot()/"PrefabTests/Linked.prefab";
     Scene source;auto root=source.CreateEntity("Linked Root");auto child=source.CreatePrimitive(PrimitiveType::Cube,"Child");source.SetParent(child,root,false);source.Reg().Get<MeshRendererComponent>(child).material.roughness=.4f;
@@ -490,6 +513,7 @@ int main() {
         TestManagedScripts();
         TestFbx();
         TestAnimator();
+        TestAssetMeta();
         TestPrefabLinks();
         TestCanvasAndRichText();
         TestCookingAndAsync();

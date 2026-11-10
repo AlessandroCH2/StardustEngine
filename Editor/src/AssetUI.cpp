@@ -2,6 +2,7 @@
 #include "EditorIcons.h"
 #include "InspectorWidgets.h"
 #include "Assets/AssetManager.h"
+#include "Assets/TextureImport.h"
 #include "Core/Log.h"
 #include "Core/FileSystem.h"
 #include <imgui.h>
@@ -21,6 +22,8 @@ static void Label(const char* label) {
     Insp::LabelCell(label);
 }
 
+bool IsSpriteTexture(const std::string& path) { return AssetManager::IsTextureFile(AssetManager::ToAbsolute(path)) && TextureImportSettings::Load(path).type == 2; }
+
 static bool AcceptAssetDrop(std::string& path, const std::vector<std::string>& extensions) {
     bool changed = false;
     if (ImGui::BeginDragDropTarget()) {
@@ -29,6 +32,7 @@ static bool AcceptAssetDrop(std::string& path, const std::vector<std::string>& e
             std::string ext = fs::path(dropped).extension().string();
             std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
             if (std::find(extensions.begin(), extensions.end(), ext) != extensions.end()) { path = dropped; changed = true; }
+            else if (std::find(extensions.begin(), extensions.end(), ".sprite") != extensions.end() && IsSpriteTexture(dropped)) { path = dropped; changed = true; }
         }
         ImGui::EndDragDropTarget();
     }
@@ -54,7 +58,12 @@ static bool AssetSlot(std::string& path, const std::vector<std::string>& extensi
                 item.detail = "Built-in";
                 items.push_back(std::move(item));
             }
-        for (const std::string& asset : AssetManager::Find(extensions)) {
+        std::vector<std::string> found = AssetManager::Find(extensions);
+        // Textures imported as Sprite are sprites too
+        if (std::find(extensions.begin(), extensions.end(), ".sprite") != extensions.end())
+            for (const std::string& asset : AssetManager::Find({ ".png", ".jpg", ".jpeg", ".tga", ".bmp" }))
+                if (IsSpriteTexture(asset) && std::find(found.begin(), found.end(), asset) == found.end()) found.push_back(asset);
+        for (const std::string& asset : found) {
             PickerItem item;
             item.key = asset;
             item.name = FileSystem::Utf8(fs::u8path(asset).stem());
