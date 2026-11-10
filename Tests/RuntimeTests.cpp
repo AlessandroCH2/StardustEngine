@@ -20,6 +20,7 @@
 #include "Scripting/ScriptEngine.h"
 #include "Animation/AnimatorSystem.h"
 #include "Assets/AssetMeta.h"
+#include "Renderer/Quality.h"
 #include "Assets/TextureImport.h"
 #include "Project/PackageManager.h"
 #include "Scene/PrefabSystem.h"
@@ -373,7 +374,9 @@ static void TestLODGroup() {
     RenderCamera camera;camera.fovY=glm::radians(60.f);
     auto at=[&](float distance){camera.position={0,0,distance};return scene.SelectLOD(group,camera);};
     // A 1 m object fills 0.866/d of a 60 degree view
+    const float bias=GraphicsQuality::Current().lodBias;GraphicsQuality::Current().lodBias=1;
     Check(at(1)==0&&at(2)==1&&at(5)==2&&at(20)==-1,"LOD level chosen by screen height is wrong");
+    GraphicsQuality::Current().lodBias=2;Check(at(2)==0&&at(4)==1,"LOD Bias not applied");GraphicsQuality::Current().lodBias=bias;
     auto copy=SceneSerializer::FromJson(SceneSerializer::ToJson(scene));Check(copy!=nullptr,"scene with LOD Group not reloaded");
     auto loadedGroup=copy->FindByUUID(scene.Reg().Get<IDComponent>(group).uuid);auto* loaded=copy->Reg().TryGet<LODGroupComponent>(loadedGroup);
     Check(loaded&&loaded->levels.size()==3&&std::abs(loaded->levels[1].screenHeight-0.3f)<1e-5f&&loaded->levels[0].renderers.size()==1&&copy->FindByUUID(loaded->levels[0].renderers[0])!=kNullEntity,"LOD Group lost its levels on save");

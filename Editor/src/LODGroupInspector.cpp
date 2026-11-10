@@ -2,6 +2,8 @@
 // and the renderers of the selected level
 #include "InspectorWidgets.h"
 #include "Scene/Scene.h"
+#include "Renderer/Quality.h"
+#include <cmath>
 #include <imgui.h>
 #include <algorithm>
 #include <cctype>
@@ -41,9 +43,10 @@ void DrawLODGroupInspector(Scene& scene, EntityID e, LODGroupComponent& g, const
     ImGui::InvisibleButton("##lodBar", { width, height });
     const bool hovered = ImGui::IsItemHovered(), active = ImGui::IsItemActive();
     auto* draw = ImGui::GetWindowDrawList();
-    auto x = [&](float h) { return origin.x + (1 - std::clamp(h, 0.f, 1.f)) * width; };
+    // Square-root scale, like Unity's bar: small percentages (the far levels) get room to be dragged
+    auto x = [&](float h) { return origin.x + (1 - std::sqrt(std::clamp(h, 0.f, 1.f))) * width; };
     const ImVec2 mouse = ImGui::GetMousePos();
-    const float mouseHeight = 1 - std::clamp((mouse.x - origin.x) / width, 0.f, 1.f);
+    const float along = 1 - std::clamp((mouse.x - origin.x) / width, 0.f, 1.f), mouseHeight = along * along;
 
     int separatorHot = -1;
     for (int i = 0; i < (int)g.levels.size(); ++i) if (std::abs(mouse.x - x(g.levels[i].screenHeight)) < 5 && hovered) separatorHot = i;
@@ -92,7 +95,7 @@ void DrawLODGroupInspector(Scene& scene, EntityID e, LODGroupComponent& g, const
         draw->AddLine({ cx, origin.y - 3 }, { cx, origin.y + height + 3 }, IM_COL32(255, 220, 90, 255), 2);
         draw->AddTriangleFilled({ cx - 5, origin.y + height + 9 }, { cx + 5, origin.y + height + 9 }, { cx, origin.y + height + 3 }, IM_COL32(255, 220, 90, 255));
         ImGui::Dummy({ 1, 8 });
-        ImGui::TextDisabled("Scene camera: %.1f%% of the view, %s", h * 100, sceneLevel < 0 ? "culled" : std::format("LOD {}", sceneLevel).c_str());
+        ImGui::TextDisabled("Scene camera: %.1f%% (LOD Bias %.1f), %s", h * 100, GraphicsQuality::Current().lodBias, sceneLevel < 0 ? "culled" : std::format("LOD {}", sceneLevel).c_str());
     }
     if (hovered && separatorHot < 0 && dragging < 0) ImGui::SetTooltip("Click a level to select it, drag a line to change where it switches");
 

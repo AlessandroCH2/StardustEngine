@@ -637,40 +637,67 @@ void EditorApp::DrawInspector() {
     ImGui::SetCursorPosX((ImGui::GetContentRegionAvail().x - bw) * 0.5f);
     if (ImGui::Button("Add Component", ImVec2(bw, 0))) ImGui::OpenPopup("AddComponent");
     if (ImGui::BeginPopup("AddComponent")) {
-        if (!reg.Has<MeshRendererComponent>(e) && ImGui::MenuItem("Mesh Renderer")) reg.Add<MeshRendererComponent>(e);
-        if(!reg.Has<VideoPlayerComponent>(e)&&ImGui::MenuItem("Video Player"))reg.Add<VideoPlayerComponent>(e);
-        if (!reg.Has<SpriteRendererComponent>(e) && ImGui::MenuItem("Sprite Renderer")) reg.Add<SpriteRendererComponent>(e);
-        if (!reg.Has<LODGroupComponent>(e) && ImGui::MenuItem("LOD Group")) reg.Add<LODGroupComponent>(e);
-        if (!reg.Has<CameraComponent>(e) && ImGui::MenuItem("Camera")) reg.Add<CameraComponent>(e);
-        if (!reg.Has<DirectionalLightComponent>(e) && ImGui::MenuItem("Directional Light")) reg.Add<DirectionalLightComponent>(e);
-        if (!reg.Has<EnvironmentComponent>(e) && ImGui::MenuItem("Environment")) reg.Add<EnvironmentComponent>(e);
-        if (!reg.Has<TerrainComponent>(e) && ImGui::MenuItem("Terrain")) reg.Add<TerrainComponent>(e);
-        if(!reg.Has<ProceduralTerrainComponent>(e)&&ImGui::MenuItem("Procedural Terrain Generator"))reg.Add<ProceduralTerrainComponent>(e);
-        if(!reg.Has<TerrainVegetationComponent>(e)&&ImGui::MenuItem("Terrain Vegetation"))reg.Add<TerrainVegetationComponent>(e);
-        if (!reg.Has<PointLightComponent>(e) && ImGui::MenuItem("Point Light")) reg.Add<PointLightComponent>(e);
-        if (!reg.Has<SpotLightComponent>(e) && ImGui::MenuItem("Spot Light")) reg.Add<SpotLightComponent>(e);
-        ImGui::SeparatorText("Audio");
-        if (!reg.Has<AudioSourceComponent>(e) && ImGui::MenuItem("Audio Source")) reg.Add<AudioSourceComponent>(e);
-        if (!reg.Has<AudioListenerComponent>(e) && ImGui::MenuItem("Audio Listener")) reg.Add<AudioListenerComponent>(e);
-        ImGui::SeparatorText("Physics");
-        if (!reg.Has<RigidbodyComponent>(e) && ImGui::MenuItem("Rigidbody")) reg.Add<RigidbodyComponent>(e);
-        if (!reg.Has<BoxColliderComponent>(e) && ImGui::MenuItem("Box Collider")) reg.Add<BoxColliderComponent>(e);
-        if (!reg.Has<SphereColliderComponent>(e) && ImGui::MenuItem("Sphere Collider")) reg.Add<SphereColliderComponent>(e);
-        if (!reg.Has<CapsuleColliderComponent>(e) && ImGui::MenuItem("Capsule Collider")) reg.Add<CapsuleColliderComponent>(e);
-        if (!reg.Has<MeshColliderComponent>(e) && ImGui::MenuItem("Mesh Collider")) reg.Add<MeshColliderComponent>(e);
-        ImGui::SeparatorText("UI / Animation");
-        if(!reg.Has<UILayoutGroupComponent>(e)&&ImGui::MenuItem("Layout Group"))reg.Add<UILayoutGroupComponent>(e);
-        if(!reg.Has<CanvasGroupComponent>(e)&&ImGui::MenuItem("Canvas Group"))reg.Add<CanvasGroupComponent>(e);
-        if(!reg.Has<RectMaskComponent>(e)&&ImGui::MenuItem("Rect Mask 2D"))reg.Add<RectMaskComponent>(e);
-        if(!reg.Has<UIMaskComponent>(e)&&ImGui::MenuItem("Mask"))reg.Add<UIMaskComponent>(e);
-        if (!reg.Has<CanvasComponent>(e) && ImGui::MenuItem("Canvas")) reg.Add<CanvasComponent>(e);
-        if (!reg.Has<RectTransformComponent>(e) && ImGui::MenuItem("Rect Transform")) reg.Add<RectTransformComponent>(e);
-        if (!reg.Has<UIImageComponent>(e) && ImGui::MenuItem("UI Image")) reg.Add<UIImageComponent>(e);
-        if (!reg.Has<UITextComponent>(e) && ImGui::MenuItem("UI Text")) reg.Add<UITextComponent>(e);
-        if(!reg.Has<UIInputFieldComponent>(e)&&ImGui::MenuItem("UI Input Field"))reg.Add<UIInputFieldComponent>(e);
-        if (!reg.Has<UIButtonComponent>(e) && ImGui::MenuItem("UI Button")) reg.Add<UIButtonComponent>(e);
-        if (!reg.Has<AnimatorComponent>(e) && ImGui::MenuItem("Animator")) reg.Add<AnimatorComponent>(e);
-        ImGui::SeparatorText("Scripting");
+        // Search box: typing filters the list, Enter adds the first match
+        static std::string componentSearch;
+        if (ImGui::IsWindowAppearing()) { componentSearch.clear(); ImGui::SetKeyboardFocusHere(); }
+        ImGui::SetNextItemWidth(260);
+        const bool enter = ImGui::InputTextWithHint("##componentSearch", "Search components...", &componentSearch, ImGuiInputTextFlags_EnterReturnsTrue);
+        auto lower = [](std::string text) { std::transform(text.begin(), text.end(), text.begin(), [](unsigned char c) { return (char)std::tolower(c); }); return text; };
+        const std::string needle = lower(componentSearch);
+        const bool searching = !needle.empty();
+        int shown = 0; bool picked = false;
+        auto item = [&](const char* name) {
+            if (searching && lower(name).find(needle) == std::string::npos) return false;
+            ++shown;
+            if (enter && !picked) { picked = true; ImGui::CloseCurrentPopup(); return true; }
+            return ImGui::MenuItem(name);
+        };
+        auto section = [&](const char* title) { if (!searching) ImGui::SeparatorText(title); };
+        ImGui::Separator();
+        if (!reg.Has<MeshRendererComponent>(e) && item("Mesh Renderer")) reg.Add<MeshRendererComponent>(e);
+        if(!reg.Has<VideoPlayerComponent>(e)&&item("Video Player"))reg.Add<VideoPlayerComponent>(e);
+        if (!reg.Has<SpriteRendererComponent>(e) && item("Sprite Renderer")) reg.Add<SpriteRendererComponent>(e);
+        if (!reg.Has<LODGroupComponent>(e) && item("LOD Group")) reg.Add<LODGroupComponent>(e);
+        if (!reg.Has<CameraComponent>(e) && item("Camera")) reg.Add<CameraComponent>(e);
+        if (!reg.Has<DirectionalLightComponent>(e) && item("Directional Light")) reg.Add<DirectionalLightComponent>(e);
+        if (!reg.Has<EnvironmentComponent>(e) && item("Environment")) reg.Add<EnvironmentComponent>(e);
+        if (!reg.Has<TerrainComponent>(e) && item("Terrain")) reg.Add<TerrainComponent>(e);
+        if(!reg.Has<ProceduralTerrainComponent>(e)&&item("Procedural Terrain Generator"))reg.Add<ProceduralTerrainComponent>(e);
+        if(!reg.Has<TerrainVegetationComponent>(e)&&item("Terrain Vegetation"))reg.Add<TerrainVegetationComponent>(e);
+        if (!reg.Has<PointLightComponent>(e) && item("Point Light")) reg.Add<PointLightComponent>(e);
+        if (!reg.Has<SpotLightComponent>(e) && item("Spot Light")) reg.Add<SpotLightComponent>(e);
+        section("Audio");
+        if (!reg.Has<AudioSourceComponent>(e) && item("Audio Source")) reg.Add<AudioSourceComponent>(e);
+        if (!reg.Has<AudioListenerComponent>(e) && item("Audio Listener")) reg.Add<AudioListenerComponent>(e);
+        section("Physics");
+        if (!reg.Has<RigidbodyComponent>(e) && item("Rigidbody")) reg.Add<RigidbodyComponent>(e);
+        if (!reg.Has<BoxColliderComponent>(e) && item("Box Collider")) reg.Add<BoxColliderComponent>(e);
+        if (!reg.Has<SphereColliderComponent>(e) && item("Sphere Collider")) reg.Add<SphereColliderComponent>(e);
+        if (!reg.Has<CapsuleColliderComponent>(e) && item("Capsule Collider")) reg.Add<CapsuleColliderComponent>(e);
+        if (!reg.Has<MeshColliderComponent>(e) && item("Mesh Collider")) reg.Add<MeshColliderComponent>(e);
+        section("UI / Animation");
+        if(!reg.Has<UILayoutGroupComponent>(e)&&item("Layout Group"))reg.Add<UILayoutGroupComponent>(e);
+        if(!reg.Has<CanvasGroupComponent>(e)&&item("Canvas Group"))reg.Add<CanvasGroupComponent>(e);
+        if(!reg.Has<RectMaskComponent>(e)&&item("Rect Mask 2D"))reg.Add<RectMaskComponent>(e);
+        if(!reg.Has<UIMaskComponent>(e)&&item("Mask"))reg.Add<UIMaskComponent>(e);
+        if (!reg.Has<CanvasComponent>(e) && item("Canvas")) reg.Add<CanvasComponent>(e);
+        if (!reg.Has<RectTransformComponent>(e) && item("Rect Transform")) reg.Add<RectTransformComponent>(e);
+        if (!reg.Has<UIImageComponent>(e) && item("UI Image")) reg.Add<UIImageComponent>(e);
+        if (!reg.Has<UITextComponent>(e) && item("UI Text")) reg.Add<UITextComponent>(e);
+        if(!reg.Has<UIInputFieldComponent>(e)&&item("UI Input Field"))reg.Add<UIInputFieldComponent>(e);
+        if (!reg.Has<UIButtonComponent>(e) && item("UI Button")) reg.Add<UIButtonComponent>(e);
+        if (!reg.Has<AnimatorComponent>(e) && item("Animator")) reg.Add<AnimatorComponent>(e);
+        auto addScript = [&](const std::string& name) {
+            if (auto* scripts = reg.TryGet<ScriptComponent>(e)) scripts->additional.push_back({name, "{}"});
+            else reg.Add<ScriptComponent>(e, name);
+            if (ActiveScene().IsRunning()) ScriptEngine::Instantiate(e);
+        };
+        if (searching) {
+            // While searching, scripts are listed with the components
+            for (auto& c : ScriptEngine::Classes()) if (item(("Script: " + c.name).c_str())) addScript(c.name);
+            if (shown == 0) ImGui::TextDisabled("No component matches \"%s\"", componentSearch.c_str());
+        } else {
+        section("Scripting");
         if (ImGui::BeginMenu("Script")) {
             if (ScriptEngine::Classes().empty()) ImGui::TextDisabled("No scripts (Scripts > Build)");
             for (auto& c : ScriptEngine::Classes())
@@ -680,6 +707,7 @@ void EditorApp::DrawInspector() {
                     if (ActiveScene().IsRunning()) ScriptEngine::Instantiate(e);
                 }
             ImGui::EndMenu();
+        }
         }
         ImGui::EndPopup();
     }
