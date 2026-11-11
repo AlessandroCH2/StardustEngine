@@ -5,5 +5,7 @@ namespace Stardust::TitleBar {
 void Install(void* nativeWindow);
 // Screen area of the menu bar that drags the window (everything else in the bar stays clickable).
 void SetDragArea(float height, float startX, float endX);
+// A clickable part inside the drag area (the project title)
+void SetDragHole(float startX, float endX);
 
 } // namespace Stardust::TitleBar

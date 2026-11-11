@@ -418,6 +418,7 @@ void EditorApp::OnImGui() {
     DrawSceneView();
     DrawManagedWindows();
     if (m_ShowDemo) ImGui::ShowDemoWindow(&m_ShowDemo);
+    DecorateDockTabs(); // last: every tab bar of this frame has been submitted
 }
 
 void EditorApp::DrawDockspace() {
@@ -427,7 +428,7 @@ void EditorApp::DrawDockspace() {
     ImGui::SetNextWindowViewport(vp->ID);
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse |
         ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBringToFrontOnFocus |
-        ImGuiWindowFlags_NoNavFocus | ImGuiWindowFlags_MenuBar;
+        ImGuiWindowFlags_NoNavFocus | ImGuiWindowFlags_MenuBar | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
@@ -449,7 +450,10 @@ void EditorApp::DrawDockspace() {
         if (m_ResetLayout || !node || node->IsLeafNode()) BuildDefaultLayout(dockId);
         m_FirstLayout = m_ResetLayout = false;
     }
-    ImGui::DockSpace(dockId, ImVec2(0, 0), ImGuiDockNodeFlags_None);
+    const float statusHeight = std::round(ImGui::GetFontSize() + 9 * UiScale());
+    // The status bar follows after the item spacing: leave room for both so nothing overflows
+    ImGui::DockSpace(dockId, ImVec2(0, -(statusHeight + ImGui::GetStyle().ItemSpacing.y)), ImGuiDockNodeFlags_None);
+    DrawStatusBar(statusHeight);
     DrawAnimationEditor(); // after DockSpace: ImGui undocks windows submitted before their host
     ImGui::End();
 }
@@ -497,6 +501,16 @@ void EditorApp::BuildDefaultLayout(unsigned int dockId) {
 
 void EditorApp::DrawMenuBar() {
     if (!ImGui::BeginMenuBar()) return;
+    // Engine icon before the menus
+    if (void* icon = EngineIconTexture()) {
+        const ImRect bar = ImGui::GetCurrentWindow()->MenuBarRect();
+        const float size = std::round(bar.GetHeight() - 12 * UiScale());
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 4 * UiScale());
+        const ImVec2 at(ImGui::GetCursorScreenPos().x, std::round(bar.GetCenter().y - size * 0.5f));
+        ImGui::Dummy({ size, 1 });
+        ImGui::GetWindowDrawList()->AddImage((ImTextureID)icon, at, { at.x + size, at.y + size });
+        ImGui::SameLine(0, 4 * UiScale());
+    }
     if (ImGui::BeginMenu("File")) {
         if (ImGui::MenuItem("New Project / Open Project...")) { SaveProjectState(); m_ShowHub = true; }
         ImGui::Separator();
@@ -565,11 +579,50 @@ void EditorApp::DrawMenuBar() {
 
     // Project and scene in the middle, transport controls on the right
     {
-        std::string title = (Project::IsLoaded() ? Project::Config().name + "  -  " : std::string()) + ActiveScene().Name();
+        // "Project - Scene - Stardust 0.6.2" with a chevron like Unity's title; it opens the project info
+        std::string title = (Project::IsLoaded() ? Project::Config().name + " - " : std::string()) + ActiveScene().Name() + (m_SceneDirty ? "*" : "") + " - Stardust " STARDUST_VERSION;
         float windowWidth = ImGui::GetWindowWidth(), buttonSize = ImGui::GetFrameHeight();
         const float menusEnd = ImGui::GetCursorScreenPos().x + 8, transportX = windowWidth - 46 * 3 - 28 - (buttonSize + 6) * 3;
-        ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX() + 12, (windowWidth - ImGui::CalcTextSize(title.c_str()).x) * 0.5f));
-        ImGui::TextUnformatted(title.c_str());
+        {
+            const float textWidth = ImGui::CalcTextSize(title.c_str()).x, chevron = 16 * UiScale(), width = textWidth + chevron + 20 * UiScale();
+            ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX() + 12, (windowWidth - width) * 0.5f));
+            const ImRect bar = ImGui::GetCurrentWindow()->MenuBarRect();
+            const ImVec2 a(ImGui::GetCursorScreenPos().x, bar.Min.y + 4 * UiScale()), b(a.x + width, bar.Max.y - 4 * UiScale());
+            ImGui::SetCursorScreenPos(a);
+            const bool clicked = ImGui::InvisibleButton("##projectTitle", { width, b.y - a.y });
+            const bool hovered = ImGui::IsItemHovered(), open = ImGui::IsPopupOpen("##projectInfo");
+            auto* draw = ImGui::GetWindowDrawList();
+            if (hovered || open) draw->AddRectFilled(a, b, IM_COL32(44, 47, 53, 255), 4);
+            const float textY = (a.y + b.y - ImGui::GetFontSize()) * 0.5f;
+            draw->AddText({ a.x + 10 * UiScale(), textY }, IM_COL32(200, 204, 211, 255), title.c_str());
+            const ImVec2 c(a.x + 10 * UiScale() + textWidth + chevron * 0.5f + 2, (a.y + b.y) * 0.5f + 1);
+            const float r = 3.5f * UiScale();
+            draw->AddLine({ c.x - r, c.y - r * 0.5f }, { c.x, c.y + r * 0.5f }, IM_COL32(170, 174, 182, 255), 1.5f);
+            draw->AddLine({ c.x, c.y + r * 0.5f }, { c.x + r, c.y - r * 0.5f }, IM_COL32(170, 174, 182, 255), 1.5f);
+            TitleBar::SetDragHole(a.x, b.x);
+            if (clicked) ImGui::OpenPopup("##projectInfo");
+            ImGui::SetNextWindowPos({ (a.x + b.x) * 0.5f, b.y + 4 }, ImGuiCond_Appearing, { 0.5f, 0 });
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12, 10));
+            if (ImGui::BeginPopup("##projectInfo")) {
+                ImFont* bold = Application::BoldFont();
+                if (bold) ImGui::PushFont(bold);
+                ImGui::TextUnformatted(Project::IsLoaded() ? Project::Config().name.c_str() : "No project");
+                if (bold) ImGui::PopFont();
+                if (Project::IsLoaded()) ImGui::TextDisabled("%s", FileSystem::Utf8(Project::Dir()).c_str());
+                ImGui::Spacing();
+                ImGui::Text("Scene: %s%s", ActiveScene().Name().c_str(), m_SceneDirty ? " (unsaved)" : "");
+                ImGui::TextDisabled("Stardust Engine " STARDUST_VERSION_FULL);
+                ImGui::TextDisabled("%s - Vulkan 1.3", GetDevice().GetAdapterName());
+                ImGui::Separator();
+                if (ImGui::MenuItem("Show Project Folder")) ShellExecuteFile(Project::Dir());
+                if (ImGui::MenuItem("Project Settings...")) m_ShowProjectSettings = true;
+                if (ImGui::MenuItem("Build Settings...", "Ctrl+Shift+B")) m_ShowBuildSettings = true;
+                ImGui::Separator();
+                if (ImGui::MenuItem("Switch Project...")) { SaveProjectState(); m_ShowHub = true; }
+                ImGui::EndPopup();
+            }
+            ImGui::PopStyleVar();
+        }
         ImGui::SetCursorPosX(transportX);
         auto transport = [&](const char* id, int glyph, bool active, const char* tip) {
             ImGui::PushStyleColor(ImGuiCol_Button, active ? ImVec4(47 / 255.0f, 128 / 255.0f, 237 / 255.0f, 1) : ImVec4(0, 0, 0, 0));

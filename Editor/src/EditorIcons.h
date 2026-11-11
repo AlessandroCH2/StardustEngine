@@ -42,12 +42,16 @@ inline bool ColorField(const char* id,float* value,int components=4){
 }
 // Compact inspector row: small foldout, vector icon, optional enable box, label and menu.
 inline bool ComponentHeader(const char* label,bool* enabled,bool removable,bool& remove){
- auto id=ImGui::GetID("##componentRow");auto* storage=ImGui::GetStateStorage();bool open=storage->GetBool(id,true);auto p=ImGui::GetCursorScreenPos();float width=ImGui::GetContentRegionAvail().x,h=ImGui::GetFontSize()+5;ImGui::InvisibleButton("##componentRow",{width,h});bool hover=ImGui::IsItemHovered();auto* d=ImGui::GetWindowDrawList();d->AddRectFilled(p,{p.x+width,p.y+h},hover?IM_COL32(41, 43, 46, 255):IM_COL32(37, 39, 42, 255));d->AddLine({p.x,p.y+h},{p.x+width,p.y+h},IM_COL32(23, 25, 28, 255));float cy=p.y+h*.5f;
+ auto id=ImGui::GetID("##componentRow");auto* storage=ImGui::GetStateStorage();bool open=storage->GetBool(id,true);
+ // Space and a dark rule above every component, and a lighter band for its header, so components read as separate blocks
+ ImGui::Dummy({0,3});auto p=ImGui::GetCursorScreenPos();float width=ImGui::GetContentRegionAvail().x,h=ImGui::GetFontSize()+9;ImGui::InvisibleButton("##componentRow",{width,h});bool hover=ImGui::IsItemHovered();auto* d=ImGui::GetWindowDrawList();
+ float fullMin=ImGui::GetWindowPos().x,fullMax=fullMin+ImGui::GetWindowWidth();
+ d->AddRectFilled({fullMin,p.y},{fullMax,p.y+h},hover?IM_COL32(56, 59, 65, 255):IM_COL32(47, 50, 55, 255));d->AddLine({fullMin,p.y},{fullMax,p.y},IM_COL32(16, 17, 19, 255),1.5f);d->AddLine({fullMin,p.y+1.5f},{fullMax,p.y+1.5f},IM_COL32(64, 68, 75, 255));d->AddLine({fullMin,p.y+h},{fullMax,p.y+h},IM_COL32(24, 26, 29, 255));float cy=p.y+h*.5f;
  float toggleX=p.x+width-(removable?50:30),labelX=p.x+35;if(ImGui::IsItemClicked(0)){float x=ImGui::GetMousePos().x;if(removable&&x>p.x+width-23)ImGui::OpenPopup("ComponentSettings");else if(enabled&&x>=toggleX-2&&x<=toggleX+26)*enabled=!*enabled;else{open=!open;storage->SetBool(id,open);}}
  if(ImGui::IsItemClicked(1))ImGui::OpenPopup("ComponentSettings");ImU32 arrow=IM_COL32(150,150,150,255);if(open)d->AddTriangleFilled({p.x+4,cy-2},{p.x+12,cy-2},{p.x+8,cy+3},arrow);else d->AddTriangleFilled({p.x+5,cy-4},{p.x+5,cy+4},{p.x+10,cy},arrow);
  Component(d,{p.x+23,cy},13,label);
  if(enabled){bool on=*enabled;d->AddRectFilled({toggleX,cy-6.5f},{toggleX+24,cy+6.5f},on?IM_COL32(47,128,237,255):IM_COL32(70,73,80,255),6.5f);d->AddCircleFilled({on?toggleX+17.5f:toggleX+6.5f,cy},5,IM_COL32(240,242,245,255));}
- ImVec4 clip(labelX,p.y,(enabled?toggleX:p.x+width-(removable?26:3))-4,p.y+h);d->AddText(nullptr,0,{labelX,p.y+2},IM_COL32(207,207,207,255),label,nullptr,0,&clip);
+ ImVec4 clip(labelX,p.y,(enabled?toggleX:p.x+width-(removable?26:3))-4,p.y+h);d->AddText(nullptr,0,{labelX,cy-ImGui::GetFontSize()*.5f},IM_COL32(226,228,232,255),label,nullptr,0,&clip);
  if(removable)for(int i=-1;i<=1;++i)d->AddCircleFilled({p.x+width-11,cy+i*4},1,IM_COL32(180,180,180,255));
  if(ImGui::BeginPopup("ComponentSettings")){if(removable&&ImGui::MenuItem("Remove Component"))remove=true;ImGui::EndPopup();}
  return open;

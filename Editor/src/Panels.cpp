@@ -1,6 +1,8 @@
 #include "Assets/AssetMeta.h"
 #include "EditorApp.h"
 #include <set>
+#include <map>
+#include <functional>
 #include "EditorIcons.h"
 #include "InspectorWidgets.h"
 #include "Scene/ComponentState.h"
@@ -348,9 +350,17 @@ void EditorApp::DrawHierarchy() {
     ImGui::InputTextWithHint("##search", "Search...", &filter);
     ImGui::Separator();
 
-    ImGuiTreeNodeFlags rootFlags = ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_SpanAvailWidth;
-    ImGui::PushStyleColor(ImGuiCol_Header,ImVec4(.24f,.24f,.24f,1));
-    bool rootOpen = ImGui::TreeNodeEx("##sceneRoot", rootFlags|ImGuiTreeNodeFlags_Framed, "Scene  %s%s", scene.Name().c_str(),m_SceneDirty?" *":"");ImGui::PopStyleColor();
+    // Scene row like Unity's: darker band, scene icon, bold name with *, and a menu on the right
+    ImGuiTreeNodeFlags rootFlags = ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_Framed | ImGuiTreeNodeFlags_AllowOverlap;
+    ImGui::PushStyleColor(ImGuiCol_Header, IM_COL32(28, 30, 34, 255));
+    ImGui::PushStyleColor(ImGuiCol_HeaderHovered, IM_COL32(40, 43, 48, 255));
+    ImGui::PushStyleColor(ImGuiCol_HeaderActive, IM_COL32(46, 49, 55, 255));
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 0);
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(ImGui::GetStyle().FramePadding.x, 5 * UiScale()));
+    bool rootOpen = ImGui::TreeNodeEx("##sceneRoot", rootFlags, "%s", "");
+    ImGui::PopStyleVar(2);
+    ImGui::PopStyleColor(3);
+    const ImVec2 sceneRowMin = ImGui::GetItemRectMin(), sceneRowMax = ImGui::GetItemRectMax(), afterSceneRow = ImGui::GetCursorScreenPos();
     // Dropping on the scene row moves the object back to the root
     if (ImGui::BeginDragDropTarget()) {
         if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("STARDUST_ENTITY")) {
@@ -365,6 +375,41 @@ void EditorApp::DrawHierarchy() {
             if (c) m_Selected = c;
         }
         ImGui::EndDragDropTarget();
+    }
+    {
+        const ImVec2 rowMin = sceneRowMin, rowMax = sceneRowMax;
+        auto* draw = ImGui::GetWindowDrawList();
+        const float cy = (rowMin.y + rowMax.y) * 0.5f, s = ImGui::GetFontSize() * 0.42f;
+        const ImVec2 c(rowMin.x + ImGui::GetStyle().FramePadding.x + ImGui::GetFontSize() + 14 * UiScale(), cy);
+        // Scene icon: an isometric cube
+        const ImU32 iconColor = IM_COL32(205, 210, 218, 255);
+        ImVec2 top[] = { { c.x, c.y - s }, { c.x + s * .9f, c.y - s * .5f }, { c.x, c.y }, { c.x - s * .9f, c.y - s * .5f } };
+        draw->AddConvexPolyFilled(top, 4, iconColor);
+        ImVec2 left[] = { { c.x - s * .9f, c.y - s * .35f }, { c.x - s * .08f, c.y + s * .12f }, { c.x - s * .08f, c.y + s }, { c.x - s * .9f, c.y + s * .5f } };
+        draw->AddConvexPolyFilled(left, 4, IM_COL32(150, 156, 166, 255));
+        ImVec2 right[] = { { c.x + s * .08f, c.y + s * .12f }, { c.x + s * .9f, c.y - s * .35f }, { c.x + s * .9f, c.y + s * .5f }, { c.x + s * .08f, c.y + s } };
+        draw->AddConvexPolyFilled(right, 4, IM_COL32(110, 116, 126, 255));
+        const std::string label = scene.Name() + (m_SceneDirty ? "*" : "");
+        ImFont* bold = Application::BoldFont();
+        const float textX = c.x + s + 8 * UiScale(), menuX = rowMax.x - ImGui::GetFontSize() - 4;
+        const ImVec4 clip(textX, rowMin.y, menuX - 4, rowMax.y);
+        draw->AddText(bold ? bold : ImGui::GetFont(), ImGui::GetFontSize(), { textX, cy - ImGui::GetFontSize() * 0.5f }, IM_COL32(225, 228, 233, 255), label.c_str(), nullptr, 0, &clip);
+        // ⋮ menu
+        ImGui::SetCursorScreenPos({ menuX, rowMin.y });
+        if (ImGui::InvisibleButton("##sceneMenu", { ImGui::GetFontSize(), rowMax.y - rowMin.y })) ImGui::OpenPopup("SceneMenu");
+        const ImU32 dots = ImGui::IsItemHovered() ? IM_COL32(235, 238, 242, 255) : IM_COL32(160, 164, 172, 255);
+        for (int i = -1; i <= 1; ++i) draw->AddCircleFilled({ menuX + ImGui::GetFontSize() * 0.5f, cy + i * 4.5f * UiScale() }, 1.6f * UiScale(), dots);
+        if (ImGui::BeginPopup("SceneMenu")) {
+            const bool editing = m_State == PlayState::Edit;
+            if (ImGui::MenuItem("Save Scene", "Ctrl+S", false, editing)) SaveScene();
+            if (ImGui::MenuItem("Save Scene As...", "Ctrl+Shift+S", false, editing)) SaveSceneAs();
+            if (ImGui::MenuItem("Open Scene...", "Ctrl+O")) OpenScene();
+            if (ImGui::MenuItem("New Scene", "Ctrl+N")) NewScene();
+            ImGui::Separator();
+            if (ImGui::BeginMenu("GameObject")) { DrawEntityContextItems(); ImGui::EndMenu(); }
+            ImGui::EndPopup();
+        }
+        ImGui::SetCursorScreenPos(afterSceneRow);
     }
     if (rootOpen) {
         if (filter.empty()) {
@@ -1032,70 +1077,386 @@ void EditorApp::DrawLightingWindow() {
     ImGui::End();
 }
 
-void EditorApp::DrawConsole() {
-    if (!ImGui::Begin("Console", &m_ShowConsole)) { ImGui::End(); return; }
-    static bool showInfo = true, showWarn = true, showError = true, showTrace = false, autoScroll = true;
-    if (ImGui::Button("Clear")) Log::Clear();
-    ImGui::SameLine(); ImGui::Checkbox("Trace", &showTrace);
-    ImGui::SameLine(); ImGui::Checkbox("Info", &showInfo);
-    ImGui::SameLine(); ImGui::Checkbox("Warnings", &showWarn);
-    ImGui::SameLine(); ImGui::Checkbox("Errors", &showError);
-    ImGui::SameLine(); ImGui::Checkbox("Auto-scroll", &autoScroll);
-    ImGui::Separator();
+void DrawLogLevelIcon(ImDrawList* draw, ImVec2 center, float radius, LogLevel level); // EditorChrome.cpp
 
-    ImGui::BeginChild("##log", ImVec2(0, 0), ImGuiChildFlags_None, ImGuiWindowFlags_HorizontalScrollbar);
+// Unity-like Console: level toggles with counts, search, one row per message; clicking a row shows it in full below
+void EditorApp::DrawConsole() {
+    if (std::exchange(m_ConsoleFocusRequest, false)) ImGui::SetNextWindowFocus();
+    if (!ImGui::Begin("Console", &m_ShowConsole)) { ImGui::End(); return; }
+    static bool show[4] = { false, true, true, true }; // trace, info, warn, error
+    static bool autoScroll = true, hasSelection = false;
+    static std::string search, selectedMessage;
+    static double selectedTime = -1;
+    static LogLevel selectedLevel = LogLevel::Info;
+    static float detailHeight = 120;
     static u64 seenVersion = 0;
-    for (const LogEntry& entry : Log::Snapshot()) {
-        bool show = (entry.level == LogLevel::Trace && showTrace) || (entry.level == LogLevel::Info && showInfo) ||
-                    (entry.level == LogLevel::Warn && showWarn) || (entry.level == LogLevel::Error && showError);
-        if (!show) continue;
-        ImVec4 col = entry.level == LogLevel::Error ? ImVec4(1.0f, 0.42f, 0.4f, 1)
-                   : entry.level == LogLevel::Warn ? ImVec4(1.0f, 0.82f, 0.35f, 1)
-                   : entry.level == LogLevel::Trace ? ImVec4(0.6f, 0.6f, 0.6f, 1) : ImVec4(0.85f, 0.85f, 0.85f, 1);
-        ImGui::TextDisabled("[%7.2f]", entry.time);
-        ImGui::SameLine();
-        ImGui::TextColored(col, "%s", entry.message.c_str());
+    const float ui = UiScale();
+    const auto entries = Log::Snapshot();
+    auto levelIndex = [](LogLevel level) { return level == LogLevel::Trace ? 0 : level == LogLevel::Info ? 1 : level == LogLevel::Warn ? 2 : 3; };
+    int counts[4] = {};
+    for (const LogEntry& e : entries) ++counts[levelIndex(e.level)];
+
+    // Toolbar
+    if (ImGui::Button("Clear")) { Log::Clear(); hasSelection = false; }
+    ImGui::SameLine(); ImGui::Checkbox("Auto-scroll", &autoScroll);
+    ImGui::SameLine();
+    {
+        const char* names[4] = { "Trace", "Info", "Warnings", "Errors" };
+        const LogLevel levels[4] = { LogLevel::Trace, LogLevel::Info, LogLevel::Warn, LogLevel::Error };
+        float widths[4], total = 0;
+        char labels[4][16];
+        for (int i = 0; i < 4; ++i) {
+            std::snprintf(labels[i], sizeof(labels[i]), "%s", counts[i] > 999 ? "999+" : std::to_string(counts[i]).c_str());
+            widths[i] = std::round(30 * ui + ImGui::CalcTextSize(labels[i]).x);
+            total += widths[i] + 2;
+        }
+        const float searchWidth = std::clamp(ImGui::GetContentRegionAvail().x - total - 12, 60.0f, 240 * ui);
+        ImGui::SetNextItemWidth(searchWidth);
+        ImGui::InputTextWithHint("##consoleSearch", "Search...", &search);
+        ImGui::SameLine(std::max(ImGui::GetCursorPosX(), ImGui::GetWindowWidth() - total - ImGui::GetStyle().WindowPadding.x));
+        for (int i = 0; i < 4; ++i) {
+            if (i) ImGui::SameLine(0, 2);
+            ImGui::PushID(i);
+            const ImVec2 p = ImGui::GetCursorScreenPos(), size(widths[i], ImGui::GetFrameHeight());
+            if (ImGui::InvisibleButton("##levelToggle", size)) show[i] = !show[i];
+            const bool hovered = ImGui::IsItemHovered();
+            auto* draw = ImGui::GetWindowDrawList();
+            if (show[i] || hovered) draw->AddRectFilled(p, { p.x + size.x, p.y + size.y }, show[i] ? IM_COL32(56, 60, 67, 255) : IM_COL32(44, 47, 52, 255), 3);
+            DrawLogLevelIcon(draw, { p.x + 13 * ui, p.y + size.y * 0.5f }, 6 * ui, levels[i]);
+            if (!show[i]) draw->AddRectFilled({ p.x + 5 * ui, p.y + 3 }, { p.x + 21 * ui, p.y + size.y - 3 }, IM_COL32(35, 37, 41, 150));
+            draw->AddText({ p.x + 24 * ui, p.y + (size.y - ImGui::GetFontSize()) * 0.5f }, show[i] ? IM_COL32(220, 223, 228, 255) : IM_COL32(120, 124, 132, 255), labels[i]);
+            if (hovered) ImGui::SetTooltip("%s %s", show[i] ? "Hide" : "Show", names[i]);
+            ImGui::PopID();
+        }
     }
-    u64 v = Log::Version();
-    if (autoScroll && v != seenVersion) ImGui::SetScrollHereY(1.0f);
-    seenVersion = v;
+
+    // Rows that pass the filters
+    auto lower = [](std::string text) { std::transform(text.begin(), text.end(), text.begin(), [](unsigned char c) { return (char)std::tolower(c); }); return text; };
+    const std::string needle = lower(search);
+    std::vector<int> rows;
+    rows.reserve(entries.size());
+    for (int i = 0; i < (int)entries.size(); ++i) {
+        if (!show[levelIndex(entries[i].level)]) continue;
+        if (!needle.empty() && lower(entries[i].message).find(needle) == std::string::npos) continue;
+        rows.push_back(i);
+    }
+    // The status bar asks for an entry: select it and scroll to it
+    int scrollToRow = -1;
+    if (m_ConsoleSelectTime >= 0) {
+        for (int r = 0; r < (int)rows.size(); ++r) if (entries[rows[r]].time == m_ConsoleSelectTime) {
+            const LogEntry& e = entries[rows[r]];
+            hasSelection = true; selectedTime = e.time; selectedMessage = e.message; selectedLevel = e.level; scrollToRow = r;
+        }
+        m_ConsoleSelectTime = -1;
+    }
+
+    const float splitter = 6 * ui, avail = ImGui::GetContentRegionAvail().y;
+    if (hasSelection) detailHeight = std::clamp(detailHeight, 50 * ui, std::max(50 * ui, avail - 60 * ui));
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, IM_COL32(29, 31, 35, 255));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, 0));
+    ImGui::BeginChild("##log", ImVec2(0, hasSelection ? avail - detailHeight - splitter : 0));
+    const float rowHeight = std::round(ImGui::GetFontSize() + 8 * ui);
+    ImGuiListClipper clipper;
+    clipper.Begin((int)rows.size(), rowHeight);
+    if (scrollToRow >= 0) clipper.IncludeItemByIndex(scrollToRow);
+    while (clipper.Step()) {
+        for (int r = clipper.DisplayStart; r < clipper.DisplayEnd; ++r) {
+            const LogEntry& e = entries[rows[r]];
+            ImGui::PushID(r);
+            const ImVec2 p = ImGui::GetCursorScreenPos();
+            const float width = std::max(ImGui::GetContentRegionAvail().x, 1.0f);
+            const bool clicked = ImGui::InvisibleButton("##row", { width, rowHeight });
+            const bool hovered = ImGui::IsItemHovered();
+            const bool selected = hasSelection && e.time == selectedTime && e.message == selectedMessage;
+            auto* draw = ImGui::GetWindowDrawList();
+            const ImU32 background = selected ? IM_COL32(44, 72, 115, 255) : hovered ? IM_COL32(42, 45, 50, 255) : (r & 1) ? IM_COL32(33, 35, 39, 255) : 0;
+            if (background) draw->AddRectFilled(p, { p.x + width, p.y + rowHeight }, background);
+            const float cy = p.y + rowHeight * 0.5f, textY = p.y + (rowHeight - ImGui::GetFontSize()) * 0.5f;
+            DrawLogLevelIcon(draw, { p.x + 13 * ui, cy }, 6 * ui, e.level);
+            char time[24];
+            std::snprintf(time, sizeof(time), "[%.2f]", e.time);
+            draw->AddText({ p.x + 26 * ui, textY }, IM_COL32(120, 124, 132, 255), time);
+            const size_t newline = e.message.find('\n');
+            std::string line = e.message.substr(0, newline);
+            if (newline != std::string::npos) line += "  ...";
+            const float messageX = p.x + 26 * ui + ImGui::CalcTextSize("[0000.00]").x + 8 * ui;
+            const ImVec4 clip(messageX, p.y, p.x + width - 4, p.y + rowHeight);
+            const ImU32 color = e.level == LogLevel::Error ? IM_COL32(255, 120, 115, 255) : e.level == LogLevel::Warn ? IM_COL32(255, 212, 100, 255)
+                              : e.level == LogLevel::Trace ? IM_COL32(150, 150, 150, 255) : IM_COL32(212, 215, 221, 255);
+            draw->AddText(nullptr, 0, { messageX, textY }, color, line.c_str(), nullptr, 0, &clip);
+            if (clicked) {
+                if (selected) hasSelection = false;
+                else { hasSelection = true; selectedTime = e.time; selectedMessage = e.message; selectedLevel = e.level; }
+            }
+            if (ImGui::BeginPopupContextItem("##rowMenu")) {
+                if (ImGui::MenuItem("Copy")) ImGui::SetClipboardText(e.message.c_str());
+                ImGui::EndPopup();
+            }
+            if (r == scrollToRow) ImGui::SetScrollHereY(0.5f);
+            ImGui::PopID();
+        }
+    }
+    const u64 version = Log::Version();
+    if (autoScroll && version != seenVersion && scrollToRow < 0) ImGui::SetScrollHereY(1.0f);
+    seenVersion = version;
     ImGui::EndChild();
+    ImGui::PopStyleVar();
+    ImGui::PopStyleColor();
+
+    // Details of the selected message, under a draggable splitter
+    if (hasSelection) {
+        const ImVec2 p = ImGui::GetCursorScreenPos();
+        ImGui::InvisibleButton("##consoleSplitter", { ImGui::GetContentRegionAvail().x, splitter });
+        if (ImGui::IsItemActive()) detailHeight -= ImGui::GetIO().MouseDelta.y;
+        if (ImGui::IsItemHovered() || ImGui::IsItemActive()) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
+        ImGui::GetWindowDrawList()->AddLine({ p.x, p.y + splitter * 0.5f }, { p.x + ImGui::GetContentRegionAvail().x, p.y + splitter * 0.5f },
+            ImGui::IsItemHovered() || ImGui::IsItemActive() ? IM_COL32(47, 128, 237, 255) : IM_COL32(18, 19, 22, 255), 2);
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, IM_COL32(26, 28, 31, 255));
+        ImGui::BeginChild("##logDetail", ImVec2(0, 0), ImGuiChildFlags_AlwaysUseWindowPadding);
+        {
+            const ImVec2 at = ImGui::GetCursorScreenPos();
+            DrawLogLevelIcon(ImGui::GetWindowDrawList(), { at.x + 7 * ui, at.y + ImGui::GetFrameHeight() * 0.5f }, 6 * ui, selectedLevel);
+            ImGui::Dummy({ 18 * ui, ImGui::GetFrameHeight() });
+            ImGui::SameLine();
+            ImGui::AlignTextToFramePadding();
+            const char* level = selectedLevel == LogLevel::Error ? "Error" : selectedLevel == LogLevel::Warn ? "Warning" : selectedLevel == LogLevel::Trace ? "Trace" : "Info";
+            ImGui::TextDisabled("%s at %.2f s", level, selectedTime);
+            ImGui::SameLine(std::max(ImGui::GetCursorPosX() + 8, ImGui::GetWindowWidth() - 90 * ui));
+            if (ImGui::SmallButton("Copy")) ImGui::SetClipboardText(selectedMessage.c_str());
+            ImGui::SameLine(0, 4);
+            if (ImGui::SmallButton("x##closeDetail")) hasSelection = false;
+        }
+        ImGui::Separator();
+        ImGui::PushTextWrapPos(0);
+        ImGui::TextUnformatted(selectedMessage.c_str());
+        ImGui::PopTextWrapPos();
+        ImGui::EndChild();
+        ImGui::PopStyleColor();
+    }
     ImGui::End();
 }
 
 // ------------------------------------------------------------------------------------------------ project
+
+// "Create" entries of the Project window, for its + button and its context menu
+void EditorApp::DrawProjectCreateItems() {
+    namespace fs = std::filesystem;
+    if (ImGui::MenuItem("Create Folder")) {
+        fs::path p = m_ProjectCurrentDir / "New Folder";
+        for (int n = 1; fs::exists(p); ++n) p = m_ProjectCurrentDir / std::format("New Folder {}", n);
+        fs::create_directories(p);
+    }
+    if (ImGui::MenuItem("Create Material")) {
+        fs::path p = m_ProjectCurrentDir / "New Material.mat";
+        for (int n = 1; fs::exists(p); ++n) p = m_ProjectCurrentDir / std::format("New Material {}.mat", n);
+        AssetManager::CreateMaterial(AssetManager::ToRelative(p));
+        m_SelectedAsset = AssetManager::ToRelative(p);
+        m_InspectAsset = true;
+    }
+    if (ImGui::MenuItem("Create C# Script")) CreateScriptAsset(m_ProjectCurrentDir);
+    if (ImGui::MenuItem("Create Editor Script")) {
+        auto path=m_ProjectCurrentDir/"Editor"/"EditorCommands.cs";
+        if (!fs::exists(path)) FileSystem::WriteText(path,"using Stardust;\nusing Stardust.Editor;\npublic static class EditorCommands {\n    [MenuItem(\"Tools/Hello\")]\n    static void Hello() { Debug.Log(\"Hello from Editor Only scripts\"); }\n}\n");
+        Project::WriteEditorScriptProject();
+    }
+    if (ImGui::MenuItem("Create Custom Shader")) {
+        auto path=m_ProjectCurrentDir/"Custom.ps.hlsl";
+        for (int n=1;fs::exists(path);++n) path=m_ProjectCurrentDir/std::format("Custom{}.ps.hlsl",n);
+        FileSystem::WriteText(path,R"(#include "MeshCommon.hlsli"
+MeshPSOut main(MeshVSOut i) {
+    DrawData d = LoadDraw(g_Push.drawBuffer, g_Push.drawIndex);
+    MeshPSOut o;
+    o.color = MaterialProperty(0,float4(1,1,1,1)) * MaterialFloat(1,1); // Tint and brightness declared in the property schema.
+    o.entityId = d.ids.z;
+    return o;
+}
+)");
+        FileSystem::WriteText(fs::path(FileSystem::Utf8(path)+".spv.properties.json"),R"({"properties":[{"name":"Tint","label":"Tint","type":"color","default":[1,1,1,1]},{"name":"Brightness","label":"Brightness","type":"float","default":1,"min":0,"max":5}]})");
+        m_SelectedAsset=AssetManager::ToRelative(path); m_InspectAsset=true;
+    }
+    if(ImGui::MenuItem("Create Custom Sky Shader")){auto path=m_ProjectCurrentDir/"CustomSky.ps.hlsl";for(int n=1;fs::exists(path);++n)path=m_ProjectCurrentDir/std::format("CustomSky{}.ps.hlsl",n);FileSystem::WriteText(path,R"(#include "SkyCommon.hlsli"
+PSOut main(float4 position:SV_Position,float2 uv:TEXCOORD0){float3 direction=SkyDirection(uv);PSOut result;result.color=float4(lerp(float3(.05,.08,.15),g_Push.color.rgb,saturate(direction.y*.5+.5))*exp2(g_Push.parameters.y),1);result.entityId=0;return result;}
+)");m_SelectedAsset=AssetManager::ToRelative(path);m_InspectAsset=true;}
+    if(ImGui::MenuItem("Create Render Texture")){auto path=m_ProjectCurrentDir/"New Render Texture.rendertexture";for(int i=1;fs::exists(path);++i)path=m_ProjectCurrentDir/std::format("New Render Texture {}.rendertexture",i);FileSystem::WriteText(path,R"({"width":512,"height":512})");m_SelectedAsset=AssetManager::ToRelative(path);m_InspectAsset=true;}
+    if (ImGui::MenuItem("Create Animation")) {
+        auto path=m_ProjectCurrentDir/"New Animation.anim";
+        if (!fs::exists(path)) FileSystem::WriteText(path,R"({"duration":1,"tracks":[{"path":"","rotation":[[0,0,0,0],[1,0,360,0]]}]})");
+        m_SelectedAsset=AssetManager::ToRelative(path); m_InspectAsset=true;
+    }
+    if (ImGui::MenuItem("Create Animator Controller")) {
+        auto path=m_ProjectCurrentDir/"New Animator.controller";
+        if (!fs::exists(path)) FileSystem::WriteText(path,nlohmann::json({{"defaultState","Default"},{"states",{{"Default",{{"clip",AssetManager::ToRelative(m_ProjectCurrentDir/"New Animation.anim")},{"loop",true}}}}},{"transitions",nlohmann::json::array()}}).dump(2));
+        m_SelectedAsset=AssetManager::ToRelative(path); m_InspectAsset=true;
+    }
+}
+
+// Folder tree of the Project window. Folder listings are cached for a second and a half.
+void EditorApp::DrawProjectFolderTree(const std::filesystem::path& dir, const std::string& label) {
+    namespace fs = std::filesystem;
+    struct Listing { double at = -10; std::vector<fs::path> folders; };
+    static std::map<fs::path, Listing> cache;
+    static fs::path openedFor; // the folder whose parents were last opened automatically
+    auto subfolders = [&](const fs::path& folder) -> const std::vector<fs::path>& {
+        Listing& listing = cache[folder];
+        if (ImGui::GetTime() - listing.at > 1.5) {
+            listing.at = ImGui::GetTime();
+            listing.folders.clear();
+            std::error_code ec;
+            for (auto& entry : fs::directory_iterator(folder, ec))
+                if (entry.is_directory(ec) && entry.path().extension() != ".fbm" && entry.path().filename().native()[0] != '.') listing.folders.push_back(entry.path());
+            std::sort(listing.folders.begin(), listing.folders.end());
+        }
+        return listing.folders;
+    };
+    const bool revealCurrent = openedFor != m_ProjectCurrentDir;
+    const float ui = UiScale();
+    std::function<void(const fs::path&, const std::string&)> node = [&](const fs::path& folder, const std::string& name) {
+        const auto children = subfolders(folder); // copy: the cache may refresh while children draw
+        ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_OpenOnDoubleClick | ImGuiTreeNodeFlags_SpanFullWidth;
+        if (children.empty()) flags |= ImGuiTreeNodeFlags_Leaf;
+        if (folder == m_ProjectCurrentDir) flags |= ImGuiTreeNodeFlags_Selected;
+        if (folder == m_ProjectRoot) flags |= ImGuiTreeNodeFlags_DefaultOpen;
+        if (revealCurrent && folder != m_ProjectCurrentDir) {
+            const auto relative = fs::relative(m_ProjectCurrentDir, folder);
+            if (!relative.empty() && *relative.begin() != fs::path("..")) ImGui::SetNextItemOpen(true);
+        }
+        const bool open = ImGui::TreeNodeEx(FileSystem::Utf8(folder).c_str(), flags, "      %s", name.c_str());
+        if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) m_ProjectCurrentDir = folder;
+        if (ImGui::BeginDragDropTarget()) { // entities dropped on a folder become prefabs there
+            if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("STARDUST_ENTITY")) {
+                EntityID e = *(const EntityID*)p->Data;
+                Scene& scene = ActiveScene();
+                if (scene.Reg().Valid(e)) SceneSerializer::SavePrefab(scene, e, folder / (scene.Reg().Get<NameComponent>(e).name + ".prefab"));
+            }
+            ImGui::EndDragDropTarget();
+        }
+        // Folder icon after the arrow
+        const ImVec2 min = ImGui::GetItemRectMin();
+        const float h = ImGui::GetItemRectSize().y, x = min.x + ImGui::GetTreeNodeToLabelSpacing() + 1 * ui, y = min.y + h * 0.5f;
+        auto* draw = ImGui::GetWindowDrawList();
+        const ImU32 tab = IM_COL32(214, 168, 64, 255), body = folder == m_ProjectCurrentDir ? IM_COL32(240, 196, 92, 255) : IM_COL32(222, 176, 72, 255);
+        draw->AddRectFilled({ x, y - 5 * ui }, { x + 6 * ui, y - 2 * ui }, tab, 1);
+        draw->AddRectFilled({ x, y - 3 * ui }, { x + 14 * ui, y + 5 * ui }, body, 1.5f);
+        if (open) {
+            for (const fs::path& child : children) node(child, FileSystem::Utf8(child.filename()));
+            ImGui::TreePop();
+        }
+    };
+    node(dir, label);
+    if (revealCurrent && label == "Packages") openedFor = m_ProjectCurrentDir; // after both roots are drawn
+    if (revealCurrent && !fs::exists(Project::Dir() / "Packages")) openedFor = m_ProjectCurrentDir;
+}
 
 void EditorApp::DrawProject() {
     if (!ImGui::Begin("Project", &m_ShowProject)) { ImGui::End(); return; }
     m_AnimationDockId=ImGui::GetWindowDockID();
     namespace fs = std::filesystem;
     if (!fs::exists(m_ProjectCurrentDir)) m_ProjectCurrentDir = m_ProjectRoot;
-    if (ImGui::SmallButton("Assets##rootAssets")) m_ProjectCurrentDir=m_ProjectRoot;
-    ImGui::SameLine();
-    if (ImGui::SmallButton("Packages##rootPackages")) m_ProjectCurrentDir=Project::Dir()/"Packages";
-    ImGui::SameLine();
-
-    // Breadcrumb
-    fs::path rel = fs::relative(m_ProjectCurrentDir, m_ProjectRoot.parent_path());
-    fs::path accum = m_ProjectRoot.parent_path();
-    bool first = true;
-    for (auto& part : rel) {
-        accum /= part;
-        if (!first) { ImGui::SameLine(0, 2); ImGui::TextDisabled(">"); ImGui::SameLine(0, 2); }
-        first = false;
-        if (ImGui::SmallButton((FileSystem::Utf8(part)+"##crumb"+FileSystem::Utf8(accum)).c_str())) m_ProjectCurrentDir = accum;
-    }
-    ImGui::SameLine();
+    const float ui = UiScale();
     static std::string projectSearch;
-    ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX() + 8, ImGui::GetWindowWidth() - 268));
-    ImGui::SetNextItemWidth(236);
-    ImGui::InputTextWithHint("##projectSearch", "Search assets...", &projectSearch);
-    if (!projectSearch.empty()) { ImGui::SameLine(0, 2); if (ImGui::SmallButton("x##clearSearch")) projectSearch.clear(); }
-    ImGui::Separator();
 
-    float cell = 92.0f;
-    int cols = std::max(1, (int)(ImGui::GetContentRegionAvail().x / cell));
-    ImGui::BeginChild("##files");
+    // Header: + create menu, breadcrumb, search and icon size
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, IM_COL32(29, 31, 35, 255));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(6 * ui, 4 * ui));
+    ImGui::BeginChild("##projectHeader", ImVec2(0, ImGui::GetFrameHeight() + 8 * ui), ImGuiChildFlags_AlwaysUseWindowPadding, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+    ImGui::PopStyleVar();
+    {
+        auto* draw = ImGui::GetWindowDrawList();
+        // + with a small arrow
+        {
+            const ImVec2 p = ImGui::GetCursorScreenPos(), size(30 * ui, ImGui::GetFrameHeight());
+            if (ImGui::InvisibleButton("##projectCreate", size)) ImGui::OpenPopup("ProjectCreate");
+            const bool hovered = ImGui::IsItemHovered();
+            draw->AddRectFilled(p, { p.x + size.x, p.y + size.y }, hovered ? IM_COL32(68, 72, 79, 255) : IM_COL32(48, 51, 57, 255), 3);
+            const ImVec2 c(p.x + 11 * ui, p.y + size.y * 0.5f);
+            const float r = 5 * ui;
+            draw->AddLine({ c.x - r, c.y }, { c.x + r, c.y }, IM_COL32(220, 223, 228, 255), 1.6f);
+            draw->AddLine({ c.x, c.y - r }, { c.x, c.y + r }, IM_COL32(220, 223, 228, 255), 1.6f);
+            draw->AddTriangleFilled({ p.x + 20 * ui, c.y - 1.5f * ui }, { p.x + 26 * ui, c.y - 1.5f * ui }, { p.x + 23 * ui, c.y + 2 * ui }, IM_COL32(180, 184, 191, 255));
+            if (hovered) ImGui::SetTooltip("Create");
+            if (ImGui::BeginPopup("ProjectCreate")) { DrawProjectCreateItems(); ImGui::EndPopup(); }
+        }
+        // Breadcrumb: Assets › Folder › Folder
+        ImGui::SameLine(0, 10 * ui);
+        const float searchWidth = std::min(220 * ui, ImGui::GetWindowWidth() * 0.35f), sliderWidth = 70 * ui;
+        const float crumbsEnd = ImGui::GetWindowWidth() - searchWidth - sliderWidth - 24 * ui;
+        fs::path rel = fs::relative(m_ProjectCurrentDir, m_ProjectRoot.parent_path());
+        fs::path accum = m_ProjectRoot.parent_path();
+        std::vector<fs::path> parts(rel.begin(), rel.end());
+        for (size_t i = 0; i < parts.size(); ++i) {
+            accum /= parts[i];
+            const bool last = i + 1 == parts.size();
+            if (i) {
+                const ImVec2 p = ImGui::GetCursorScreenPos();
+                const float cy = p.y + ImGui::GetFrameHeight() * 0.5f, r = 3.5f * ui;
+                draw->AddLine({ p.x + 3 * ui, cy - r }, { p.x + 3 * ui + r, cy }, IM_COL32(130, 134, 142, 255), 1.4f);
+                draw->AddLine({ p.x + 3 * ui + r, cy }, { p.x + 3 * ui, cy + r }, IM_COL32(130, 134, 142, 255), 1.4f);
+                ImGui::Dummy({ 10 * ui, ImGui::GetFrameHeight() });
+                ImGui::SameLine(0, 2 * ui);
+            }
+            const std::string name = FileSystem::Utf8(parts[i]);
+            ImFont* font = last && Application::BoldFont() ? Application::BoldFont() : ImGui::GetFont();
+            const ImVec2 textSize = font->CalcTextSizeA(ImGui::GetFontSize(), FLT_MAX, 0, name.c_str());
+            if (ImGui::GetCursorScreenPos().x + textSize.x + 8 * ui > ImGui::GetWindowPos().x + crumbsEnd) { ImGui::TextDisabled("..."); ImGui::SameLine(); break; }
+            ImGui::PushID((int)i);
+            const ImVec2 p = ImGui::GetCursorScreenPos(), size(textSize.x + 8 * ui, ImGui::GetFrameHeight());
+            if (ImGui::InvisibleButton("##crumb", size)) { m_ProjectCurrentDir = accum; projectSearch.clear(); }
+            const bool hovered = ImGui::IsItemHovered();
+            if (hovered) draw->AddRectFilled(p, { p.x + size.x, p.y + size.y }, IM_COL32(48, 51, 57, 255), 3);
+            draw->AddText(font, ImGui::GetFontSize(), { p.x + 4 * ui, p.y + (size.y - ImGui::GetFontSize()) * 0.5f }, last ? IM_COL32(230, 232, 236, 255) : IM_COL32(170, 174, 182, 255), name.c_str());
+            ImGui::PopID();
+            ImGui::SameLine(0, 2 * ui);
+        }
+        // Search with a magnifier, then the icon size
+        ImGui::SameLine(std::max(ImGui::GetCursorPosX() + 8 * ui, ImGui::GetWindowWidth() - searchWidth - sliderWidth - 18 * ui));
+        {
+            const ImVec2 p = ImGui::GetCursorScreenPos();
+            ImGui::SetNextItemWidth(searchWidth);
+            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(24 * ui, ImGui::GetStyle().FramePadding.y));
+            ImGui::InputTextWithHint("##projectSearch", "Search", &projectSearch);
+            ImGui::PopStyleVar();
+            const ImVec2 c(p.x + 12 * ui, p.y + ImGui::GetFrameHeight() * 0.5f - 1);
+            draw->AddCircle(c, 4.5f * ui, IM_COL32(150, 154, 162, 255), 12, 1.5f);
+            draw->AddLine({ c.x + 3.2f * ui, c.y + 3.2f * ui }, { c.x + 6.5f * ui, c.y + 6.5f * ui }, IM_COL32(150, 154, 162, 255), 1.8f);
+            if (!projectSearch.empty()) {
+                ImGui::SameLine(0, 0);
+                ImGui::SetCursorPosX(ImGui::GetCursorPosX() - 20 * ui);
+                if (ImGui::SmallButton("x##clearSearch")) projectSearch.clear();
+            }
+        }
+        ImGui::SameLine(ImGui::GetWindowWidth() - sliderWidth - 8 * ui);
+        ImGui::SetNextItemWidth(sliderWidth);
+        ImGui::SliderFloat("##iconSize", &m_ProjectIconSize, 56, 160, "");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Icon size");
+    }
+    ImGui::EndChild();
+    ImGui::PopStyleColor();
+
+    // Folder tree on the left, resizable
+    m_ProjectTreeWidth = std::clamp(m_ProjectTreeWidth, 90 * ui, std::max(90 * ui, ImGui::GetContentRegionAvail().x - 120 * ui));
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, IM_COL32(31, 33, 37, 255));
+    ImGui::PushStyleVar(ImGuiStyleVar_IndentSpacing, 12 * ui);
+    ImGui::BeginChild("##projectTree", ImVec2(m_ProjectTreeWidth, 0), ImGuiChildFlags_AlwaysUseWindowPadding);
+    DrawProjectFolderTree(m_ProjectRoot, "Assets");
+    if (fs::exists(Project::Dir() / "Packages")) DrawProjectFolderTree(Project::Dir() / "Packages", "Packages");
+    ImGui::EndChild();
+    ImGui::PopStyleVar();
+    ImGui::PopStyleColor();
+    ImGui::SameLine(0, 0);
+    {
+        const ImVec2 p = ImGui::GetCursorScreenPos();
+        const float height = ImGui::GetContentRegionAvail().y;
+        ImGui::InvisibleButton("##projectTreeSplitter", { 5 * ui, std::max(height, 1.0f) });
+        const bool active = ImGui::IsItemActive(), hovered = ImGui::IsItemHovered();
+        if (active) m_ProjectTreeWidth += ImGui::GetIO().MouseDelta.x;
+        if (active || hovered) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+        ImGui::GetWindowDrawList()->AddLine({ p.x + 2 * ui, p.y }, { p.x + 2 * ui, p.y + height }, active || hovered ? IM_COL32(47, 128, 237, 255) : IM_COL32(20, 21, 24, 255), active || hovered ? 2.0f : 1.0f);
+    }
+    ImGui::SameLine(0, 0);
+
+    float cell = m_ProjectIconSize;
+    int cols = std::max(1, (int)((ImGui::GetContentRegionAvail().x - 2 * ImGui::GetStyle().WindowPadding.x) / cell));
+    ImGui::BeginChild("##files", ImVec2(0, 0), ImGuiChildFlags_AlwaysUseWindowPadding);
     if (ImGui::BeginTable("##grid", cols)) {
         // Listing folders and resolving asset paths is slow, so the listing is kept and refreshed about once a second
         static std::vector<fs::directory_entry> entries;
@@ -1230,53 +1591,7 @@ void EditorApp::DrawProject() {
     if(ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)&&!ImGui::GetIO().WantTextInput){auto& io=ImGui::GetIO();if(io.KeyCtrl&&ImGui::IsKeyPressed(ImGuiKey_C))CopyAssets();if(io.KeyCtrl&&ImGui::IsKeyPressed(ImGuiKey_V))PasteAssets();if(io.KeyCtrl&&ImGui::IsKeyPressed(ImGuiKey_D)){CopyAssets();PasteAssets();}}
     if (ImGui::BeginPopupContextWindow("ProjectContext", ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems)) {
         if(ImGui::MenuItem("Paste","Ctrl+V",false,!m_AssetClipboard.empty()))PasteAssets();
-        if (ImGui::MenuItem("Create Folder")) {
-            fs::path p = m_ProjectCurrentDir / "New Folder";
-            for (int n = 1; fs::exists(p); ++n) p = m_ProjectCurrentDir / std::format("New Folder {}", n);
-            fs::create_directories(p);
-        }
-        if (ImGui::MenuItem("Create Material")) {
-            fs::path p = m_ProjectCurrentDir / "New Material.mat";
-            for (int n = 1; fs::exists(p); ++n) p = m_ProjectCurrentDir / std::format("New Material {}.mat", n);
-            AssetManager::CreateMaterial(AssetManager::ToRelative(p));
-            m_SelectedAsset = AssetManager::ToRelative(p);
-            m_InspectAsset = true;
-        }
-        if (ImGui::MenuItem("Create C# Script")) CreateScriptAsset(m_ProjectCurrentDir);
-        if (ImGui::MenuItem("Create Editor Script")) {
-            auto path=m_ProjectCurrentDir/"Editor"/"EditorCommands.cs";
-            if (!fs::exists(path)) FileSystem::WriteText(path,"using Stardust;\nusing Stardust.Editor;\npublic static class EditorCommands {\n    [MenuItem(\"Tools/Hello\")]\n    static void Hello() { Debug.Log(\"Hello from Editor Only scripts\"); }\n}\n");
-            Project::WriteEditorScriptProject();
-        }
-        if (ImGui::MenuItem("Create Custom Shader")) {
-            auto path=m_ProjectCurrentDir/"Custom.ps.hlsl";
-            for (int n=1;fs::exists(path);++n) path=m_ProjectCurrentDir/std::format("Custom{}.ps.hlsl",n);
-            FileSystem::WriteText(path,R"(#include "MeshCommon.hlsli"
-MeshPSOut main(MeshVSOut i) {
-    DrawData d = LoadDraw(g_Push.drawBuffer, g_Push.drawIndex);
-    MeshPSOut o;
-    o.color = MaterialProperty(0,float4(1,1,1,1)) * MaterialFloat(1,1); // Tint and brightness declared in the property schema.
-    o.entityId = d.ids.z;
-    return o;
-}
-)");
-            FileSystem::WriteText(fs::path(FileSystem::Utf8(path)+".spv.properties.json"),R"({"properties":[{"name":"Tint","label":"Tint","type":"color","default":[1,1,1,1]},{"name":"Brightness","label":"Brightness","type":"float","default":1,"min":0,"max":5}]})");
-            m_SelectedAsset=AssetManager::ToRelative(path); m_InspectAsset=true;
-        }
-        if(ImGui::MenuItem("Create Custom Sky Shader")){auto path=m_ProjectCurrentDir/"CustomSky.ps.hlsl";for(int n=1;fs::exists(path);++n)path=m_ProjectCurrentDir/std::format("CustomSky{}.ps.hlsl",n);FileSystem::WriteText(path,R"(#include "SkyCommon.hlsli"
-PSOut main(float4 position:SV_Position,float2 uv:TEXCOORD0){float3 direction=SkyDirection(uv);PSOut result;result.color=float4(lerp(float3(.05,.08,.15),g_Push.color.rgb,saturate(direction.y*.5+.5))*exp2(g_Push.parameters.y),1);result.entityId=0;return result;}
-)");m_SelectedAsset=AssetManager::ToRelative(path);m_InspectAsset=true;}
-        if(ImGui::MenuItem("Create Render Texture")){auto path=m_ProjectCurrentDir/"New Render Texture.rendertexture";for(int i=1;fs::exists(path);++i)path=m_ProjectCurrentDir/std::format("New Render Texture {}.rendertexture",i);FileSystem::WriteText(path,R"({"width":512,"height":512})");m_SelectedAsset=AssetManager::ToRelative(path);m_InspectAsset=true;}
-        if (ImGui::MenuItem("Create Animation")) {
-            auto path=m_ProjectCurrentDir/"New Animation.anim";
-            if (!fs::exists(path)) FileSystem::WriteText(path,R"({"duration":1,"tracks":[{"path":"","rotation":[[0,0,0,0],[1,0,360,0]]}]})");
-            m_SelectedAsset=AssetManager::ToRelative(path); m_InspectAsset=true;
-        }
-        if (ImGui::MenuItem("Create Animator Controller")) {
-            auto path=m_ProjectCurrentDir/"New Animator.controller";
-            if (!fs::exists(path)) FileSystem::WriteText(path,nlohmann::json({{"defaultState","Default"},{"states",{{"Default",{{"clip",AssetManager::ToRelative(m_ProjectCurrentDir/"New Animation.anim")},{"loop",true}}}}},{"transitions",nlohmann::json::array()}}).dump(2));
-            m_SelectedAsset=AssetManager::ToRelative(path); m_InspectAsset=true;
-        }
+        DrawProjectCreateItems();
         ImGui::Separator();
         if (ImGui::MenuItem("Show in Explorer")) ShellExecuteFile(m_ProjectCurrentDir);
         ImGui::EndPopup();

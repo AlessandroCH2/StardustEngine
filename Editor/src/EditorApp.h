@@ -100,6 +100,16 @@ private:
     void UpdatePrefabs();
     void DrawConsole();
     void DrawProject();
+    void DrawProjectCreateItems();
+    void DrawProjectFolderTree(const std::filesystem::path& dir, const std::string& label);
+    // editor chrome (EditorChrome.cpp)
+    void DecorateDockTabs();
+    void DrawStatusBar(float height);
+    void* EngineIconTexture();
+    Ref<RHI::Texture> m_EngineIcon;
+    bool m_EngineIconLoaded = false, m_ConsoleFocusRequest = false;
+    double m_ConsoleSelectTime = -1; // the status bar asks the Console to select this entry
+    float m_ProjectTreeWidth = 190, m_ProjectIconSize = 92;
     void DrawStats();
     void DrawSceneView();
     void DrawGameView();

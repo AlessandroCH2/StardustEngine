@@ -46,13 +46,45 @@ void EditorApp::DrawTerrainInspector(EntityID e, TerrainComponent& tc) {
             if (active) ImGui::PopStyleColor();
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tips[i]);
             auto* d = ImGui::GetWindowDrawList();
-            const ImU32 color = IM_COL32(225, 230, 235, 255);
-            const ImVec2 c(p.x + width * 0.5f, p.y + 15);
-            if (i == 0) for (int k = 0; k < 4; ++k) { ImVec2 o(c.x + (k % 2 ? 1 : -9), c.y + (k / 2 ? 1 : -9)); d->AddRect(o, { o.x + 8, o.y + 8 }, color); }
-            if (i == 1) { d->AddTriangle({ c.x - 12, c.y + 8 }, { c.x - 3, c.y - 7 }, { c.x + 6, c.y + 8 }, color, 1.6f); d->AddLine({ c.x + 4, c.y + 2 }, { c.x + 12, c.y - 8 }, color, 3); }
-            if (i == 2) { d->AddCircle({ c.x, c.y - 3 }, 7, color, 12, 1.6f); d->AddLine({ c.x, c.y + 4 }, { c.x, c.y + 10 }, color, 2.5f); }
-            if (i == 3) for (int k = -1; k <= 1; ++k) d->AddLine({ c.x + k * 5.0f, c.y + 9 }, { c.x + k * 8.0f, c.y - 8 + std::abs(k) * 4.0f }, color, 1.8f);
-            if (i == 4) { d->AddCircle(c, 8, color, 8, 2.5f); d->AddCircle(c, 3, color, 12, 1.6f); }
+            // Line icons in a 20 px box: neighbors, paint (brush over a hill), tree, grass, gear
+            const ImU32 color = active ? IM_COL32(255, 255, 255, 255) : IM_COL32(196, 202, 210, 255);
+            const ImU32 accent = active ? IM_COL32(255, 255, 255, 255) : IM_COL32(125, 200, 120, 255);
+            const ImVec2 c(std::round(p.x + width * 0.5f), p.y + 15);
+            if (i == 0) { // terrain tile with a + and tiles around it
+                d->AddRectFilled({ c.x - 4, c.y - 4 }, { c.x + 4, c.y + 4 }, accent, 1);
+                for (int k = 0; k < 4; ++k) {
+                    const float dx = k == 0 ? -9.f : k == 1 ? 9.f : 0.f, dy = k == 2 ? -9.f : k == 3 ? 9.f : 0.f;
+                    d->AddRect({ c.x + dx - 3.5f, c.y + dy - 3.5f }, { c.x + dx + 3.5f, c.y + dy + 3.5f }, color, 1, 0, 1.4f);
+                }
+            }
+            if (i == 1) { // hill with a brush
+                ImVec2 hill[] = { { c.x - 11, c.y + 8 }, { c.x - 5, c.y - 2 }, { c.x - 1, c.y + 3 }, { c.x + 3, c.y - 1 }, { c.x + 9, c.y + 8 } };
+                d->AddPolyline(hill, 5, accent, ImDrawFlags_Closed, 1.6f);
+                d->AddLine({ c.x + 2, c.y - 2 }, { c.x + 10, c.y - 10 }, color, 2.2f);
+                d->AddCircleFilled({ c.x + 1.5f, c.y - 1.5f }, 2.6f, color, 10);
+            }
+            if (i == 2) { // pine tree
+                ImVec2 top[] = { { c.x, c.y - 10 }, { c.x + 6, c.y - 2 }, { c.x - 6, c.y - 2 } };
+                ImVec2 low[] = { { c.x, c.y - 5 }, { c.x + 9, c.y + 5 }, { c.x - 9, c.y + 5 } };
+                d->AddTriangleFilled(low[0], low[1], low[2], accent);
+                d->AddTriangleFilled(top[0], top[1], top[2], accent);
+                d->AddLine({ c.x, c.y + 5 }, { c.x, c.y + 10 }, color, 2.4f);
+            }
+            if (i == 3) { // grass blades and a flower
+                d->AddBezierQuadratic({ c.x - 7, c.y + 9 }, { c.x - 7, c.y }, { c.x - 11, c.y - 5 }, accent, 1.7f);
+                d->AddBezierQuadratic({ c.x - 2, c.y + 9 }, { c.x - 2, c.y - 2 }, { c.x - 1, c.y - 9 }, accent, 1.7f);
+                d->AddBezierQuadratic({ c.x + 3, c.y + 9 }, { c.x + 3, c.y + 2 }, { c.x + 7, c.y - 3 }, accent, 1.7f);
+                d->AddLine({ c.x + 8, c.y + 9 }, { c.x + 8, c.y - 4 }, color, 1.4f);
+                for (int k = 0; k < 5; ++k) { const float a = k * 1.2566f; d->AddCircleFilled({ c.x + 8 + std::cos(a) * 2.6f, c.y - 6 + std::sin(a) * 2.6f }, 1.6f, IM_COL32(240, 200, 90, 255), 8); }
+            }
+            if (i == 4) { // gear
+                for (int k = 0; k < 8; ++k) {
+                    const float a = k * 0.785398f, ca = std::cos(a), sa = std::sin(a);
+                    d->AddLine({ c.x + ca * 6.5f, c.y + sa * 6.5f }, { c.x + ca * 9.5f, c.y + sa * 9.5f }, color, 3.2f);
+                }
+                d->AddCircle(c, 6.5f, color, 20, 2.4f);
+                d->AddCircle(c, 2.6f, color, 12, 1.6f);
+            }
             ImGui::PopID();
         }
     }

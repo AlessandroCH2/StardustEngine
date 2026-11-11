@@ -8,7 +8,7 @@
 namespace Stardust::TitleBar {
 
 static WNDPROC s_Original = nullptr;
-static float s_Height = 0, s_StartX = 0, s_EndX = 0;
+static float s_Height = 0, s_StartX = 0, s_EndX = 0, s_HoleStart = 0, s_HoleEnd = 0;
 
 static LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
     if (message == WM_NCCALCSIZE && wParam) {
@@ -26,13 +26,14 @@ static LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARA
         POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
         ScreenToClient(hwnd, &point);
         if (!IsZoomed(hwnd) && point.y < 5) return HTTOP;
-        if (point.y < s_Height && point.x >= s_StartX && point.x < s_EndX) return HTCAPTION;
+        if (point.y < s_Height && point.x >= s_StartX && point.x < s_EndX && !(point.x >= s_HoleStart && point.x < s_HoleEnd)) return HTCAPTION;
         return HTCLIENT;
     }
     return CallWindowProcW(s_Original, hwnd, message, wParam, lParam);
 }
 
 void SetDragArea(float height, float startX, float endX) { s_Height = height; s_StartX = startX; s_EndX = endX; }
+void SetDragHole(float startX, float endX) { s_HoleStart = startX; s_HoleEnd = endX; }
 
 void Install(void* nativeWindow) {
     HWND hwnd = (HWND)nativeWindow;
@@ -52,5 +53,6 @@ void Install(void* nativeWindow) {
 namespace Stardust::TitleBar {
 void Install(void*) {}
 void SetDragArea(float, float, float) {}
+void SetDragHole(float, float) {}
 }
 #endif

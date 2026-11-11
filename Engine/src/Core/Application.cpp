@@ -60,6 +60,14 @@ void Application::LoadUiFonts(float scale) {
     // Merge system fallbacks for CJK names. Ranges persist until the atlas is destroyed.
     static const ImWchar cjk[]={0x2E80,0x30FF,0x31F0,0x31FF,0x3400,0x9FFF,0xAC00,0xD7AF,0xF900,0xFAFF,0xFF00,0xFFEF,0};
     for(const char* fallback:{"C:/Windows/Fonts/meiryo.ttc","C:/Windows/Fonts/msyh.ttc","C:/Windows/Fonts/malgun.ttf"})if(std::filesystem::exists(fallback)){ImFontConfig config;config.MergeMode=true;config.OversampleH=config.OversampleV=1;io.Fonts->AddFontFromFileTTF(fallback,17.f*scale,&config,cjk);}
+    // Bold face for headings (scene name, titles); falls back to the regular font
+#ifdef _WIN32
+    const char* boldFont = "C:/Windows/Fonts/segoeuib.ttf";
+#else
+    const char* boldFont = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf";
+#endif
+    s_BoldFont = std::filesystem::exists(boldFont) ? io.Fonts->AddFontFromFileTTF(boldFont, 17.0f*scale) : nullptr;
+    io.FontDefault = io.Fonts->Fonts[0];
 }
 
 void Application::UpdateUiScale() {

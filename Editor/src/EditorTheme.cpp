@@ -18,12 +18,13 @@ void ApplyEditorTheme() {
     s.PopupBorderSize = 1;
     s.FrameBorderSize = 0;
     s.TabBorderSize = 0;
+    s.TabBarOverlineSize = 2;
     s.WindowRounding = 6;
     s.ChildRounding = 0;
     s.PopupRounding = 6;
     s.FrameRounding = 4;
     s.GrabRounding = 8;
-    s.TabRounding = 6;
+    s.TabRounding = 2;
     s.ScrollbarRounding = 8;
     s.WindowMenuButtonPosition = ImGuiDir_None;
     s.DockingSeparatorSize = 5;

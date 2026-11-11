@@ -3,6 +3,7 @@
 #include "Core/Window.h"
 #include "RHI/RHI.h"
 struct ImGuiStyle;
+struct ImFont;
 
 namespace Stardust {
 
@@ -34,6 +35,7 @@ public:
     float FPS() const { return m_FPS; }
     float CpuFrameMs() const { return m_CpuMs; }
     float UiScale() const { return m_UiScale; }
+    static ImFont* BoldFont() { return s_BoldFont; } // the UI font in bold, or null
 
 protected:
     virtual void OnInit() {}
@@ -52,6 +54,7 @@ private:
 
     static inline Application* s_Instance = nullptr;
     static inline bool s_RunInBackground = false;
+    static inline ImFont* s_BoldFont = nullptr;
     ApplicationDesc m_Desc;
     Scope<Window> m_Window;
     Scope<RHI::Device> m_Device;
