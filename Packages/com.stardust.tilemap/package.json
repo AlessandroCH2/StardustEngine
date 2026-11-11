@@ -1,0 +1,9 @@
+{
+  "name": "com.stardust.tilemap",
+  "displayName": "2D Tilemap",
+  "version": "1.2.0",
+  "description": "Grid-based 2D levels: tilesets, Tilemap drawn by a Sprite Batch, Tile Palette, Scene view brushes (single, stamp, random, auto-tile), animated tiles and 2D colliders.",
+  "dependencies": {
+    "com.stardust.core": "*"
+  }
+}

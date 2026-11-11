@@ -104,12 +104,26 @@ private:
     void DrawProjectFolderTree(const std::filesystem::path& dir, const std::string& label);
     // editor chrome (EditorChrome.cpp)
     void DecorateDockTabs();
+    void DrawWindowShadows();
+    bool UpdateManagedSceneTools(); // C# OnSceneGUI tools; true while one owns the mouse (ManagedSceneTools.cpp)
     void DrawStatusBar(float height);
     void* EngineIconTexture();
     Ref<RHI::Texture> m_EngineIcon;
     bool m_EngineIconLoaded = false, m_ConsoleFocusRequest = false;
     double m_ConsoleSelectTime = -1; // the status bar asks the Console to select this entry
     float m_ProjectTreeWidth = 190, m_ProjectIconSize = 92;
+    // Renaming in the Project window (F2, context menu): the asset being edited and the text typed so far
+    std::string m_RenamingAsset, m_RenameText;
+    bool m_RenameFocus = false, m_RenameInTree = false, m_ProjectListingDirty = false, m_ProjectShowTree = true;
+    void BeginRenameAsset(const std::string& relPath, bool inTree = false);
+    void DrawRenameField(float width);
+    bool RenameAsset(const std::string& relPath, std::string newName);
+    // Moving assets keeps every reference to them (AssetRename.cpp)
+    struct AssetPathChange { std::string from, to; bool folder = false; };
+    bool RelocateAsset(const std::filesystem::path& oldPath, const std::filesystem::path& newPath, std::vector<AssetPathChange>& changes);
+    int UpdateAssetReferences(const std::vector<AssetPathChange>& changes);
+    bool MoveAssets(const std::vector<std::string>& relPaths, const std::filesystem::path& folder);
+    void AcceptAssetMoveDrop(const std::filesystem::path& folder); // drop target for dragged assets and folders
     void DrawStats();
     void DrawSceneView();
     void DrawGameView();
@@ -135,6 +149,7 @@ private:
     void DrawProceduralTerrainInspector(EntityID e,ProceduralTerrainComponent& c);
     void DrawScriptInspector(EntityID e, ScriptSlot& sc, size_t slot = 0);
     void DrawColliderGizmos();
+    void DrawCameraGizmos(); // view frustum and direction of every camera
     bool DrawCanvasTools();
     void DrawRectInspector(EntityID e,RectTransformComponent& rect);
     void DrawTextInspector(EntityID e,UITextComponent& text);
@@ -219,7 +234,8 @@ private:
     u64 m_LastLogVersion = 0;
 
     // projects / build / undo
-    bool m_ShowHub = true, m_ShowBuildSettings = false, m_ShowProjectSettings = false;
+    bool m_ShowHub = true, m_ShowBuildSettings = false, m_ShowProjectSettings = false, m_ShowPackageManager = false;
+    void DrawPackageManager(); // PackageManagerWindow.cpp
     std::atomic<bool> m_Building{ false };
     std::thread m_PlayerBuildThread;
     std::vector<std::string> m_Undo, m_Redo;

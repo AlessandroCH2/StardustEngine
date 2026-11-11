@@ -19,6 +19,11 @@ namespace Stardust {void ApplyEditorTheme();}
 #include <stb_image_write.h>
 using namespace Stardust;
 int main(){
+    // The fixtures live in the source tree: the first parent folder of the executable that has Tests/Fixtures
+    for (auto dir = Stardust::FileSystem::ExecutableDir(); !dir.empty(); dir = dir.parent_path()) {
+        if (std::filesystem::is_directory(dir / "Tests" / "Fixtures")) { Stardust::FileSystem::SetEngineRoot(dir); break; }
+        if (dir == dir.parent_path()) break;
+    }
  try{
     ImGui::CreateContext();ImGui::GetIO().DeltaTime=1.f/30;
     auto root=FileSystem::EngineRoot()/"Examples/FeatureLab";

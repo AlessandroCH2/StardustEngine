@@ -1,6 +1,7 @@
 using System;
 using System.Linq;
 using System.Text.Json.Nodes;
+using Stardust.Interop;
 using P = Stardust.ComponentProperties;
 namespace Stardust;
 
@@ -72,6 +73,64 @@ public sealed class RenderTexture : Asset {
     public RenderTexture(string name,int width=512,int height=512){path=name;this.width=width;this.height=height;}
     public static implicit operator string(RenderTexture value)=>value?.path??"";
     public static implicit operator RenderTexture(string path)=>new(path);
+}
+
+/// <summary>One textured quad of a <see cref="SpriteBatch"/>, on the entity's local XY plane (40 bytes, matches the engine).</summary>
+[System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential, Pack = 4)]
+public struct SpriteQuad {
+    /// <summary>Bottom-left corner, in local units.</summary>
+    public Vector2 position;
+    public Vector2 size;
+    /// <summary>Texture pixels from the top-left; a zero width uses the whole texture.</summary>
+    public float rectX, rectY, rectWidth, rectHeight;
+    /// <summary>RGBA8 tint, red in the lowest byte (see <see cref="PackColor"/>).</summary>
+    public uint color;
+    /// <summary>Index into the batch's texture list.</summary>
+    public ushort texture;
+    /// <summary>1 flip X, 2 flip Y, bits 2-3 quarter turns counter-clockwise.</summary>
+    public ushort flags;
+    public static uint PackColor(Color c) {
+        static uint B(float v) => (uint)Math.Clamp((int)MathF.Round(v * 255f), 0, 255);
+        return B(c.r) | B(c.g) << 8 | B(c.b) << 16 | B(c.a) << 24;
+    }
+    public static ushort Flags(bool flipX, bool flipY, int quarterTurns, int animation = -1) => (ushort)((flipX ? 1 : 0) | (flipY ? 2 : 0) | ((quarterTurns & 3) << 2) | ((animation + 1) & 0xFFF) << 4);
+    /// <summary>Index into the batch's animations, or -1 for a still quad.</summary>
+    public int animation { get => (flags >> 4) - 1; set => flags = (ushort)((flags & 15) | ((value + 1) & 0xFFF) << 4); }
+    /// <summary>An empty slot (zero size) draws nothing.</summary>
+    public bool isEmpty => size.x == 0 && size.y == 0;
+}
+/// <summary>Pixel rectangle of a texture, from the top-left.</summary>
+public struct PixelRect { public float x, y, width, height; public PixelRect(float x, float y, float width, float height) { this.x = x; this.y = y; this.width = width; this.height = height; } }
+/// <summary>Frames shown in turn by animated quads of a <see cref="SpriteBatch"/>.</summary>
+public sealed class SpriteAnimation { public PixelRect[] frames = Array.Empty<PixelRect>(); public float fps = 8; }
+/// <summary>Draws many quads as one object, one draw per texture and colour. Tilemaps and 2D effects fill it from scripts.</summary>
+public sealed class SpriteBatch : Component {
+    public string material {get=>P.Value(this,27,"material","");set=>P.Property(this,27,"material",JsonValue.Create(value??""));}
+    public Color color {get=>P.ColorValue(this,27,"color");set=>P.Property(this,27,"color",new JsonArray(value.r,value.g,value.b,value.a));}
+    public int sortingOrder {get=>P.Value(this,27,"sortingOrder",0);set=>P.Property(this,27,"sortingOrder",JsonValue.Create(value));}
+    public int quadCount=>P.Value(this,27,"count",0);
+    /// <summary>Changes whenever the quads, textures or animations change (compare it to know if cached data is stale).</summary>
+    public string version=>P.Value(this,27,"version","");
+    public string[] textures=>P.Get(this,27)["textures"]?.AsArray().Select(n=>n.GetValue<string>()).ToArray()??Array.Empty<string>();
+    static string Encode(ReadOnlySpan<SpriteQuad> quads)=>Convert.ToBase64String(System.Runtime.InteropServices.MemoryMarshal.AsBytes(quads));
+    /// <summary>Replaces every quad. <paramref name="count"/> limits how many of <paramref name="quads"/> are used.</summary>
+    public void SetQuads(string[] textures,SpriteQuad[] quads,int count=-1){
+        if(count<0||count>quads.Length)count=quads.Length;
+        P.Set(this,27,new JsonObject{["textures"]=new JsonArray(textures.Select(t=>(JsonNode)JsonValue.Create(t??"")).ToArray()),["quads"]=Encode(quads.AsSpan(0,count))});
+    }
+    /// <summary>Overwrites quads from index <paramref name="start"/> (growing the batch if needed). Only the chunks touched are rebuilt,
+    /// so editing a few quads of a large batch stays cheap.</summary>
+    public void SetQuadRange(int start,ReadOnlySpan<SpriteQuad> quads){if(quads.Length>0)P.Set(this,27,new JsonObject{["replace"]=new JsonObject{["start"]=start,["quads"]=Encode(quads)}});}
+    /// <summary>Grows or shrinks the batch; new quads are empty (zero size).</summary>
+    public void Resize(int count)=>P.Set(this,27,new JsonObject{["count"]=count});
+    /// <summary>Animations for quads whose <see cref="SpriteQuad.animation"/> is set: frames are pixel rectangles of the quad's texture.</summary>
+    public void SetAnimations(SpriteAnimation[] animations)=>P.Set(this,27,new JsonObject{["animations"]=new JsonArray(animations.Select(a=>(JsonNode)new JsonObject{["fps"]=a.fps,["frames"]=new JsonArray(a.frames.Select(f=>(JsonNode)new JsonArray(f.x,f.y,f.width,f.height)).ToArray())}).ToArray())});
+    public SpriteQuad[] GetQuads(){
+        var text=Native.Query(new JsonObject{["kind"]="spriteBatchQuads",["entity"]=Entity.ID.ToString("x16")})["quads"]?.GetValue<string>();if(string.IsNullOrEmpty(text))return Array.Empty<SpriteQuad>();
+        var bytes=Convert.FromBase64String(text);var quads=new SpriteQuad[bytes.Length/40];
+        bytes.AsSpan(0,quads.Length*40).CopyTo(System.Runtime.InteropServices.MemoryMarshal.AsBytes(quads.AsSpan()));return quads;
+    }
+    public void Clear()=>SetQuads(Array.Empty<string>(),Array.Empty<SpriteQuad>());
 }
 
 public enum VideoRenderMode { RenderTexture, MaterialOverride }

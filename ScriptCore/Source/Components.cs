@@ -40,6 +40,11 @@ namespace Stardust
             if(t==typeof(SpriteRenderer))return 22;
             if(t==typeof(Environment))return 23;
             if(t==typeof(VideoPlayer))return 26;
+            if(t==typeof(SpriteBatch))return 27;
+            if(t==typeof(Rigidbody2D))return 28;
+            if(t==typeof(BoxCollider2D))return 29;
+            if(t==typeof(CircleCollider2D))return 30;
+            if(t==typeof(CapsuleCollider2D))return 31;
             if(t==typeof(Terrain))return 24;
             if(t==typeof(SpotLight))return 25;
             return -1;

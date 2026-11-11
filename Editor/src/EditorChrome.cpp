@@ -139,6 +139,55 @@ void EditorApp::DecorateDockTabs() {
     }
 }
 
+// Soft shadows under floating windows, popups and menus, so they stand out from the panels behind them.
+// ImGui has no window shadows: the shadow is built in a separate draw list and put in front of the window's own
+// commands, so it is drawn just before (under) the window and on top of whatever lies behind it.
+void EditorApp::DrawWindowShadows() {
+    ImGuiContext& g = *GImGui;
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    for (ImGuiWindow* window : g.Windows) {
+        if (!window->Active || window->Hidden || window->DockIsActive || (window->Flags & ImGuiWindowFlags_ChildWindow) || (window->Flags & ImGuiWindowFlags_NoBackground)) continue;
+        if (window->Size.x >= viewport->WorkSize.x - 1 && window->Size.y >= viewport->WorkSize.y - 1) continue; // the editor's own full-screen window
+        if (window->Viewport != viewport) continue;
+        ImDrawList* list = window->DrawList;
+        if (list->CmdBuffer.Size == 0 || list->VtxBuffer.Size == 0) continue;
+        const bool small = (window->Flags & (ImGuiWindowFlags_Tooltip | ImGuiWindowFlags_Popup)) != 0;
+
+        ImDrawList shadow(ImGui::GetDrawListSharedData());
+        shadow._ResetForNewFrame();
+        shadow.PushClipRect(viewport->Pos, { viewport->Pos.x + viewport->Size.x, viewport->Pos.y + viewport->Size.y }, false);
+        shadow.PushTextureID(g.Font->ContainerAtlas->TexID);
+        const ImVec2 a = window->Pos, b = { window->Pos.x + window->Size.x, window->Pos.y + window->Size.y };
+        const float offset = small ? 3.0f : 6.0f, rounding = window->WindowRounding;
+        const int layers = small ? 6 : 10;
+        for (int i = layers; i >= 1; --i) {
+            // Wider and fainter layers on the outside, slightly below the window like light from above
+            const float grow = i * (small ? 1.6f : 2.4f), t = 1.0f - (float)i / (layers + 1);
+            const int alpha = (int)((small ? 20.0f : 26.0f) * t * t + 3);
+            shadow.AddRectFilled({ a.x - grow, a.y - grow + offset }, { b.x + grow, b.y + grow + offset }, IM_COL32(0, 0, 0, alpha), rounding + grow);
+        }
+        shadow.PopTextureID();
+        shadow.PopClipRect();
+        shadow._PopUnusedDrawCmd();
+        if (shadow.CmdBuffer.Size == 0 || shadow.VtxBuffer.Size == 0) continue;
+
+        // Shadow first: the window's commands move after it
+        const int vtx = shadow.VtxBuffer.Size, idx = shadow.IdxBuffer.Size;
+        for (ImDrawCmd& cmd : list->CmdBuffer) { cmd.VtxOffset += vtx; cmd.IdxOffset += idx; }
+        auto prepend = [](auto& target, const auto& front) {
+            const int old = target.Size;
+            target.resize(old + front.Size);
+            std::memmove(target.Data + front.Size, target.Data, old * sizeof(*target.Data));
+            std::memcpy(target.Data, front.Data, front.Size * sizeof(*target.Data));
+        };
+        prepend(list->VtxBuffer, shadow.VtxBuffer);
+        prepend(list->IdxBuffer, shadow.IdxBuffer);
+        prepend(list->CmdBuffer, shadow.CmdBuffer);
+        list->_VtxWritePtr = list->VtxBuffer.Data + list->VtxBuffer.Size;
+        list->_IdxWritePtr = list->IdxBuffer.Data + list->IdxBuffer.Size;
+    }
+}
+
 void* EditorApp::EngineIconTexture() {
     if (!m_EngineIconLoaded) {
         m_EngineIconLoaded = true;

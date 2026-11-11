@@ -728,13 +728,12 @@ void EditorApp::DrawProjectSettings() {
     ImGui::TextDisabled("Folder: %s", Project::Dir().string().c_str());
     }
     if(section==1){
-    ImGui::SeparatorText("Packages");
+    ImGui::TextWrapped("Install, update and remove packages, import their samples, or add packages from disk or from a git repository in the Package Manager.");
+    ImGui::Spacing();
+    if (ImGui::Button("Open Package Manager", { 220 * UiScale(), 30 * UiScale() })) m_ShowPackageManager = true;
+    ImGui::SeparatorText("Installed");
     for (const auto& package : PackageManager::Installed())
-        ImGui::BulletText("%s  %s%s", package.displayName.c_str(), package.version.c_str(), package.engine ? " (Engine)" : "");
-    if (ImGui::Button("Install Local Package...")) {
-        if (auto folder = FileDialogs::PickFolder(GetWindow().NativeHandle(), Project::Dir()))
-            if (PackageManager::InstallLocal(*folder)) { Project::WriteScriptProject(Project::ScriptProjectFile(), cfg.assemblyName); ScriptEngine::BuildAsync(); }
-    }
+        ImGui::BulletText("%s  %s%s", package.displayName.c_str(), package.version.c_str(), package.engine ? "  (Engine)" : "");
     }
     if(section==2){
     ImGui::SeparatorText("Input Manager");

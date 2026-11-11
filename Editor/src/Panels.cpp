@@ -554,6 +554,12 @@ void EditorApp::DrawInspector() {
         Insp::Checkbox("Audio",&c.audio);if(c.audio)Insp::SliderFloat("Volume",&c.volume,0,1);
         if(ActiveScene().IsRunning()){Insp::Checkbox("Playing",&c.playing);Insp::SliderFloat("Time",&c.time,0,std::max(.01f,c.duration));}
         else ImGui::TextDisabled("Plays in Play mode.");});
+    ComponentSection<SpriteBatchComponent>(inspectScene,e,"Sprite Batch",true,[](auto& c){
+        // The quads come from scripts (the Tilemap package, effects...); here only how they are drawn
+        ImGui::TextDisabled("%zu quads, %zu textures", c.quads.size(), c.textures.size());
+        AssetUI::AssetField("Material",c.material,{".mat"});Insp::ColorEdit4("Color",&c.color.x);Insp::InputInt("Sorting Order",&c.sortingOrder);
+        if(!c.quads.empty()&&ImGui::Button("Clear Quads")){c.quads.clear();c.textures.clear();c.Touch();}
+    });
     ComponentSection<SpriteRendererComponent>(inspectScene,e,"Sprite Renderer",true,[](auto& c){AssetUI::AssetField("Sprite",c.sprite,{".sprite",".png",".jpg"});AssetUI::AssetField("Material",c.material,{".mat"});Insp::ColorEdit4("Color",&c.color.x);Insp::DragFloat("Pixels Per Unit",&c.pixelsPerUnit,1,.01f,100000);Insp::Checkbox("Flip X",&c.flipX);Insp::Checkbox("Flip Y",&c.flipY);Insp::InputInt("Sorting Order",&c.sortingOrder);});
     ComponentSection<CameraComponent>(inspectScene, e, "Camera", true, [](CameraComponent& c) {
         Insp::Combo("Clear Flags",&c.clearFlags,"Skybox\0Solid Color\0");if(ImGui::IsItemHovered())ImGui::SetTooltip("Solid Color skips the sky and the clouds: use it for render textures");
@@ -630,6 +636,27 @@ void EditorApp::DrawInspector() {
         SliderProp("Angular Damping", rb.angularDamping, 0.0f, 5.0f);
         BoolProp("Use Gravity", rb.useGravity);
         BoolProp("Freeze Rotation", rb.freezeRotation);
+    });
+    ComponentSection<Rigidbody2DComponent>(inspectScene, e, "Rigidbody 2D", true, [](Rigidbody2DComponent& rb) {
+        BeginProperty("Body Type");
+        const char* types[] = { "Static", "Dynamic", "Kinematic" };
+        int t = (int)rb.type;
+        if (Insp::Combo("##bt2", &t, types, 3)) rb.type = (BodyType)t;
+        EndProperty();
+        FloatProp("Mass", rb.mass, 0.05f, 0.001f, 100000.0f);
+        SliderProp("Linear Damping", rb.linearDamping, 0.0f, 5.0f);
+        SliderProp("Angular Damping", rb.angularDamping, 0.0f, 5.0f);
+        FloatProp("Gravity Scale", rb.gravityScale, 0.05f, -100.0f, 100.0f);
+        BoolProp("Freeze Rotation", rb.freezeRotation);
+    });
+    ComponentSection<BoxCollider2DComponent>(inspectScene, e, "Box Collider 2D", true, [&](BoxCollider2DComponent& c) {
+        Insp::DragFloat2("Size", &c.size.x, 0.01f, 0.001f, 100000.0f); Insp::DragFloat2("Offset", &c.offset.x, 0.01f); physMat(c.material);
+    });
+    ComponentSection<CircleCollider2DComponent>(inspectScene, e, "Circle Collider 2D", true, [&](CircleCollider2DComponent& c) {
+        FloatProp("Radius", c.radius, 0.01f, 0.001f, 100000.0f); Insp::DragFloat2("Offset", &c.offset.x, 0.01f); physMat(c.material);
+    });
+    ComponentSection<CapsuleCollider2DComponent>(inspectScene, e, "Capsule Collider 2D", true, [&](CapsuleCollider2DComponent& c) {
+        Insp::DragFloat2("Size", &c.size.x, 0.01f, 0.001f, 100000.0f); Insp::DragFloat2("Offset", &c.offset.x, 0.01f); physMat(c.material);
     });
     ComponentSection<BoxColliderComponent>(inspectScene, e, "Box Collider", true, [&](BoxColliderComponent& c) {
         Vec3Control("Size", c.size, 1.0f);
@@ -719,6 +746,7 @@ void EditorApp::DrawInspector() {
         if (!reg.Has<MeshRendererComponent>(e) && item("Mesh Renderer")) reg.Add<MeshRendererComponent>(e);
         if(!reg.Has<VideoPlayerComponent>(e)&&item("Video Player"))reg.Add<VideoPlayerComponent>(e);
         if (!reg.Has<SpriteRendererComponent>(e) && item("Sprite Renderer")) reg.Add<SpriteRendererComponent>(e);
+        if (!reg.Has<SpriteBatchComponent>(e) && item("Sprite Batch")) reg.Add<SpriteBatchComponent>(e);
         if (!reg.Has<LODGroupComponent>(e) && item("LOD Group")) reg.Add<LODGroupComponent>(e);
         if (!reg.Has<CameraComponent>(e) && item("Camera")) reg.Add<CameraComponent>(e);
         if (!reg.Has<DirectionalLightComponent>(e) && item("Directional Light")) reg.Add<DirectionalLightComponent>(e);
@@ -734,6 +762,10 @@ void EditorApp::DrawInspector() {
         section("Physics");
         if (!reg.Has<RigidbodyComponent>(e) && item("Rigidbody")) reg.Add<RigidbodyComponent>(e);
         if (!reg.Has<BoxColliderComponent>(e) && item("Box Collider")) reg.Add<BoxColliderComponent>(e);
+        if (!reg.Has<Rigidbody2DComponent>(e) && item("Rigidbody 2D")) reg.Add<Rigidbody2DComponent>(e);
+        if (!reg.Has<BoxCollider2DComponent>(e) && item("Box Collider 2D")) reg.Add<BoxCollider2DComponent>(e);
+        if (!reg.Has<CircleCollider2DComponent>(e) && item("Circle Collider 2D")) reg.Add<CircleCollider2DComponent>(e);
+        if (!reg.Has<CapsuleCollider2DComponent>(e) && item("Capsule Collider 2D")) reg.Add<CapsuleCollider2DComponent>(e);
         if (!reg.Has<SphereColliderComponent>(e) && item("Sphere Collider")) reg.Add<SphereColliderComponent>(e);
         if (!reg.Has<CapsuleColliderComponent>(e) && item("Capsule Collider")) reg.Add<CapsuleColliderComponent>(e);
         if (!reg.Has<MeshColliderComponent>(e) && item("Mesh Collider")) reg.Add<MeshColliderComponent>(e);
@@ -964,6 +996,7 @@ void EditorApp::DrawScriptInspector(EntityID e, ScriptSlot& sc, size_t slot) {
     bool changed = false;
     std::string changedField;
     for (auto& f : info->fields) {
+        if (f.schemaJson.find("\"hidden\":true") != std::string::npos) continue; // [HideInInspector]: saved, not shown
         nlohmann::json v = values.contains(f.name) ? values[f.name] : nlohmann::json::parse(f.defaultJson, nullptr, false);
         bool c = false;
         ImGui::PushID(f.name.c_str());
@@ -1320,8 +1353,20 @@ void EditorApp::DrawProjectFolderTree(const std::filesystem::path& dir, const st
             const auto relative = fs::relative(m_ProjectCurrentDir, folder);
             if (!relative.empty() && *relative.begin() != fs::path("..")) ImGui::SetNextItemOpen(true);
         }
-        const bool open = ImGui::TreeNodeEx(FileSystem::Utf8(folder).c_str(), flags, "      %s", name.c_str());
+        // The icon follows the node's indentation: the item rect spans the full row
+        const float nodeX = ImGui::GetCursorScreenPos().x;
+        const std::string rel = AssetManager::ToRelative(folder);
+        const bool renaming = m_RenameInTree && !m_RenamingAsset.empty() && m_RenamingAsset == rel;
+        const bool open = ImGui::TreeNodeEx(FileSystem::Utf8(folder).c_str(), flags | (renaming ? ImGuiTreeNodeFlags_AllowOverlap : 0), "      %s", renaming ? "" : name.c_str());
         if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) m_ProjectCurrentDir = folder;
+        const bool isRoot = folder == m_ProjectRoot || folder == Project::Dir() / "Packages";
+        ImGui::PushID(rel.c_str()); // closed sibling nodes share the ID stack
+        if (ImGui::BeginPopupContextItem("FolderMenu")) {
+            if (ImGui::MenuItem("Rename", "F2", false, !isRoot)) BeginRenameAsset(rel, true);
+            if (ImGui::MenuItem("Show in Explorer")) ShellExecuteFile(folder);
+            ImGui::EndPopup();
+        }
+        ImGui::PopID();
         if (ImGui::BeginDragDropTarget()) { // entities dropped on a folder become prefabs there
             if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("STARDUST_ENTITY")) {
                 EntityID e = *(const EntityID*)p->Data;
@@ -1330,13 +1375,28 @@ void EditorApp::DrawProjectFolderTree(const std::filesystem::path& dir, const st
             }
             ImGui::EndDragDropTarget();
         }
+        AcceptAssetMoveDrop(folder);
+        if (!isRoot && ImGui::BeginDragDropSource()) {
+            ImGui::SetDragDropPayload("STARDUST_FOLDER", rel.c_str(), rel.size() + 1);
+            ImGui::Text("Move %s", name.c_str());
+            ImGui::EndDragDropSource();
+        }
         // Folder icon after the arrow
-        const ImVec2 min = ImGui::GetItemRectMin();
-        const float h = ImGui::GetItemRectSize().y, x = min.x + ImGui::GetTreeNodeToLabelSpacing() + 1 * ui, y = min.y + h * 0.5f;
+        const ImVec2 min = ImGui::GetItemRectMin(), afterNode = ImGui::GetCursorScreenPos();
+        const float h = ImGui::GetItemRectSize().y, x = nodeX + ImGui::GetTreeNodeToLabelSpacing() + 1 * ui, y = min.y + h * 0.5f;
         auto* draw = ImGui::GetWindowDrawList();
         const ImU32 tab = IM_COL32(214, 168, 64, 255), body = folder == m_ProjectCurrentDir ? IM_COL32(240, 196, 92, 255) : IM_COL32(222, 176, 72, 255);
         draw->AddRectFilled({ x, y - 5 * ui }, { x + 6 * ui, y - 2 * ui }, tab, 1);
         draw->AddRectFilled({ x, y - 3 * ui }, { x + 14 * ui, y + 5 * ui }, body, 1.5f);
+        if (renaming) {
+            ImGui::SetCursorScreenPos({ x + 20 * ui, min.y });
+            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(4 * ui, 0));
+            ImGui::PushID("rename");
+            DrawRenameField(std::max(60 * ui, ImGui::GetWindowPos().x + ImGui::GetWindowWidth() - x - 30 * ui));
+            ImGui::PopID();
+            ImGui::PopStyleVar();
+            ImGui::SetCursorScreenPos(afterNode);
+        }
         if (open) {
             for (const fs::path& child : children) node(child, FileSystem::Utf8(child.filename()));
             ImGui::TreePop();
@@ -1355,16 +1415,24 @@ void EditorApp::DrawProject() {
     const float ui = UiScale();
     static std::string projectSearch;
 
-    // Header: + create menu, breadcrumb, search and icon size
+    // A narrow Project window stacks its header in two rows, hides the icon size and lets the folder tree be toggled
+    const float panelWidth = ImGui::GetContentRegionAvail().x;
+    const bool compact = panelWidth < 560 * ui;
+    const bool treeFits = panelWidth >= 300 * ui;
+    const bool showTree = m_ProjectShowTree && treeFits;
+
+    // Header: + create menu, tree toggle, breadcrumb, search and icon size
     ImGui::PushStyleColor(ImGuiCol_ChildBg, IM_COL32(29, 31, 35, 255));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(6 * ui, 4 * ui));
-    ImGui::BeginChild("##projectHeader", ImVec2(0, ImGui::GetFrameHeight() + 8 * ui), ImGuiChildFlags_AlwaysUseWindowPadding, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+    const float rowHeight = ImGui::GetFrameHeight();
+    ImGui::BeginChild("##projectHeader", ImVec2(0, rowHeight * (compact ? 2 : 1) + (compact ? 12 : 8) * ui), ImGuiChildFlags_AlwaysUseWindowPadding, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
     ImGui::PopStyleVar();
     {
         auto* draw = ImGui::GetWindowDrawList();
+        const float right = ImGui::GetWindowWidth() - ImGui::GetStyle().WindowPadding.x;
         // + with a small arrow
         {
-            const ImVec2 p = ImGui::GetCursorScreenPos(), size(30 * ui, ImGui::GetFrameHeight());
+            const ImVec2 p = ImGui::GetCursorScreenPos(), size(30 * ui, rowHeight);
             if (ImGui::InvisibleButton("##projectCreate", size)) ImGui::OpenPopup("ProjectCreate");
             const bool hovered = ImGui::IsItemHovered();
             draw->AddRectFilled(p, { p.x + size.x, p.y + size.y }, hovered ? IM_COL32(68, 72, 79, 255) : IM_COL32(48, 51, 57, 255), 3);
@@ -1376,46 +1444,33 @@ void EditorApp::DrawProject() {
             if (hovered) ImGui::SetTooltip("Create");
             if (ImGui::BeginPopup("ProjectCreate")) { DrawProjectCreateItems(); ImGui::EndPopup(); }
         }
-        // Breadcrumb: Assets › Folder › Folder
-        ImGui::SameLine(0, 10 * ui);
-        const float searchWidth = std::min(220 * ui, ImGui::GetWindowWidth() * 0.35f), sliderWidth = 70 * ui;
-        const float crumbsEnd = ImGui::GetWindowWidth() - searchWidth - sliderWidth - 24 * ui;
-        fs::path rel = fs::relative(m_ProjectCurrentDir, m_ProjectRoot.parent_path());
-        fs::path accum = m_ProjectRoot.parent_path();
-        std::vector<fs::path> parts(rel.begin(), rel.end());
-        for (size_t i = 0; i < parts.size(); ++i) {
-            accum /= parts[i];
-            const bool last = i + 1 == parts.size();
-            if (i) {
-                const ImVec2 p = ImGui::GetCursorScreenPos();
-                const float cy = p.y + ImGui::GetFrameHeight() * 0.5f, r = 3.5f * ui;
-                draw->AddLine({ p.x + 3 * ui, cy - r }, { p.x + 3 * ui + r, cy }, IM_COL32(130, 134, 142, 255), 1.4f);
-                draw->AddLine({ p.x + 3 * ui + r, cy }, { p.x + 3 * ui, cy + r }, IM_COL32(130, 134, 142, 255), 1.4f);
-                ImGui::Dummy({ 10 * ui, ImGui::GetFrameHeight() });
-                ImGui::SameLine(0, 2 * ui);
-            }
-            const std::string name = FileSystem::Utf8(parts[i]);
-            ImFont* font = last && Application::BoldFont() ? Application::BoldFont() : ImGui::GetFont();
-            const ImVec2 textSize = font->CalcTextSizeA(ImGui::GetFontSize(), FLT_MAX, 0, name.c_str());
-            if (ImGui::GetCursorScreenPos().x + textSize.x + 8 * ui > ImGui::GetWindowPos().x + crumbsEnd) { ImGui::TextDisabled("..."); ImGui::SameLine(); break; }
-            ImGui::PushID((int)i);
-            const ImVec2 p = ImGui::GetCursorScreenPos(), size(textSize.x + 8 * ui, ImGui::GetFrameHeight());
-            if (ImGui::InvisibleButton("##crumb", size)) { m_ProjectCurrentDir = accum; projectSearch.clear(); }
+        // Folder tree toggle (a sidebar icon)
+        if (treeFits) {
+            ImGui::SameLine(0, 4 * ui);
+            const ImVec2 p = ImGui::GetCursorScreenPos(), size(rowHeight + 4 * ui, rowHeight);
+            if (ImGui::InvisibleButton("##projectTreeToggle", size)) m_ProjectShowTree = !m_ProjectShowTree;
             const bool hovered = ImGui::IsItemHovered();
-            if (hovered) draw->AddRectFilled(p, { p.x + size.x, p.y + size.y }, IM_COL32(48, 51, 57, 255), 3);
-            draw->AddText(font, ImGui::GetFontSize(), { p.x + 4 * ui, p.y + (size.y - ImGui::GetFontSize()) * 0.5f }, last ? IM_COL32(230, 232, 236, 255) : IM_COL32(170, 174, 182, 255), name.c_str());
-            ImGui::PopID();
-            ImGui::SameLine(0, 2 * ui);
+            if (hovered || m_ProjectShowTree) draw->AddRectFilled(p, { p.x + size.x, p.y + size.y }, hovered ? IM_COL32(68, 72, 79, 255) : IM_COL32(48, 51, 57, 255), 3);
+            const ImVec2 a(p.x + size.x * 0.5f - 7 * ui, p.y + size.y * 0.5f - 6 * ui), b(a.x + 14 * ui, a.y + 12 * ui);
+            const ImU32 color = m_ProjectShowTree ? IM_COL32(220, 223, 228, 255) : IM_COL32(150, 154, 162, 255);
+            draw->AddRect(a, b, color, 2, 0, 1.4f);
+            draw->AddRectFilled({ a.x, a.y }, { a.x + 5 * ui, b.y }, color, 2, ImDrawFlags_RoundCornersLeft);
+            if (hovered) ImGui::SetTooltip("%s", m_ProjectShowTree ? "Hide folder tree" : "Show folder tree");
         }
-        // Search with a magnifier, then the icon size
-        ImGui::SameLine(std::max(ImGui::GetCursorPosX() + 8 * ui, ImGui::GetWindowWidth() - searchWidth - sliderWidth - 18 * ui));
-        {
+        // Search (and icon size) on the right of the first row
+        const float sliderWidth = compact ? 0.0f : 70 * ui;
+        const float firstRowX = ImGui::GetCursorPosX();
+        ImGui::SameLine();
+        const float afterButtons = ImGui::GetCursorPosX();
+        const float searchWidth = compact ? std::max(60 * ui, right - afterButtons - 4 * ui) : std::min(220 * ui, ImGui::GetWindowWidth() * 0.35f);
+        const float searchX = compact ? afterButtons + 4 * ui : right - searchWidth - sliderWidth - 10 * ui;
+        auto drawSearch = [&] {
             const ImVec2 p = ImGui::GetCursorScreenPos();
             ImGui::SetNextItemWidth(searchWidth);
             ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(24 * ui, ImGui::GetStyle().FramePadding.y));
             ImGui::InputTextWithHint("##projectSearch", "Search", &projectSearch);
             ImGui::PopStyleVar();
-            const ImVec2 c(p.x + 12 * ui, p.y + ImGui::GetFrameHeight() * 0.5f - 1);
+            const ImVec2 c(p.x + 12 * ui, p.y + rowHeight * 0.5f - 1);
             draw->AddCircle(c, 4.5f * ui, IM_COL32(150, 154, 162, 255), 12, 1.5f);
             draw->AddLine({ c.x + 3.2f * ui, c.y + 3.2f * ui }, { c.x + 6.5f * ui, c.y + 6.5f * ui }, IM_COL32(150, 154, 162, 255), 1.8f);
             if (!projectSearch.empty()) {
@@ -1423,27 +1478,82 @@ void EditorApp::DrawProject() {
                 ImGui::SetCursorPosX(ImGui::GetCursorPosX() - 20 * ui);
                 if (ImGui::SmallButton("x##clearSearch")) projectSearch.clear();
             }
+        };
+        if (compact) {
+            ImGui::SetCursorPosX(searchX);
+            drawSearch();
+            ImGui::SetCursorPosX(firstRowX); // breadcrumb on its own row
+        } else {
+            ImGui::SameLine(0, 10 * ui);
         }
-        ImGui::SameLine(ImGui::GetWindowWidth() - sliderWidth - 8 * ui);
-        ImGui::SetNextItemWidth(sliderWidth);
-        ImGui::SliderFloat("##iconSize", &m_ProjectIconSize, 56, 160, "");
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Icon size");
+        // Breadcrumb: Assets › Folder › Folder; the folders closest to the current one win when space is short
+        const float crumbsEnd = compact ? right : searchX - 8 * ui;
+        fs::path rel = fs::relative(m_ProjectCurrentDir, m_ProjectRoot.parent_path());
+        std::vector<fs::path> parts(rel.begin(), rel.end());
+        std::vector<fs::path> targets;
+        { fs::path accum = m_ProjectRoot.parent_path(); for (auto& part : parts) { accum /= part; targets.push_back(accum); } }
+        auto crumbWidth = [&](size_t i) {
+            ImFont* font = i + 1 == parts.size() && Application::BoldFont() ? Application::BoldFont() : ImGui::GetFont();
+            return font->CalcTextSizeA(ImGui::GetFontSize(), FLT_MAX, 0, FileSystem::Utf8(parts[i]).c_str()).x + 8 * ui + (i ? 12 * ui : 0);
+        };
+        size_t first = 0;
+        {
+            float width = 0;
+            for (size_t i = parts.size(); i-- > 0;) {
+                width += crumbWidth(i);
+                if (ImGui::GetCursorPosX() + width + 24 * ui > crumbsEnd && i + 1 < parts.size()) { first = i + 1; break; }
+            }
+        }
+        if (first > 0) { ImGui::AlignTextToFramePadding(); ImGui::TextDisabled("..."); ImGui::SameLine(0, 4 * ui); }
+        for (size_t i = first; i < parts.size(); ++i) {
+            const bool last = i + 1 == parts.size();
+            if (i > first) {
+                const ImVec2 p = ImGui::GetCursorScreenPos();
+                const float cy = p.y + rowHeight * 0.5f, r = 3.5f * ui;
+                draw->AddLine({ p.x + 3 * ui, cy - r }, { p.x + 3 * ui + r, cy }, IM_COL32(130, 134, 142, 255), 1.4f);
+                draw->AddLine({ p.x + 3 * ui + r, cy }, { p.x + 3 * ui, cy + r }, IM_COL32(130, 134, 142, 255), 1.4f);
+                ImGui::Dummy({ 10 * ui, rowHeight });
+                ImGui::SameLine(0, 2 * ui);
+            }
+            const std::string name = FileSystem::Utf8(parts[i]);
+            ImFont* font = last && Application::BoldFont() ? Application::BoldFont() : ImGui::GetFont();
+            const float textWidth = font->CalcTextSizeA(ImGui::GetFontSize(), FLT_MAX, 0, name.c_str()).x;
+            const float maxWidth = std::max(30 * ui, crumbsEnd - ImGui::GetCursorPosX() - 8 * ui);
+            ImGui::PushID((int)i);
+            const ImVec2 p = ImGui::GetCursorScreenPos(), size(std::min(textWidth, maxWidth) + 8 * ui, rowHeight);
+            if (ImGui::InvisibleButton("##crumb", size)) { m_ProjectCurrentDir = targets[i]; projectSearch.clear(); }
+            AcceptAssetMoveDrop(targets[i]);
+            const bool hovered = ImGui::IsItemHovered();
+            if (hovered) draw->AddRectFilled(p, { p.x + size.x, p.y + size.y }, IM_COL32(48, 51, 57, 255), 3);
+            const ImVec4 clip(p.x, p.y, p.x + size.x - 2 * ui, p.y + size.y);
+            draw->AddText(font, ImGui::GetFontSize(), { p.x + 4 * ui, p.y + (size.y - ImGui::GetFontSize()) * 0.5f }, last ? IM_COL32(230, 232, 236, 255) : IM_COL32(170, 174, 182, 255), name.c_str(), nullptr, 0, &clip);
+            ImGui::PopID();
+            ImGui::SameLine(0, 2 * ui);
+        }
+        if (!compact) {
+            ImGui::SameLine(searchX);
+            drawSearch();
+            ImGui::SameLine(right - sliderWidth);
+            ImGui::SetNextItemWidth(sliderWidth);
+            ImGui::SliderFloat("##iconSize", &m_ProjectIconSize, 56, 160, "");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Icon size (smallest shows a list)");
+        }
     }
     ImGui::EndChild();
     ImGui::PopStyleColor();
 
     // Folder tree on the left, resizable
-    m_ProjectTreeWidth = std::clamp(m_ProjectTreeWidth, 90 * ui, std::max(90 * ui, ImGui::GetContentRegionAvail().x - 120 * ui));
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, IM_COL32(31, 33, 37, 255));
-    ImGui::PushStyleVar(ImGuiStyleVar_IndentSpacing, 12 * ui);
-    ImGui::BeginChild("##projectTree", ImVec2(m_ProjectTreeWidth, 0), ImGuiChildFlags_AlwaysUseWindowPadding);
-    DrawProjectFolderTree(m_ProjectRoot, "Assets");
-    if (fs::exists(Project::Dir() / "Packages")) DrawProjectFolderTree(Project::Dir() / "Packages", "Packages");
-    ImGui::EndChild();
-    ImGui::PopStyleVar();
-    ImGui::PopStyleColor();
-    ImGui::SameLine(0, 0);
-    {
+    if (showTree) {
+        m_ProjectTreeWidth = std::clamp(m_ProjectTreeWidth, 90 * ui, std::max(90 * ui, ImGui::GetContentRegionAvail().x * 0.5f));
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, IM_COL32(31, 33, 37, 255));
+        ImGui::PushStyleVar(ImGuiStyleVar_IndentSpacing, 12 * ui);
+        ImGui::BeginChild("##projectTree", ImVec2(m_ProjectTreeWidth, 0), ImGuiChildFlags_AlwaysUseWindowPadding);
+        DrawProjectFolderTree(m_ProjectRoot, "Assets");
+        if (fs::exists(Project::Dir() / "Packages")) DrawProjectFolderTree(Project::Dir() / "Packages", "Packages");
+        ImGui::EndChild();
+        ImGui::PopStyleVar();
+        ImGui::PopStyleColor();
+        ImGui::SameLine(0, 0);
         const ImVec2 p = ImGui::GetCursorScreenPos();
         const float height = ImGui::GetContentRegionAvail().y;
         ImGui::InvisibleButton("##projectTreeSplitter", { 5 * ui, std::max(height, 1.0f) });
@@ -1451,11 +1561,14 @@ void EditorApp::DrawProject() {
         if (active) m_ProjectTreeWidth += ImGui::GetIO().MouseDelta.x;
         if (active || hovered) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
         ImGui::GetWindowDrawList()->AddLine({ p.x + 2 * ui, p.y }, { p.x + 2 * ui, p.y + height }, active || hovered ? IM_COL32(47, 128, 237, 255) : IM_COL32(20, 21, 24, 255), active || hovered ? 2.0f : 1.0f);
+        ImGui::SameLine(0, 0);
     }
-    ImGui::SameLine(0, 0);
 
-    float cell = m_ProjectIconSize;
-    int cols = std::max(1, (int)((ImGui::GetContentRegionAvail().x - 2 * ImGui::GetStyle().WindowPadding.x) / cell));
+    // Icons, or a list when the icon size is at its smallest or the area fits fewer than two icons
+    const float filesWidth = ImGui::GetContentRegionAvail().x - 2 * ImGui::GetStyle().WindowPadding.x;
+    const bool listMode = m_ProjectIconSize <= 57 || filesWidth < m_ProjectIconSize * 2;
+    float cell = listMode ? filesWidth : m_ProjectIconSize;
+    int cols = listMode ? 1 : std::max(1, (int)(filesWidth / cell));
     ImGui::BeginChild("##files", ImVec2(0, 0), ImGuiChildFlags_AlwaysUseWindowPadding);
     if (ImGui::BeginTable("##grid", cols)) {
         // Listing folders and resolving asset paths is slow, so the listing is kept and refreshed about once a second
@@ -1467,6 +1580,7 @@ void EditorApp::DrawProject() {
         static std::string listedSearch;
         static double listedAt = -10;
         static bool listingStale = true;
+        if (std::exchange(m_ProjectListingDirty, false)) listingStale = true;
         if (listingStale || listedDir != m_ProjectCurrentDir || listedSearch != projectSearch || ImGui::GetTime() - listedAt > 1.0) {
         listingStale = false; listedDir = m_ProjectCurrentDir; listedSearch = projectSearch; listedAt = ImGui::GetTime();
         entries.clear(); modelChildren.clear();
@@ -1516,7 +1630,35 @@ void EditorApp::DrawProject() {
             bool selected = std::find(m_AssetSelection.begin(),m_AssetSelection.end(),relPath)!=m_AssetSelection.end();
             if(selected)ImGui::PushStyleColor(ImGuiCol_Button,ImVec4(.16f,.35f,.55f,1));
             ImVec2 size(cell - 16, cell - 36);
-            if (!dir && AssetManager::IsTextureFile(de.path())) {
+            const bool renamingThis = !m_RenameInTree && !m_RenamingAsset.empty() && m_RenamingAsset == relPath;
+            const float listRow = std::round(ImGui::GetFontSize() + 8 * UiScale());
+            ImVec2 listNameAt;
+            if (listMode) {
+                // One row per asset: small icon (or thumbnail) and the name
+                const ImVec2 p = ImGui::GetCursorScreenPos();
+                const float width = std::max(1.0f, ImGui::GetContentRegionAvail().x);
+                ImGui::InvisibleButton("##row", { width, listRow });
+                auto* rowDraw = ImGui::GetWindowDrawList();
+                if (selected || ImGui::IsItemHovered()) rowDraw->AddRectFilled(p, { p.x + width, p.y + listRow }, selected ? IM_COL32(44, 72, 115, 255) : IM_COL32(43, 46, 51, 255), 3);
+                const float icon = listRow - 6, ix = p.x + 4, iy = p.y + 3;
+                void* thumb = nullptr;
+                if (!dir && AssetManager::IsTextureFile(de.path())) if (auto tex = AssetManager::GetTexture(relPath, true)) thumb = GetDevice().ImGuiTexture(tex.get());
+                if (thumb) rowDraw->AddImage((ImTextureID)thumb, { ix, iy }, { ix + icon, iy + icon });
+                else if (dir) {
+                    rowDraw->AddRectFilled({ ix + 1, iy + icon * .2f }, { ix + icon * .45f, iy + icon * .38f }, IM_COL32(214, 168, 64, 255), 1);
+                    rowDraw->AddRectFilled({ ix + 1, iy + icon * .3f }, { ix + icon - 1, iy + icon * .9f }, IM_COL32(222, 176, 72, 255), 1.5f);
+                } else {
+                    const ImU32 ink = AssetManager::IsMeshFile(de.path()) ? IM_COL32(96, 190, 209, 255) : ext == ".scene" ? IM_COL32(103, 166, 231, 255) : ext == ".cs" ? IM_COL32(111, 189, 123, 255)
+                                    : ext == ".mat" ? IM_COL32(218, 133, 187, 255) : IM_COL32(157, 169, 184, 255);
+                    ImVec2 page[] = { { ix + icon * .15f, iy }, { ix + icon * .6f, iy }, { ix + icon * .85f, iy + icon * .25f }, { ix + icon * .85f, iy + icon }, { ix + icon * .15f, iy + icon } };
+                    rowDraw->AddPolyline(page, 5, ink, ImDrawFlags_Closed, 1.4f);
+                }
+                listNameAt = { ix + icon + 8, p.y + (listRow - ImGui::GetFontSize()) * 0.5f };
+                if (!renamingThis) {
+                    const ImVec4 clip(listNameAt.x, p.y, p.x + width - 22, p.y + listRow);
+                    rowDraw->AddText(nullptr, 0, listNameAt, IM_COL32(212, 215, 221, 255), fname.c_str(), nullptr, 0, &clip);
+                }
+            } else if (!dir && AssetManager::IsTextureFile(de.path())) {
                 auto tex = AssetManager::GetTexture(relPath, true);
                 void* id = tex ? GetDevice().ImGuiTexture(tex.get()) : nullptr;
                 if (id) ImGui::ImageButton("##thumb", (ImTextureID)id, ImVec2(size.x - 8, size.y - 8));
@@ -1532,18 +1674,23 @@ void EditorApp::DrawProject() {
                 AssetUI::IconButton(de.path(),dir,selected,{size.x,size.y});
             }
             if(selected)ImGui::PopStyleColor();
+            if (ImGui::IsItemHovered() && !listMode && fname.size() > 14) ImGui::SetTooltip("%s", fname.c_str());
             ImVec2 tileMin = ImGui::GetItemRectMin(), tileMax = ImGui::GetItemRectMax();
+            if (dir) AcceptAssetMoveDrop(de.path());
             if (ImGui::IsItemHovered() && ImGui::IsMouseReleased(0) && !ImGui::IsMouseDragPastThreshold(0)) {SelectProject(relPath,order);m_LastSelected=m_Selected;}
             if(ImGui::BeginPopupContextItem("AssetContext")) {
                 if(std::find(m_AssetSelection.begin(),m_AssetSelection.end(),relPath)==m_AssetSelection.end())m_AssetSelection={relPath};m_SelectedAsset=relPath;m_InspectAsset=true;
+                if(ImGui::MenuItem("Rename","F2"))BeginRenameAsset(relPath);
                 if(ImGui::MenuItem("Copy","Ctrl+C"))CopyAssets();if(ImGui::MenuItem("Paste","Ctrl+V",false,!m_AssetClipboard.empty()))PasteAssets();
                 if(ImGui::MenuItem("Open")) {if(dir)m_ProjectCurrentDir=de.path();else ShellExecuteFile(de.path());}
                 if(ImGui::MenuItem("Delete Asset"))RequestDeleteAsset(relPath);
                 ImGui::EndPopup();
             }
-            if (!dir && ImGui::BeginDragDropSource()) {
-                ImGui::SetDragDropPayload(AssetUI::kAssetPayload, relPath.c_str(), relPath.size() + 1);
-                ImGui::Text("%s", fname.c_str());
+            if (ImGui::BeginDragDropSource()) {
+                ImGui::SetDragDropPayload(dir ? "STARDUST_FOLDER" : AssetUI::kAssetPayload, relPath.c_str(), relPath.size() + 1);
+                const bool many = m_AssetSelection.size() > 1 && std::find(m_AssetSelection.begin(), m_AssetSelection.end(), relPath) != m_AssetSelection.end();
+                if (many) ImGui::Text("%zu assets", m_AssetSelection.size());
+                else ImGui::Text("%s", fname.c_str());
                 ImGui::EndDragDropSource();
             }
             if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0)) {
@@ -1571,7 +1718,15 @@ void EditorApp::DrawProject() {
                 if (overArrow) ImGui::SetTooltip("%s", isOpen ? "Hide materials and textures" : "Show materials and textures");
                 if (overArrow && ImGui::IsMouseClicked(0)) { if (!expandedModels.erase(relPath)) expandedModels.insert(relPath); listingStale = true; }
             }
-            ImGui::TextWrapped("%s", fname.c_str());
+            // Name under the icon, or the rename field in its place
+            if (renamingThis) {
+                const ImVec2 back = ImGui::GetCursorScreenPos();
+                if (listMode) ImGui::SetCursorScreenPos({ listNameAt.x - 4, tileMin.y + 1 });
+                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(4, listMode ? 2.0f : ImGui::GetStyle().FramePadding.y));
+                DrawRenameField(listMode ? std::max(80.0f, tileMax.x - listNameAt.x - 20) : cell - 10);
+                ImGui::PopStyleVar();
+                if (listMode) ImGui::SetCursorScreenPos(back);
+            } else if (!listMode) ImGui::TextWrapped("%s", fname.c_str());
             ImGui::PopID();
         }
         ImGui::EndTable();
@@ -1588,7 +1743,7 @@ void EditorApp::DrawProject() {
         }
         ImGui::EndDragDropTarget();
     }
-    if(ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)&&!ImGui::GetIO().WantTextInput){auto& io=ImGui::GetIO();if(io.KeyCtrl&&ImGui::IsKeyPressed(ImGuiKey_C))CopyAssets();if(io.KeyCtrl&&ImGui::IsKeyPressed(ImGuiKey_V))PasteAssets();if(io.KeyCtrl&&ImGui::IsKeyPressed(ImGuiKey_D)){CopyAssets();PasteAssets();}}
+    if(ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)&&!ImGui::GetIO().WantTextInput){auto& io=ImGui::GetIO();if(io.KeyCtrl&&ImGui::IsKeyPressed(ImGuiKey_C))CopyAssets();if(io.KeyCtrl&&ImGui::IsKeyPressed(ImGuiKey_V))PasteAssets();if(io.KeyCtrl&&ImGui::IsKeyPressed(ImGuiKey_D)){CopyAssets();PasteAssets();}if(ImGui::IsKeyPressed(ImGuiKey_F2)&&m_AssetSelection.size()==1&&m_RenamingAsset.empty())BeginRenameAsset(m_AssetSelection[0]);}
     if (ImGui::BeginPopupContextWindow("ProjectContext", ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems)) {
         if(ImGui::MenuItem("Paste","Ctrl+V",false,!m_AssetClipboard.empty()))PasteAssets();
         DrawProjectCreateItems();

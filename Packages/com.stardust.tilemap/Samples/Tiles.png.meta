@@ -1,0 +1,11 @@
+{
+  "texture": {
+    "filter": 0,
+    "maxSize": 4096,
+    "mipmaps": false,
+    "readable": false,
+    "srgb": true,
+    "type": 0,
+    "wrap": 0
+  }
+}

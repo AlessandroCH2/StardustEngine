@@ -25,8 +25,16 @@ if(MSVC)
     add_compile_definitions(_CRT_SECURE_NO_WARNINGS NOMINMAX WIN32_LEAN_AND_MEAN)
 endif()
 
+# __FILE__ (asserts, Vulkan errors) becomes relative to the repository: no path of the build machine ends up in the executables
+if(MSVC)
+    file(TO_NATIVE_PATH "${CMAKE_SOURCE_DIR}/" STARDUST_SOURCE_PREFIX)
+    add_compile_options("/d1trimfile:${STARDUST_SOURCE_PREFIX}")
+else()
+    add_compile_options("-ffile-prefix-map=${CMAKE_SOURCE_DIR}/=")
+endif()
 include(cmake/Dependencies.cmake)
 
+include(cmake/RuntimeFiles.cmake)
 add_subdirectory(Engine)
 option(STARDUST_BUILD_EDITOR "Build the editor" ON)
 if(STARDUST_BUILD_EDITOR)

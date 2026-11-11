@@ -122,6 +122,7 @@ namespace Stardust.Interop
         public delegate* unmanaged<byte*, int> UnmountPak;
         public delegate* unmanaged<byte*, long> AssetSize;
         public delegate* unmanaged<byte*, ulong, byte*, ulong, long> ReadAsset;
+        public delegate* unmanaged<byte*, byte*> QueryJson;
     }
 
     internal static unsafe class Native
@@ -129,6 +130,11 @@ namespace Stardust.Interop
         public static NativeApi Api;
 
         public static byte[] Utf8(string s) => Encoding.UTF8.GetBytes((s ?? string.Empty) + "\0");
+        public static System.Text.Json.Nodes.JsonObject Query(System.Text.Json.Nodes.JsonObject request)
+        {
+            if (Api.QueryJson == null) return new();
+            fixed (byte* p = Utf8(request.ToJsonString())) return System.Text.Json.Nodes.JsonNode.Parse(FromUtf8(Api.QueryJson(p))) as System.Text.Json.Nodes.JsonObject ?? new();
+        }
         public static string FromUtf8(byte* p) => p == null ? string.Empty : Marshal.PtrToStringUTF8((IntPtr)p) ?? string.Empty;
 
         public static void Log(int level, string message)

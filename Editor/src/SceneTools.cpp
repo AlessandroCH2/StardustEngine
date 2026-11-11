@@ -1,3 +1,4 @@
+#include "GizmoMath.h"
 #include "EditorApp.h"
 #include "Animation/ModelSkeleton.h"
 #include "Assets/AssetManager.h"
@@ -117,12 +118,7 @@ void EditorApp::DrawSceneIcons(bool allowPicking) {
     RenderCamera cam = m_Camera.GetRenderCamera(m_SceneView.size.x / m_SceneView.size.y);
     glm::mat4 vp = cam.projection * cam.view;
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    auto project = [&](const glm::vec3& p, ImVec2& out) {
-        glm::vec4 c = vp * glm::vec4(p, 1.0f);
-        if (c.w <= 0.01f) return false;
-        out = ImVec2(m_SceneView.min.x + (c.x / c.w * 0.5f + 0.5f) * m_SceneView.size.x, m_SceneView.min.y + (0.5f - c.y / c.w * 0.5f) * m_SceneView.size.y);
-        return true;
-    };
+    auto project = [&](const glm::vec3& p, ImVec2& out) { return Gizmo::ProjectPoint(vp, p, { m_SceneView.min.x, m_SceneView.min.y }, { m_SceneView.size.x, m_SceneView.size.y }, out); };
     auto icon = [&](EntityID e, const char* label, ImU32 col) {
         glm::vec3 p = glm::vec3(scene.GetWorldMatrix(e)[3]);
         if (glm::length(p - cam.position) > 150.0f) return;

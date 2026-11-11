@@ -71,10 +71,11 @@ void AnimatorSystem::SampleClip(Scene& scene,EntityID root,const json& clip,floa
                 if (track.contains("position")) transform.position=Sample(track["position"],t,transform.position,track.value("interpolation","Linear"));
                 if (track.contains("rotation")) transform.SetEuler(Sample(track["rotation"],t,transform.eulerHint,track.value("interpolation","Linear")));
                 if (track.contains("scale")) transform.scale=Sample(track["scale"],t,transform.scale,track.value("interpolation","Linear"));
+                AnimatedProperties::RegisterReferences(track);
                 for (auto& [key, keys] : track.items()) {
                     int dimension; char kind; std::string id;
                     if (!AnimatedProperties::ParseChannel(key, dimension, kind, id) || keys.empty()) continue;
-                    const bool stepped = kind == 'b' || kind == 'i';
+                    const bool stepped = kind == 'b' || kind == 'i' || kind == 'r';
                     AnimatedProperties::Set(scene, target, id, EvaluateN(keys, t, glm::vec4(0), stepped ? std::string("Constant") : track.value("interpolation", std::string("Linear")), dimension));
                 }
             }

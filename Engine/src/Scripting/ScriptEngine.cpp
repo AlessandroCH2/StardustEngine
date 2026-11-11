@@ -1,3 +1,4 @@
+#include "Core/Base64.h"
 #include "Scripting/ScriptEngine.h"
 #include "Scene/ComponentState.h"
 #include "Scene/Scene.h"
@@ -40,7 +41,7 @@ struct RigidbodyNative { int type; float mass; float drag; float angularDrag; in
 
 enum class ComponentType : int {
     Transform = 0, MeshRenderer, Rigidbody, BoxCollider, SphereCollider, CapsuleCollider, Camera, Light, Script, MeshCollider,
-    AnyLight = 10, AudioSource = 11, Animator = 12, Canvas = 13, RectTransform = 14, UIImage = 15, UIText = 16, UIButton = 17, CanvasGroup = 18, RectMask = 19, UILayout = 20, UIInputField = 21, SpriteRenderer=22, Environment=23, Terrain=24, SpotLight=25, VideoPlayer=26,
+    AnyLight = 10, AudioSource = 11, Animator = 12, Canvas = 13, RectTransform = 14, UIImage = 15, UIText = 16, UIButton = 17, CanvasGroup = 18, RectMask = 19, UILayout = 20, UIInputField = 21, SpriteRenderer=22, Environment=23, Terrain=24, SpotLight=25, VideoPlayer=26, SpriteBatch=27, Rigidbody2D=28, BoxCollider2D=29, CircleCollider2D=30, CapsuleCollider2D=31,
 };
 
 struct NativeApi {
@@ -138,6 +139,7 @@ struct NativeApi {
     int (*UnmountPak)(const char*);
     i64 (*AssetSize)(const char*);
     i64 (*ReadAsset)(const char*,u64,u8*,u64);
+    const char* (*QueryJson)(const char*); // {"kind":...} requests that need no component: texture sizes...
 };
 
 // Managed entry points ([UnmanagedCallersOnly] in Stardust.Interop.Bridge)
@@ -258,6 +260,9 @@ static void InitNativeApi() {
         if (!e) return 0;
         Registry& r = S()->Reg();
         switch ((ComponentType)t) {
+        case ComponentType::SpriteBatch:return r.Has<SpriteBatchComponent>(e);
+        case ComponentType::Rigidbody2D:return r.Has<Rigidbody2DComponent>(e);case ComponentType::BoxCollider2D:return r.Has<BoxCollider2DComponent>(e);
+        case ComponentType::CircleCollider2D:return r.Has<CircleCollider2DComponent>(e);case ComponentType::CapsuleCollider2D:return r.Has<CapsuleCollider2DComponent>(e);
         case ComponentType::VideoPlayer:return r.Has<VideoPlayerComponent>(e);case ComponentType::SpriteRenderer:return r.Has<SpriteRendererComponent>(e);case ComponentType::Environment:return r.Has<EnvironmentComponent>(e);case ComponentType::Terrain:return r.Has<TerrainComponent>(e);case ComponentType::SpotLight:return r.Has<SpotLightComponent>(e);case ComponentType::Transform: return 1;
         case ComponentType::MeshRenderer: return r.Has<MeshRendererComponent>(e);
         case ComponentType::Rigidbody: return r.Has<RigidbodyComponent>(e);
@@ -288,6 +293,11 @@ static void InitNativeApi() {
         if (!e) return;
         Registry& r = S()->Reg();
         switch ((ComponentType)t) {
+        case ComponentType::SpriteBatch:if(!r.Has<SpriteBatchComponent>(e))r.Add<SpriteBatchComponent>(e);break;
+        case ComponentType::Rigidbody2D:if(!r.Has<Rigidbody2DComponent>(e))r.Add<Rigidbody2DComponent>(e);RebuildBody(e);break;
+        case ComponentType::BoxCollider2D:if(!r.Has<BoxCollider2DComponent>(e))r.Add<BoxCollider2DComponent>(e);RebuildBody(e);break;
+        case ComponentType::CircleCollider2D:if(!r.Has<CircleCollider2DComponent>(e))r.Add<CircleCollider2DComponent>(e);RebuildBody(e);break;
+        case ComponentType::CapsuleCollider2D:if(!r.Has<CapsuleCollider2DComponent>(e))r.Add<CapsuleCollider2DComponent>(e);RebuildBody(e);break;
         case ComponentType::VideoPlayer:if(!r.Has<VideoPlayerComponent>(e))r.Add<VideoPlayerComponent>(e);break;case ComponentType::SpriteRenderer: if(!r.Has<SpriteRendererComponent>(e))r.Add<SpriteRendererComponent>(e);break;case ComponentType::Environment:if(!r.Has<EnvironmentComponent>(e))r.Add<EnvironmentComponent>(e);break;case ComponentType::Terrain:if(!r.Has<TerrainComponent>(e))r.Add<TerrainComponent>(e);break;case ComponentType::SpotLight:if(!r.Has<SpotLightComponent>(e))r.Add<SpotLightComponent>(e);break;case ComponentType::MeshRenderer: if (!r.Has<MeshRendererComponent>(e)) r.Add<MeshRendererComponent>(e); break;
         case ComponentType::Rigidbody: if (!r.Has<RigidbodyComponent>(e)) r.Add<RigidbodyComponent>(e); RebuildBody(e); break;
         case ComponentType::BoxCollider: if (!r.Has<BoxColliderComponent>(e)) r.Add<BoxColliderComponent>(e); RebuildBody(e); break;
@@ -317,6 +327,11 @@ static void InitNativeApi() {
         Registry& r = S()->Reg();
         switch ((ComponentType)t) {
         case ComponentType::SpriteRenderer:r.Remove<SpriteRendererComponent>(e);break;
+        case ComponentType::SpriteBatch:r.Remove<SpriteBatchComponent>(e);break;
+        case ComponentType::Rigidbody2D:r.Remove<Rigidbody2DComponent>(e);RebuildBody(e);break;
+        case ComponentType::BoxCollider2D:r.Remove<BoxCollider2DComponent>(e);RebuildBody(e);break;
+        case ComponentType::CircleCollider2D:r.Remove<CircleCollider2DComponent>(e);RebuildBody(e);break;
+        case ComponentType::CapsuleCollider2D:r.Remove<CapsuleCollider2DComponent>(e);RebuildBody(e);break;
         case ComponentType::Environment:r.Remove<EnvironmentComponent>(e);break;
         case ComponentType::Terrain:r.Remove<TerrainComponent>(e);RebuildBody(e);break;
         case ComponentType::SpotLight:r.Remove<SpotLightComponent>(e);break;
@@ -536,10 +551,16 @@ static void InitNativeApi() {
         if(type==101)data={{"layers",Project::Config().layers}};
         if(type==100){data["connected"]=Input::GamepadConnected((int)id);data["axes"]=j::array();data["buttons"]=j::array();data["pressed"]=j::array();for(int i=0;i<6;++i)data["axes"].push_back(Input::GamepadAxis((int)id,i));for(int i=0;i<15;++i){data["buttons"].push_back(Input::GamepadButton((int)id,i));data["pressed"].push_back(Input::GamepadButton((int)id,i,true));}}
         if(e){auto& r=S()->Reg();
+            // Quads are not in here (they can be megabytes): QueryJson "spriteBatchQuads" reads them
+            if(type==27)if(auto* c=r.TryGet<SpriteBatchComponent>(e)){u64 v=c->version;for(u64 chunk:c->chunkVersions)v=v*1099511628211ull^chunk;data={{"textures",c->textures},{"count",c->quads.size()},{"material",c->material},{"color",vec4(c->color)},{"sortingOrder",c->sortingOrder},{"version",std::to_string(v)},{"animations",c->animations.size()}};}
             if(type==26)if(auto* c=r.TryGet<VideoPlayerComponent>(e))data={{"clip",c->clip},{"targetTexture",c->targetTexture},{"renderMode",c->renderMode},{"playing",c->playing},{"loop",c->loop},{"time",c->time},{"duration",c->duration},{"speed",c->speed},{"audio",c->audio},{"volume",c->volume}};
             auto vec3=[](glm::vec3 v){return j::array({v.x,v.y,v.z});};
             auto collider=[&](const auto* c){if(c)data={{"isTrigger",c->material.isTrigger},{"friction",c->material.friction},{"restitution",c->material.restitution}};};
             if(type==3)if(auto* c=r.TryGet<BoxColliderComponent>(e)){collider(c);data["size"]=vec3(c->size);data["center"]=vec3(c->center);}
+            if(type==28)if(auto* c=r.TryGet<Rigidbody2DComponent>(e))data={{"bodyType",(int)c->type},{"mass",c->mass},{"linearDamping",c->linearDamping},{"angularDamping",c->angularDamping},{"gravityScale",c->gravityScale},{"freezeRotation",c->freezeRotation}};
+            if(type==29)if(auto* c=r.TryGet<BoxCollider2DComponent>(e)){collider(c);data["size"]=vec2(c->size);data["offset"]=vec2(c->offset);}
+            if(type==30)if(auto* c=r.TryGet<CircleCollider2DComponent>(e)){collider(c);data["radius"]=c->radius;data["offset"]=vec2(c->offset);}
+            if(type==31)if(auto* c=r.TryGet<CapsuleCollider2DComponent>(e)){collider(c);data["size"]=vec2(c->size);data["offset"]=vec2(c->offset);}
             if(type==4)if(auto* c=r.TryGet<SphereColliderComponent>(e)){collider(c);data["radius"]=c->radius;data["center"]=vec3(c->center);}
             if(type==5)if(auto* c=r.TryGet<CapsuleColliderComponent>(e)){collider(c);data["radius"]=c->radius;data["height"]=c->height;data["center"]=vec3(c->center);}
             if(type==9)if(auto* c=r.TryGet<MeshColliderComponent>(e)){collider(c);data["convex"]=c->convex;}
@@ -576,6 +597,10 @@ static void InitNativeApi() {
             auto v3=[&](const char* name,glm::vec3& v){if(data.contains(name)&&data[name].is_array()&&data[name].size()==3)v={data[name][0].get<float>(),data[name][1].get<float>(),data[name][2].get<float>()};};
             auto collider=[&](auto* c){if(c){c->material.isTrigger=data.value("isTrigger",c->material.isTrigger);c->material.friction=std::max(0.f,data.value("friction",c->material.friction));c->material.restitution=std::clamp(data.value("restitution",c->material.restitution),0.f,1.f);}};
             if(type==3)if(auto* c=r.TryGet<BoxColliderComponent>(e)){collider(c);v3("size",c->size);v3("center",c->center);RebuildBody(e);}
+            if(type==28)if(auto* c=r.TryGet<Rigidbody2DComponent>(e)){c->type=(BodyType)std::clamp(data.value("bodyType",(int)c->type),0,2);c->mass=std::max(.001f,data.value("mass",c->mass));c->linearDamping=std::max(0.f,data.value("linearDamping",c->linearDamping));c->angularDamping=std::max(0.f,data.value("angularDamping",c->angularDamping));c->gravityScale=data.value("gravityScale",c->gravityScale);c->freezeRotation=data.value("freezeRotation",c->freezeRotation);RebuildBody(e);}
+            if(type==29)if(auto* c=r.TryGet<BoxCollider2DComponent>(e)){collider(c);v2("size",c->size);v2("offset",c->offset);RebuildBody(e);}
+            if(type==30)if(auto* c=r.TryGet<CircleCollider2DComponent>(e)){collider(c);c->radius=std::max(.001f,data.value("radius",c->radius));v2("offset",c->offset);RebuildBody(e);}
+            if(type==31)if(auto* c=r.TryGet<CapsuleCollider2DComponent>(e)){collider(c);v2("size",c->size);v2("offset",c->offset);RebuildBody(e);}
             if(type==4)if(auto* c=r.TryGet<SphereColliderComponent>(e)){collider(c);c->radius=std::max(.001f,data.value("radius",c->radius));v3("center",c->center);RebuildBody(e);}
             if(type==5)if(auto* c=r.TryGet<CapsuleColliderComponent>(e)){collider(c);c->radius=std::max(.001f,data.value("radius",c->radius));c->height=std::max(.002f,data.value("height",c->height));v3("center",c->center);RebuildBody(e);}
             if(type==9)if(auto* c=r.TryGet<MeshColliderComponent>(e)){collider(c);c->convex=data.value("convex",c->convex);RebuildBody(e);}
@@ -604,6 +629,19 @@ static void InitNativeApi() {
                     ComputeNormalsAndTangents(vertices,indices,true);c->mesh="runtime:mesh:"+std::to_string(id);AssetManager::SetRuntimeMesh(c->mesh,MakeRef<Mesh>(*AssetManager::Device(),vertices,indices,c->mesh));RebuildBody(e);
                 }
             }
+            if(type==27)if(auto* c=r.TryGet<SpriteBatchComponent>(e)){
+                bool structure=false;
+                auto decode=[](const std::string& text){auto bytes=Base64::Decode(text);std::vector<SpriteQuad> quads(bytes.size()/sizeof(SpriteQuad));if(!quads.empty())std::memcpy(quads.data(),bytes.data(),quads.size()*sizeof(SpriteQuad));return quads;};
+                if(data.contains("textures")&&data["textures"].is_array()){c->textures.clear();for(auto& t:data["textures"])if(t.is_string())c->textures.push_back(t.get<std::string>());structure=true;}
+                if(data.contains("animations")&&data["animations"].is_array()){c->animations.clear();for(auto& a:data["animations"]){SpriteAnimation anim;anim.fps=a.value("fps",8.f);for(auto& f:a.value("frames",nlohmann::json::array()))if(f.is_array()&&f.size()==4)anim.frames.push_back({f[0].get<float>(),f[1].get<float>(),f[2].get<float>(),f[3].get<float>()});c->animations.push_back(anim);}structure=true;}
+                if(data.contains("quads")&&data["quads"].is_string()){c->quads=decode(data["quads"].get<std::string>());structure=true;}
+                if(data.contains("count")&&data["count"].is_number_integer()){const size_t count=(size_t)std::clamp<i64>(data["count"].get<i64>(),0,4000000);if(count!=c->quads.size()){SpriteQuad empty;empty.size={0,0};c->quads.resize(count,empty);structure=true;}}
+                // Partial update: overwrite quads from "start" (the quad count grows if needed)
+                if(data.contains("replace")&&data["replace"].is_object()){auto& rep=data["replace"];const size_t start=(size_t)std::max<i64>(0,rep.value("start",(i64)0));auto quads=decode(rep.value("quads",std::string()));
+                    if(!quads.empty()&&start+quads.size()<=4000000){const bool grew=start+quads.size()>c->quads.size();if(grew){SpriteQuad empty;empty.size={0,0};c->quads.resize(start+quads.size(),empty);}std::memcpy(c->quads.data()+start,quads.data(),quads.size()*sizeof(SpriteQuad));if(grew)structure=true;else c->TouchRange(start,quads.size());}}
+                c->material=data.value("material",c->material);v4("color",c->color);c->sortingOrder=data.value("sortingOrder",c->sortingOrder);
+                if(structure)c->Touch();
+            }
             if(type==22)if(auto* c=r.TryGet<SpriteRendererComponent>(e)){c->sprite=data.value("sprite",c->sprite);c->material=data.value("material",c->material);v4("color",c->color);c->pixelsPerUnit=std::max(.01f,data.value("pixelsPerUnit",c->pixelsPerUnit));c->flipX=data.value("flipX",c->flipX);c->flipY=data.value("flipY",c->flipY);c->sortingOrder=data.value("sortingOrder",c->sortingOrder);}
             if(type==23)if(auto* c=r.TryGet<EnvironmentComponent>(e)){c->shadowStrength=std::clamp(data.value("shadowStrength",c->shadowStrength),0.f,1.f);c->minimumAmbient=std::max(0.f,data.value("minimumAmbient",c->minimumAmbient));c->exposure=data.value("exposure",c->exposure);c->ambientIntensity=data.value("ambientIntensity",c->ambientIntensity);c->bloomIntensity=data.value("bloomIntensity",c->bloomIntensity);c->contrast=data.value("contrast",c->contrast);c->saturation=data.value("saturation",c->saturation);c->vignette=data.value("vignette",c->vignette);c->fogDensity=data.value("fogDensity",c->fogDensity);c->fxaa=data.value("fxaa",c->fxaa);c->skyMode=data.value("skyMode",c->skyMode);c->skyMaterial=data.value("skyMaterial",c->skyMaterial);v4("skyColor",c->skyColor);}
             if(type==11)if(auto* c=r.TryGet<AudioSourceComponent>(e)){c->clip=data.value("clip",c->clip);c->volume=data.value("volume",c->volume);c->pitch=data.value("pitch",c->pitch);c->loop=data.value("loop",c->loop);c->spatial=data.value("spatial",c->spatial);AudioEngine::Stop(e);}
@@ -625,6 +663,18 @@ static void InitNativeApi() {
     a.DontDestroyOnLoad=[](u64 id){if(S())S()->DontDestroyOnLoad(E(id));};
     a.UnmountPak=[](const char* path)->int{try{return Pak::Unmount(fs::u8path(path))?1:0;}catch(...){return 0;}};
     a.AssetSize=[](const char* path)->i64{try{auto p=AssetManager::ToAbsolute(path);if(Pak::Contains(p))return (i64)Pak::Size(p);std::error_code ec;auto size=fs::file_size(p,ec);return ec?-1:(i64)size;}catch(...){return -1;}};
+    a.QueryJson=[](const char* request)->const char*{
+        static thread_local std::string out;
+        nlohmann::json result=nlohmann::json::object();
+        auto q=nlohmann::json::parse(request?request:"",nullptr,false);
+        if(q.is_object()&&q.value("kind","")=="spriteBatchQuads"&&S()){
+            const u64 id=std::strtoull(q.value("entity","0").c_str(),nullptr,16);
+            if(EntityID e=S()->FindByUUID(id))if(auto* c=S()->Reg().TryGet<SpriteBatchComponent>(e))result["quads"]=Base64::Encode(c->quads.data(),c->quads.size()*sizeof(SpriteQuad));
+        }
+        if(q.is_object()&&q.value("kind","")=="textureSize")
+            if(auto texture=AssetManager::GetTexture(q.value("path",""),true)){result["width"]=texture->Desc().width;result["height"]=texture->Desc().height;}
+        out=result.dump();return out.c_str();
+    };
     a.ReadAsset=[](const char* path,u64 offset,u8* buffer,u64 count)->i64{try{auto p=AssetManager::ToAbsolute(path);if(!buffer&&count)return -1;if(Pak::Contains(p)){auto size=Pak::Size(p);if(offset==0&&count>=size){auto data=FileSystem::ReadBinary(p);if(!data.empty())memcpy(buffer,data.data(),data.size());return (i64)data.size();}return (i64)Pak::ReadRange(p,offset,buffer,count);}std::ifstream in(p,std::ios::binary);if(!in)return -1;in.seekg(offset);in.read((char*)buffer,count);return (i64)in.gcount();}catch(const std::exception& e){SD_ERROR("Asset read: {}",e.what());return -1;}};
 
     a.SetTimeScale = [](float t) { if (S()) S()->timeScale = std::max(t, 0.0f); };

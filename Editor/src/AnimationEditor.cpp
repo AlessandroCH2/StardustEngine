@@ -63,7 +63,7 @@ std::vector<int> TrackChannels(const json& track) {
 }
 std::string InterpolationOf(const json& track, int channel) {
     char kind = Channel(channel).kind;
-    return kind == 'b' || kind == 'i' ? std::string("Constant") : track.value("interpolation", std::string("Linear"));
+    return kind == 'b' || kind == 'i' || kind == 'r' ? std::string("Constant") : track.value("interpolation", std::string("Linear"));
 }
 json KeyJson(float t, glm::vec4 value, int dimension) {
     json key = json::array({ t });
@@ -564,7 +564,9 @@ void EditorApp::DrawAnimationWindow() {
         };
         auto addKey = [&](int track, int channel, float t) {
             t = std::max(0.0f, SnapToFrame(t, fps));
-            WriteKey(tracks[track][ChannelKey(channel)], t, sampleChannel(tracks[track], channel, t), Channel(channel).dimension, fps);
+            const glm::vec4 value = sampleChannel(tracks[track], channel, t);
+            WriteKey(tracks[track][ChannelKey(channel)], t, value, Channel(channel).dimension, fps);
+            if (Channel(channel).kind == 'r') AnimatedProperties::StoreReference(tracks[track], value.x);
             doc.dirty = true;
         };
         auto addChannel = [&](const std::string& path, int channel, glm::vec4 value) {
@@ -572,6 +574,7 @@ void EditorApp::DrawAnimationWindow() {
             if (!track.contains(ChannelKey(channel))) {
                 const int dimension = Channel(channel).dimension;
                 track[ChannelKey(channel)] = json::array({ KeyJson(0.0f, value, dimension), KeyJson(duration, value, dimension) });
+                if (Channel(channel).kind == 'r') AnimatedProperties::StoreReference(track, value.x);
                 doc.dirty = true;
             }
         };
@@ -621,8 +624,10 @@ void EditorApp::DrawAnimationWindow() {
                         glm::vec4 original(0);
                         AnimatedProperties::Get(scene, e, property.id, original);
                         keys.push_back(KeyJson(0.0f, original, property.dimension));
+                        if (property.kind == 'r') AnimatedProperties::StoreReference(track, original.x);
                     }
                     WriteKey(keys, frame, now, property.dimension, fps);
+                    if (property.kind == 'r') AnimatedProperties::StoreReference(track, now.x);
                     doc.dirty = true;
                     found->second = now;
                 }
@@ -830,8 +835,14 @@ void EditorApp::DrawAnimationWindow() {
                     ImGui::SetNextItemWidth(74);
                     if (info.kind == 'b') { bool on = value.x >= 0.5f; if (ImGui::Checkbox("##value", &on)) { value.x = on ? 1.0f : 0.0f; edited = true; } }
                     else if (info.kind == 'i') { int number = (int)std::round(value.x); if (ImGui::DragInt("##value", &number)) { value.x = (float)number; edited = true; } }
+                    else if (info.kind == 'r') {
+                        // An asset: show its name, pick another to key it on this frame
+                        std::string path = AnimatedProperties::ReferencePath(value.x);
+                        const std::vector<std::string> extensions = info.id.ends_with("Material") ? std::vector<std::string>{ ".mat" } : std::vector<std::string>{ ".sprite", ".png", ".jpg", ".jpeg", ".tga", ".bmp" };
+                        if (AssetUI::AssetField("##value", path, extensions)) { value.x = AnimatedProperties::ReferenceKey(path); edited = true; }
+                    }
                     else edited = ImGui::DragFloat("##value", &value.x, 0.01f, 0, 0, "%.3f");
-                    if (edited) { WriteKey(tracks[row.track][ChannelKey(row.channel)], frameTime, value, 1, fps); doc.dirty = true; }
+                    if (edited) { WriteKey(tracks[row.track][ChannelKey(row.channel)], frameTime, value, 1, fps); if (info.kind == 'r') AnimatedProperties::StoreReference(tracks[row.track], value.x); doc.dirty = true; }
                 }
             } else {
                 const ChannelInfo& info = Channel(row.channel);

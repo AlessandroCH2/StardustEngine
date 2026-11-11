@@ -76,6 +76,36 @@ struct SpriteRendererComponent {
     bool flipX=false,flipY=false;
     int sortingOrder=0;
 };
+// One textured quad of a Sprite Batch, on the entity's local XY plane
+struct SpriteQuad {
+    glm::vec2 position{0}, size{1}; // bottom-left corner and size, in local units
+    glm::vec4 rect{0};              // texture pixels x, y, width, height from the top-left; width 0 = the whole texture
+    u32 color = 0xFFFFFFFF;         // RGBA8, red in the lowest byte
+    u16 texture = 0;                // index into SpriteBatchComponent::textures
+    u16 flags = 0;                  // 1 flip X, 2 flip Y, bits 2-3: quarter turns counter-clockwise, bits 4-15: animation + 1
+};
+static_assert(sizeof(SpriteQuad) == 40);
+// Frames of an animated quad: texture pixel rectangles shown in turn
+struct SpriteAnimation { std::vector<glm::vec4> frames; float fps = 8; };
+// Many quads drawn as one object, one draw per texture and colour: tilemaps, decals, 2D effects.
+// Meshes are built per chunk of kChunk quads, so changing a few quads rebuilds only their chunk.
+struct SpriteBatchComponent {
+    static constexpr size_t kChunk = 4096;
+    std::vector<std::string> textures;
+    std::vector<SpriteQuad> quads;   // a quad with zero size is an empty slot
+    std::vector<SpriteAnimation> animations;
+    std::string material;
+    glm::vec4 color{1};
+    int sortingOrder = 0;
+    u64 version = 0;                 // textures, animations or the quad count changed
+    std::vector<u64> chunkVersions;  // one per chunk
+    static u64 NextVersion() { static u64 counter = 0; return ++counter; }
+    void Touch() { version = NextVersion(); chunkVersions.assign((quads.size() + kChunk - 1) / kChunk, NextVersion()); }
+    void TouchRange(size_t first, size_t count) {
+        if (chunkVersions.size() != (quads.size() + kChunk - 1) / kChunk) { Touch(); return; }
+        for (size_t c = first / kChunk; c < chunkVersions.size() && c * kChunk < first + count; ++c) chunkVersions[c] = NextVersion();
+    }
+};
 struct VideoPlayerComponent {
     std::string clip;
     int renderMode=0;          // 0 Render Texture, 1 Material Override (this object's mesh). A UI object always shows it in its Image.
@@ -283,6 +313,20 @@ struct PhysicsMaterialProps {
     float restitution = 0.1f;
     bool isTrigger = false;   // sensor: no collision response, sends OnTriggerEnter / OnTriggerExit
 };
+
+// 2D physics: bodies move on the XY plane and turn only around Z; 2D colliders ignore depth
+struct Rigidbody2DComponent {
+    BodyType type = BodyType::Dynamic;
+    float mass = 1.0f;
+    float linearDamping = 0.0f;
+    float angularDamping = 0.05f;
+    float gravityScale = 1.0f;
+    bool freezeRotation = false;
+};
+struct BoxCollider2DComponent { glm::vec2 size{ 1.0f }, offset{ 0.0f }; PhysicsMaterialProps material; };
+struct CircleCollider2DComponent { float radius = 0.5f; glm::vec2 offset{ 0.0f }; PhysicsMaterialProps material; };
+// Vertical capsule: size is the full width and height
+struct CapsuleCollider2DComponent { glm::vec2 size{ 1.0f, 2.0f }, offset{ 0.0f }; PhysicsMaterialProps material; };
 
 struct BoxColliderComponent {
     glm::vec3 size{ 1.0f };

@@ -19,5 +19,7 @@ set_target_properties(StardustEditor PROPERTIES
 
 if(UNIX)
     set_target_properties(StardustEditor PROPERTIES BUILD_RPATH "$ORIGIN" INSTALL_RPATH "$ORIGIN")
-    add_custom_command(TARGET StardustEditor POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/engineIcon.png $<TARGET_FILE_DIR:StardustEditor>)
 endif()
+
+# Packages, shader library, shader compiler, icon and notices next to the executable (cmake/RuntimeFiles.cmake)
+stardust_copy_runtime_files(StardustEditor)

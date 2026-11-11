@@ -1,3 +1,4 @@
+#include "GizmoMath.h"
 #include "EditorApp.h"
 #include "UI/CanvasRenderer.h"
 #include "UI/RectTransformUtils.h"
@@ -10,15 +11,21 @@ bool EditorApp::DrawCanvasTools() {
     if(m_SceneView.size.x<=0||m_SceneView.size.y<=0)return false;
     auto camera=m_Camera.GetRenderCamera(m_SceneView.size.x/m_SceneView.size.y);
     auto vp=camera.projection*camera.view;auto* draw=ImGui::GetWindowDrawList();
-    auto screen=[&](const glm::mat4& transform,glm::vec2 point){auto clip=vp*transform*glm::vec4(point,0,1);if(clip.w<=0)return ImVec2(-10000,-10000);return ImVec2(m_SceneView.min.x+(clip.x/clip.w*.5f+.5f)*m_SceneView.size.x,m_SceneView.min.y+(.5f-clip.y/clip.w*.5f)*m_SceneView.size.y);};
-    for(auto& canvas:rectangles)if(canvas.entity==canvas.canvas){auto transform=CanvasRenderer::CanvasWorld(scene,canvas.canvas)*canvas.localToCanvas;ImVec2 border[]={screen(transform,{0,0}),screen(transform,{canvas.size.x,0}),screen(transform,canvas.size),screen(transform,{0,canvas.size.y})};draw->AddPolyline(border,4,IM_COL32(255,255,255,230),ImDrawFlags_Closed,1.5f);}
+    const ImVec2 viewMin(m_SceneView.min.x,m_SceneView.min.y),viewSize(m_SceneView.size.x,m_SceneView.size.y);
+    // Points behind the camera go off screen; outlines are cut where they pass behind it (see GizmoMath.h)
+    auto screen=[&](const glm::mat4& transform,glm::vec2 point){ImVec2 out;if(!Gizmo::ProjectPoint(vp,glm::vec3(transform*glm::vec4(point,0,1)),viewMin,viewSize,out))return ImVec2(-10000,-10000);return out;};
+    auto outline=[&](const glm::mat4& transform,glm::vec2 size,ImU32 color){
+        const glm::vec3 p[4]={glm::vec3(transform*glm::vec4(0,0,0,1)),glm::vec3(transform*glm::vec4(size.x,0,0,1)),glm::vec3(transform*glm::vec4(size,0,1)),glm::vec3(transform*glm::vec4(0,size.y,0,1))};
+        for(int k=0;k<4;++k){ImVec2 a,b;if(Gizmo::ProjectSegment(vp,p[k],p[(k+1)%4],viewMin,viewSize,a,b))draw->AddLine(a,b,color,1.5f);}
+    };
+    for(auto& canvas:rectangles)if(canvas.entity==canvas.canvas)outline(CanvasRenderer::CanvasWorld(scene,canvas.canvas)*canvas.localToCanvas,canvas.size,IM_COL32(255,255,255,230));
     auto selected=std::find_if(rectangles.begin(),rectangles.end(),[&](const auto& r){return r.entity==m_Selected;});
     if(selected==rectangles.end()) {m_UIRectEntity=0;return false;}
     auto r=*selected;
     auto model=CanvasRenderer::CanvasWorld(scene,r.canvas)*r.localToCanvas;
-    auto project=[&](glm::vec2 p){auto clip=vp*model*glm::vec4(p,0,1);if(clip.w<=0)return ImVec2(-10000,-10000);return ImVec2(m_SceneView.min.x+(clip.x/clip.w*.5f+.5f)*m_SceneView.size.x,m_SceneView.min.y+(.5f-clip.y/clip.w*.5f)*m_SceneView.size.y);};
+    auto project=[&](glm::vec2 p){return screen(model,p);};
     ImVec2 corners[]={project({0,0}),project({r.size.x,0}),project(r.size),project({0,r.size.y})};
-    draw->AddPolyline(corners,4,IM_COL32(90,210,255,230),ImDrawFlags_Closed,1.5f);
+    outline(model,r.size,IM_COL32(90,210,255,230));
     auto* rect=reg.TryGet<RectTransformComponent>(m_Selected);if(!rect)return false;
     auto mouse=ImGui::GetMousePos();int hovered=-1;
     for(int i=0;i<4;++i){draw->AddRectFilled({corners[i].x-4,corners[i].y-4},{corners[i].x+4,corners[i].y+4},IM_COL32(100,220,255,255));if(std::hypot(mouse.x-corners[i].x,mouse.y-corners[i].y)<9)hovered=i;}

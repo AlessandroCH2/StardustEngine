@@ -8,7 +8,8 @@ float4 UIColor(MeshVSOut i) {
     return color;
 }
 float4 UIShade(MeshVSOut i, DrawData d) {
-    float4 sample=GetTex2D(d.ids.x).Sample(GetSampler(SAMPLER_LINEAR_CLAMP),MaterialUV(d,i.uv));
+    // Sprites set params.y (metallic) to use their texture's own filtering (point for pixel art); canvases stay linear clamp
+    float4 sample=GetTex2D(d.ids.x).Sample(GetSampler(d.params.y>0.5?d.sampling.x:SAMPLER_LINEAR_CLAMP),MaterialUV(d,i.uv));
     if(d.params.z>0.5) {
         float edge=d.params.w;
         float width=max(fwidth(sample.a),0.002);

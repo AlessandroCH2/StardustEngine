@@ -1,3 +1,4 @@
+#include "Core/Base64.h"
 #include "Scene/SceneSerializer.h"
 #include "Scene/ComponentState.h"
 #include "Scene/PrefabSystem.h"
@@ -56,6 +57,8 @@ static void WriteEntity(Scene& scene, EntityID e, json& out) {
                               { "embeddedMaterial", mat } };
     }
     if(auto* c=reg.TryGet<VideoPlayerComponent>(e))j["videoPlayer"]={{"clip",c->clip},{"renderMode",c->renderMode},{"targetTexture",c->targetTexture},{"playOnStart",c->playOnStart},{"loop",c->loop},{"speed",c->speed},{"audio",c->audio},{"volume",c->volume}};
+    if(auto* c=reg.TryGet<SpriteBatchComponent>(e)){j["spriteBatch"]={{"textures",c->textures},{"quads",Base64::Encode(c->quads.data(),c->quads.size()*sizeof(SpriteQuad))},{"material",c->material},{"color",Vec(c->color)},{"sortingOrder",c->sortingOrder}};
+        if(!c->animations.empty()){json anims=json::array();for(auto& a:c->animations){json frames=json::array();for(auto& f:a.frames)frames.push_back({f.x,f.y,f.z,f.w});anims.push_back({{"frames",frames},{"fps",a.fps}});}j["spriteBatch"]["animations"]=anims;}}
     if(auto* c=reg.TryGet<SpriteRendererComponent>(e))j["spriteRenderer"]={{"sprite",c->sprite},{"material",c->material},{"color",Vec(c->color)},{"pixelsPerUnit",c->pixelsPerUnit},{"flipX",c->flipX},{"flipY",c->flipY},{"sortingOrder",c->sortingOrder}};
     if (auto* c = reg.TryGet<CameraComponent>(e))
         j["camera"] = { {"cullingMask",c->cullingMask},{"clearFlags",c->clearFlags},{"background",{c->background.r,c->background.g,c->background.b,c->background.a}},{"renderShadows",c->renderShadows},{"postProcessing",c->postProcessing},{"targetTexture",c->targetTexture},{"targetWidth",c->targetWidth},{"targetHeight",c->targetHeight}, {"orthographic",c->orthographic},{"orthographicSize",c->orthographicSize},{"far",c->farPlane}, { "fov", c->fovDegrees }, { "near", c->nearPlane }, { "primary", c->primary } };
@@ -95,6 +98,12 @@ static void WriteEntity(Scene& scene, EntityID e, json& out) {
     if (auto* c = reg.TryGet<RigidbodyComponent>(e))
         j["rigidbody"] = { { "type", (int)c->type }, { "mass", c->mass }, { "linearDamping", c->linearDamping },
                            { "angularDamping", c->angularDamping }, { "useGravity", c->useGravity }, { "freezeRotation", c->freezeRotation } };
+    if (auto* c = reg.TryGet<Rigidbody2DComponent>(e))
+        j["rigidbody2D"] = { { "type", (int)c->type }, { "mass", c->mass }, { "linearDamping", c->linearDamping }, { "angularDamping", c->angularDamping },
+                             { "gravityScale", c->gravityScale }, { "freezeRotation", c->freezeRotation } };
+    if (auto* c = reg.TryGet<BoxCollider2DComponent>(e)) j["boxCollider2D"] = { { "size", Vec(c->size) }, { "offset", Vec(c->offset) }, { "material", matJson(c->material) } };
+    if (auto* c = reg.TryGet<CircleCollider2DComponent>(e)) j["circleCollider2D"] = { { "radius", c->radius }, { "offset", Vec(c->offset) }, { "material", matJson(c->material) } };
+    if (auto* c = reg.TryGet<CapsuleCollider2DComponent>(e)) j["capsuleCollider2D"] = { { "size", Vec(c->size) }, { "offset", Vec(c->offset) }, { "material", matJson(c->material) } };
     if (auto* c = reg.TryGet<BoxColliderComponent>(e))
         j["boxCollider"] = { { "size", Vec(c->size) }, { "center", Vec(c->center) }, { "material", matJson(c->material) } };
     if (auto* c = reg.TryGet<SphereColliderComponent>(e))
@@ -241,6 +250,7 @@ static std::vector<EntityID> ReadEntities(Scene& sceneRef, const json& entities,
             }
         }
         if(j.contains("videoPlayer")){auto& c=reg.Add<VideoPlayerComponent>(e);auto& m=j["videoPlayer"];c.clip=m.value("clip","");c.targetTexture=m.value("targetTexture","");c.playing=c.playOnStart=m.value("playOnStart",true);c.loop=m.value("loop",true);c.speed=m.value("speed",1.f);c.renderMode=std::clamp(m.value("renderMode",0),0,1);c.audio=m.value("audio",true);c.volume=m.value("volume",1.f);}
+        if(j.contains("spriteBatch")&&j["spriteBatch"].is_object()){auto& c=reg.Add<SpriteBatchComponent>(e);auto& m=j["spriteBatch"];if(m.contains("textures")&&m["textures"].is_array())for(auto& t:m["textures"])if(t.is_string())c.textures.push_back(t.get<std::string>());auto bytes=Base64::Decode(m.value("quads",std::string()));c.quads.resize(bytes.size()/sizeof(SpriteQuad));if(!c.quads.empty())std::memcpy(c.quads.data(),bytes.data(),c.quads.size()*sizeof(SpriteQuad));c.material=m.value("material","");c.color=Vec4(m.value("color",json()),glm::vec4(1));c.sortingOrder=m.value("sortingOrder",0);for(auto& a:m.value("animations",json::array())){SpriteAnimation anim;anim.fps=a.value("fps",8.f);for(auto& f:a.value("frames",json::array()))if(f.is_array()&&f.size()==4)anim.frames.push_back({f[0].get<float>(),f[1].get<float>(),f[2].get<float>(),f[3].get<float>()});c.animations.push_back(anim);}c.Touch();}
         if(j.contains("spriteRenderer")){auto& c=reg.Add<SpriteRendererComponent>(e);auto& m=j["spriteRenderer"];c.sprite=m.value("sprite","");c.material=m.value("material","");c.color=Vec4(m.value("color",json()),glm::vec4(1));c.pixelsPerUnit=m.value("pixelsPerUnit",0.f);c.flipX=m.value("flipX",false);c.flipY=m.value("flipY",false);c.sortingOrder=m.value("sortingOrder",0);}
         if (j.contains("camera")) {
             const json& m = j["camera"];
@@ -293,6 +303,17 @@ static std::vector<EntityID> ReadEntities(Scene& sceneRef, const json& entities,
             c.useGravity = m.value("useGravity", c.useGravity);
             c.freezeRotation = m.value("freezeRotation", c.freezeRotation);
         }
+        auto vec2 = [](const json& v, glm::vec2 fallback) { return v.is_array() && v.size() == 2 ? glm::vec2(v[0].get<float>(), v[1].get<float>()) : fallback; };
+        if (j.contains("rigidbody2D")) {
+            const json& m = j["rigidbody2D"];
+            auto& c = reg.Add<Rigidbody2DComponent>(e);
+            c.type = (BodyType)m.value("type", (int)c.type); c.mass = m.value("mass", c.mass);
+            c.linearDamping = m.value("linearDamping", c.linearDamping); c.angularDamping = m.value("angularDamping", c.angularDamping);
+            c.gravityScale = m.value("gravityScale", c.gravityScale); c.freezeRotation = m.value("freezeRotation", c.freezeRotation);
+        }
+        if (j.contains("boxCollider2D")) { const json& m = j["boxCollider2D"]; auto& c = reg.Add<BoxCollider2DComponent>(e); c.size = vec2(m.value("size", json()), c.size); c.offset = vec2(m.value("offset", json()), c.offset); readMat(m, c.material); }
+        if (j.contains("circleCollider2D")) { const json& m = j["circleCollider2D"]; auto& c = reg.Add<CircleCollider2DComponent>(e); c.radius = m.value("radius", c.radius); c.offset = vec2(m.value("offset", json()), c.offset); readMat(m, c.material); }
+        if (j.contains("capsuleCollider2D")) { const json& m = j["capsuleCollider2D"]; auto& c = reg.Add<CapsuleCollider2DComponent>(e); c.size = vec2(m.value("size", json()), c.size); c.offset = vec2(m.value("offset", json()), c.offset); readMat(m, c.material); }
         if (j.contains("boxCollider")) {
             const json& m = j["boxCollider"];
             auto& c = reg.Add<BoxColliderComponent>(e);

@@ -86,6 +86,15 @@ private:
     std::unordered_map<u64,Scope<SceneRenderer>> m_CameraTargets;
     std::unordered_map<u64,std::string> m_CameraTexturePaths;
     std::unordered_map<u64,std::pair<std::string,Ref<Mesh>>> m_SpriteMeshes;
+    struct SpriteBatchPart { Ref<RHI::Texture> texture; Ref<Mesh> mesh; glm::vec4 color{1}; std::string path; };
+    struct SpriteBatchChunk { u64 version = 0; std::vector<SpriteBatchPart> parts; };
+    struct SpriteBatchCache {
+        u64 version = 0;
+        std::vector<Ref<RHI::Texture>> textures; std::vector<bool> point;
+        std::vector<SpriteBatchChunk> chunks;
+        std::vector<SpriteBatchPart> animated; std::vector<u32> animatedFrames; bool animatedChecked = false;
+    };
+    std::unordered_map<u64,SpriteBatchCache> m_SpriteBatchMeshes;
     std::vector<EntityID> m_PendingDestroy;
     float m_FixedAccumulator = 0.0f;
     std::unordered_set<u64> m_PersistentRoots;

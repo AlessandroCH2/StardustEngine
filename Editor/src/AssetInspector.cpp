@@ -128,7 +128,7 @@ void EditorApp::DrawAssetInspector() {
                 if (FileSystem::WriteText(path,text)) {
                     dirty=false;
                     auto output=fs::path(FileSystem::Utf8(path)+".spv");
-                    std::wstring command=L"\"" + (fs::exists(STARDUST_DXC_PATH)?fs::path(STARDUST_DXC_PATH):FileSystem::ExecutableDir()/"tools/dxc/bin/dxc").wstring() + L"\" -spirv -fspv-target-env=vulkan1.3 -fvk-use-dx-layout -T ps_6_6 -E main -HV 2021 -O3 -Zpc -D STARDUST_VULKAN=1 -I \"" + (FileSystem::EngineRoot()/"Assets/Shaders").wstring() + L"\" -Fo \"" + output.wstring() + L"\" \"" + path.wstring() + L"\"";
+                    std::wstring command=L"\"" + (fs::exists(FileSystem::ExecutableDir()/"tools/dxc/bin")?FileSystem::ExecutableDir()/"tools/dxc/bin/dxc":fs::path("dxc")).wstring() + L"\" -spirv -fspv-target-env=vulkan1.3 -fvk-use-dx-layout -T ps_6_6 -E main -HV 2021 -O3 -Zpc -D STARDUST_VULKAN=1 -I \"" + (FileSystem::EngineRoot()/"Assets/Shaders").wstring() + L"\" -Fo \"" + output.wstring() + L"\" \"" + path.wstring() + L"\"";
                     int result=RunProcess(command,path.parent_path(),[](const std::string& line){SD_INFO("{}",line);});
                     if (result==0) SD_INFO("Shader compiled: {}",output.string()); else SD_ERROR("Shader compilation failed ({}); see Console",result);
                 }

@@ -18,6 +18,7 @@
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
+#include <Jolt/Physics/Collision/Shape/CylinderShape.h>
 #include <Jolt/Physics/Collision/Shape/HeightFieldShape.h>
 #include <Jolt/Physics/Collision/Shape/ConvexHullShape.h>
 #include <Jolt/Physics/Collision/Shape/MeshShape.h>
@@ -174,6 +175,7 @@ void PhysicsWorld::CreateBody(EntityID e) {
     Registry& reg = m_Scene.Reg();
     if (HasBody(e)) return;
     if(reg.Has<RigidbodyComponent>(e)&&!reg.IsEnabled<RigidbodyComponent>(e))return;
+    if(reg.Has<Rigidbody2DComponent>(e)&&!reg.IsEnabled<Rigidbody2DComponent>(e))return;
     // Initial startup, scene replacement and SetActive/RecreateBody must use
     // the same terrain path. Scene activation prepares height data first.
     if (auto* terrain = reg.TryGetEnabled<TerrainComponent>(e); terrain && terrain->collider) {
@@ -185,8 +187,13 @@ void PhysicsWorld::CreateBody(EntityID e) {
     auto* sphere = reg.TryGetEnabled<SphereColliderComponent>(e);
     auto* capsule = reg.TryGetEnabled<CapsuleColliderComponent>(e);
     auto* meshCol = reg.TryGetEnabled<MeshColliderComponent>(e);
-    if (!box && !sphere && !capsule && !meshCol) {
-        if (rb) SD_WARN("'{}' has a Rigidbody but no collider", reg.Get<NameComponent>(e).name);
+    auto* rb2 = reg.TryGetEnabled<Rigidbody2DComponent>(e);
+    auto* box2 = reg.TryGetEnabled<BoxCollider2DComponent>(e);
+    auto* circle2 = reg.TryGetEnabled<CircleCollider2DComponent>(e);
+    auto* capsule2 = reg.TryGetEnabled<CapsuleCollider2DComponent>(e);
+    const bool is2D = !box && !sphere && !capsule && !meshCol && (box2 || circle2 || capsule2);
+    if (!box && !sphere && !capsule && !meshCol && !is2D) {
+        if (rb || rb2) SD_WARN("'{}' has a Rigidbody but no collider", reg.Get<NameComponent>(e).name);
         return;
     }
 
@@ -194,12 +201,28 @@ void PhysicsWorld::CreateBody(EntityID e) {
     glm::decompose(m_Scene.GetWorldMatrix(e), scale, rot, pos, skew, persp);
     rot = glm::normalize(rot);
     scale = glm::abs(scale);
-    BodyType type = rb ? rb->type : BodyType::Static;
+    BodyType type = is2D ? (rb2 ? rb2->type : BodyType::Static) : rb ? rb->type : BodyType::Static;
 
     RefConst<Shape> shape;
     glm::vec3 center(0.0f);
     PhysicsMaterialProps mat;
-    if (box) {
+    // 2D shapes are deep slabs, so bodies at any Z meet like in a 2D world
+    constexpr float kDepth2D = 50.0f;
+    if (is2D && box2) {
+        const glm::vec2 he = glm::max(box2->size * glm::vec2(scale) * 0.5f, glm::vec2(0.005f));
+        shape = new BoxShape(Vec3(he.x, he.y, kDepth2D), std::min(0.02f, std::min(he.x, he.y) * 0.5f));
+        center = glm::vec3(box2->offset * glm::vec2(scale), 0); mat = box2->material;
+    } else if (is2D && circle2) {
+        const float radius = std::max(0.005f, circle2->radius * std::max(scale.x, scale.y));
+        // Cylinders stand on Y: turned to lie along Z they are circles in XY
+        shape = new RotatedTranslatedShape(Vec3::sZero(), Quat::sRotation(Vec3::sAxisX(), 0.5f * JPH_PI), new CylinderShape(kDepth2D, radius, std::min(0.02f, radius * 0.5f)));
+        center = glm::vec3(circle2->offset * glm::vec2(scale), 0); mat = circle2->material;
+    } else if (is2D && capsule2) {
+        const float radius = std::max(0.005f, capsule2->size.x * 0.5f * scale.x);
+        const float half = std::max(0.005f, capsule2->size.y * 0.5f * scale.y - radius);
+        shape = new CapsuleShape(half, radius);
+        center = glm::vec3(capsule2->offset * glm::vec2(scale), 0); mat = capsule2->material;
+    } else if (box) {
         glm::vec3 he = glm::max(box->size * scale * 0.5f, glm::vec3(0.01f));
         shape = new BoxShape(ToJ(he), std::min(0.05f, std::min({ he.x, he.y, he.z }) * 0.5f));
         center = box->center * scale; mat = box->material;
@@ -241,7 +264,17 @@ void PhysicsWorld::CreateBody(EntityID e) {
     bs.mRestitution = mat.restitution;
     bs.mIsSensor = mat.isTrigger;
     bs.mUserData = e;
-    if (rb) {
+    if (is2D && rb2) {
+        bs.mLinearDamping = rb2->linearDamping;
+        bs.mAngularDamping = rb2->angularDamping;
+        bs.mGravityFactor = rb2->gravityScale;
+        if (motion == EMotionType::Dynamic) {
+            bs.mOverrideMassProperties = EOverrideMassProperties::CalculateInertia;
+            bs.mMassPropertiesOverride.mMass = std::max(rb2->mass, 0.001f);
+            // Locked to the XY plane, turning only around Z
+            bs.mAllowedDOFs = rb2->freezeRotation ? EAllowedDOFs::TranslationX | EAllowedDOFs::TranslationY : EAllowedDOFs::Plane2D;
+        }
+    } else if (rb) {
         bs.mLinearDamping = rb->linearDamping;
         bs.mAngularDamping = rb->angularDamping;
         bs.mGravityFactor = rb->useGravity ? 1.0f : 0.0f;

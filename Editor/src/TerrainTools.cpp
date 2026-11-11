@@ -1,3 +1,4 @@
+#include "GizmoMath.h"
 #include "InspectorWidgets.h"
 #include "EditorApp.h"
 #include "Renderer/Nature/TerrainNeighbors.h"
@@ -275,18 +276,18 @@ bool EditorApp::UpdateTerrainBrush() {
         // Brush outline projected onto the terrain
         ImDrawList* dl = ImGui::GetWindowDrawList();
         glm::mat4 vp = cam.projection * cam.view;
-        ImVec2 pts[64];
-        int n = 0;
+        // Brush ring on the ground, cut where it passes behind the camera
+        ImU32 col = shift ? IM_COL32(255, 120, 90, 220) : IM_COL32(120, 200, 255, 220);
+        glm::vec3 ring[64];
         for (int i = 0; i < 64; ++i) {
             float ang = i / 64.0f * 6.2831853f;
             glm::vec2 q = local + glm::vec2(std::cos(ang), std::sin(ang)) * m_BrushSize;
-            glm::vec4 c = vp * glm::vec4(origin.x + q.x, origin.y + data->HeightAt(q.x, q.y) + 0.05f, origin.z + q.y, 1.0f);
-            if (c.w <= 0.01f) continue;
-            pts[n++] = ImVec2(m_SceneView.min.x + (c.x / c.w * 0.5f + 0.5f) * m_SceneView.size.x,
-                              m_SceneView.min.y + (0.5f - c.y / c.w * 0.5f) * m_SceneView.size.y);
+            ring[i] = { origin.x + q.x, origin.y + data->HeightAt(q.x, q.y) + 0.05f, origin.z + q.y };
         }
-        ImU32 col = shift ? IM_COL32(255, 120, 90, 220) : IM_COL32(120, 200, 255, 220);
-        if (n > 2) dl->AddPolyline(pts, n, col, ImDrawFlags_Closed, 2.0f);
+        for (int i = 0; i < 64; ++i) {
+            ImVec2 a, b;
+            if (Gizmo::ProjectSegment(vp, ring[i], ring[(i + 1) % 64], { m_SceneView.min.x, m_SceneView.min.y }, { m_SceneView.size.x, m_SceneView.size.y }, a, b)) dl->AddLine(a, b, col, 2.0f);
+        }
 
         if (ctrl && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && m_TerrainTool == TerrainBrush::SetHeight) {
             m_BrushHeight = data->HeightAt(local.x, local.y);

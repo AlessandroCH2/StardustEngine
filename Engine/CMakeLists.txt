@@ -22,11 +22,9 @@ if(WIN32)
     target_link_libraries(StardustEngine PUBLIC mfplat mfreadwrite mfuuid shlwapi ole32)
 endif()
 target_compile_definitions(StardustEngine PUBLIC
-    STARDUST_DXC_PATH="${Vulkan_dxc_EXECUTABLE}"
     GLM_FORCE_DEPTH_ZERO_TO_ONE
     GLM_ENABLE_EXPERIMENTAL
-    GLFW_INCLUDE_NONE
-    STARDUST_ROOT_DIR="${CMAKE_SOURCE_DIR}")
+    GLFW_INCLUDE_NONE)
 if(MSVC)
     target_compile_options(StardustEngine PRIVATE /W4 /wd4100 /wd4201 /wd4127 /wd4324)
 endif()

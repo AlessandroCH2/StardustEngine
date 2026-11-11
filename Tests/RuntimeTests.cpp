@@ -1,3 +1,5 @@
+#include "Animation/AnimatedProperties.h"
+#include "Core/Base64.h"
 #include "Physics/PhysicsWorld.h"
 #include "MemoryDevice.h"
 #include "Animation/ModelSkeleton.h"
@@ -386,6 +388,33 @@ static void TestLODGroup() {
     auto& dup=scene.Reg().Get<LODGroupComponent>(pasted[0]);EntityID dupNear=scene.FindByUUID(dup.levels[0].renderers[0]);
     Check(dupNear&&dupNear!=near&&scene.GetParent(dupNear)==pasted[0],"duplicated LOD Group still points at the original renderers");
 }
+static void TestSpriteAnimation() {
+    // A clip that swaps sprites: keys hold reference numbers, the track lists their paths
+    Scene scene;auto e=scene.CreateEntity("Coin");auto& sprite=scene.Reg().Add<SpriteRendererComponent>(e);sprite.sprite="Coin_0.sprite";
+    nlohmann::json track={{"path",""}};
+    const float a=AnimatedProperties::ReferenceKey("Coin_0.sprite"),b=AnimatedProperties::ReferenceKey("Coin_1.sprite");
+    track["prop:1r:Sprite Renderer.Sprite"]=nlohmann::json::array({nlohmann::json::array({0.0f,a}),nlohmann::json::array({0.5f,b})});
+    AnimatedProperties::StoreReference(track,a);AnimatedProperties::StoreReference(track,b);
+    Check(track["references"].size()==2,"sprite references not stored in the track");
+    nlohmann::json clip={{"duration",1.0f},{"tracks",nlohmann::json::array({track})}};
+    AnimatorSystem::SampleClip(scene,e,clip,0.75f,false);
+    Check(sprite.sprite=="Coin_1.sprite","sprite key not applied");
+    AnimatorSystem::SampleClip(scene,e,clip,0.25f,false);
+    Check(sprite.sprite=="Coin_0.sprite","sprite keys are not stepped");
+}
+static void TestSpriteBatch() {
+    Check(Base64::Decode(Base64::Encode("Stardust",8))==std::vector<u8>{'S','t','a','r','d','u','s','t'},"base64 round trip");
+    Scene scene;auto e=scene.CreateEntity("Tiles");auto& batch=scene.Reg().Add<SpriteBatchComponent>(e);
+    batch.textures={"Tiles.png"};batch.sortingOrder=3;
+    for(int i=0;i<100;++i){SpriteQuad q;q.position={float(i%10),float(i/10)};q.rect={16.f*(i%4),0,16,16};q.flags=u16(i&15);batch.quads.push_back(q);}
+    batch.Touch();
+    auto copy=SceneSerializer::FromJson(SceneSerializer::ToJson(scene));Check(copy!=nullptr,"scene with Sprite Batch not reloaded");
+    auto* loaded=copy?copy->Reg().TryGet<SpriteBatchComponent>(copy->FindByUUID(scene.Reg().Get<IDComponent>(e).uuid)):nullptr;
+    Check(loaded&&loaded->quads.size()==100&&loaded->textures==batch.textures&&loaded->sortingOrder==3&&loaded->version!=0,"Sprite Batch lost its quads on save");
+    Check(loaded&&std::memcmp(loaded->quads.data(),batch.quads.data(),100*sizeof(SpriteQuad))==0,"Sprite Batch quads changed on save");
+    auto pasted=SceneSerializer::InstantiateSelection(scene,SceneSerializer::SelectionToJson(scene,{e}));
+    Check(pasted.size()==1&&scene.Reg().Get<SpriteBatchComponent>(pasted[0]).quads.size()==100,"Sprite Batch not duplicated");
+}
 static void TestVideoDecoding() {
     auto mpeg=VideoPlayerSystem::Probe((FileSystem::EngineRoot()/"Tests/Fixtures/VideoTest.mpg").generic_string());
     Check(mpeg.width>0&&mpeg.framesDecoded>0,"MPEG-1 clip does not decode");
@@ -576,6 +605,11 @@ static void TestRenderingSystems(){
 }
 
 int main() {
+    // The fixtures live in the source tree: the first parent folder of the executable that has Tests/Fixtures
+    for (auto dir = Stardust::FileSystem::ExecutableDir(); !dir.empty(); dir = dir.parent_path()) {
+        if (std::filesystem::is_directory(dir / "Tests" / "Fixtures")) { Stardust::FileSystem::SetEngineRoot(dir); break; }
+        if (dir == dir.parent_path()) break;
+    }
     try {
         TestWorkspace workspace;
         TestScenes();
@@ -589,6 +623,8 @@ int main() {
         TestAssetMeta();
         TestVideoDecoding();
         TestLODGroup();
+        TestSpriteBatch();
+        TestSpriteAnimation();
         TestPakEncryption();
         TestPrefabLinks();
         TestCanvasAndRichText();

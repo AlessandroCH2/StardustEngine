@@ -73,7 +73,7 @@ Use constructors and field initializers only for ordinary managed data. The edit
 
 ## Inspector fields and references
 
-Public instance fields are exposed by default. `[SerializeField]` also exposes private fields; `[HideInInspector]` excludes a field from this serialization path. Properties, constants, readonly fields and static fields are not Inspector fields.
+Public instance fields are exposed by default. `[SerializeField]` also exposes private fields; `[HideInInspector]` keeps a field saved with the scene but hides it from the Inspector, as in Unity. Properties, constants, readonly fields and static fields are not Inspector fields.
 
 Supported field values:
 
@@ -516,6 +516,8 @@ Persistent button actions are configured in the Inspector: assign a scene target
 | --- | --- |
 | `Animator` | `Play(state)`, `SetFloat`, `SetInteger`, `SetBool`, `SetVector2`, `SetTrigger`, `ResetTrigger`, `speed`, `playing` |
 | `Camera` | `orthographic`, `orthographicSize`, `fieldOfView`, `nearClipPlane`, `farClipPlane`, `cullingMask`, `targetTexture`, `SetRenderTarget(name, width, height)` |
+| `Rigidbody2D`, `BoxCollider2D`, `CircleCollider2D`, `CapsuleCollider2D` | 2D physics on the XY plane: `velocity`, `AddForce(Vector2, ForceMode2D)`, `gravityScale`, `bodyType`...; `Physics2D.Raycast`. See [2D Tilemap package](TILEMAP.md#colliders-and-2d-physics) |
+| `SpriteBatch` | `SetQuads(textures, quads, count)`, `SetQuadRange(start, quads)` (rebuilds only the touched chunks), `Resize`, `GetQuads()`, `SetAnimations`, `Clear()`, `quadCount`, `version`, `textures`, `color`, `material`, `sortingOrder` |
 | `VideoPlayer` | `clip`, `Play()`, `Pause()`, `Stop()`, `isPlaying`, `loop`, `time`, `length`, `playbackSpeed`, `renderMode`, `targetTexture`, `audioEnabled`, `volume` |
 | `MeshRenderer` | `color` |
 | `Light` | `color`, `intensity`, `range` for supported local lights |
@@ -549,7 +551,28 @@ public class CharacterAnimationExample : ScriptBehaviour
 
 ## Editor-only scripts
 
-Scripts anywhere under a folder named `Editor` are compiled into the project's editor assembly and excluded from player scripts. Add `[Stardust.Editor.MenuItem("path")]` to a parameterless static method. Commands appear in the editor's **Scripts** menu. Only the editor API actually exposed by ScriptCore is available; there is no UnityEditor namespace, custom-inspector API or selection API.
+Scripts anywhere under a folder named `Editor` are compiled into the project's editor assembly and excluded from player scripts. Add `[Stardust.Editor.MenuItem("path")]` to a parameterless static method. Commands appear in the editor's **Scripts** menu. Only the editor API actually exposed by ScriptCore is available; there is no UnityEditor namespace and no selection API.
+
+**Custom inspectors and Scene view tools.** `[CustomEditor(typeof(MyScript))]` on a class deriving from `Stardust.Editor.Editor` replaces the script's Inspector (`OnInspectorGUI`) and can add a Scene view tool (`OnSceneGUI`, called every frame while the object is selected, in edit mode). `target` is a copy of the script with the saved field values; field changes are written back after each call. Editors are created again for every call, so keep tool state in static fields.
+
+| API | Use |
+| --- | --- |
+| `EditorGUILayout.LabelField`, `HelpBox`, `FloatField`, `IntField`, `TextField`, `Toggle`, `Vector2Field`, `Vector3Field`, `ColorField`, `Space` | Inspector rows |
+| `EditorGUILayout.AssetField(label, path, ".png", ...)` | Asset path picker with drag and drop from the Project window |
+| `EditorGUILayout.Popup(label, index, options...)` | Drop-down list |
+| `GUILayout.Button`, `GUILayout.Toggle(text, on)`, `GUILayout.SameLine(spacing)` | Buttons, toggle buttons, several controls on one line |
+| `GUILayout.IconButton(icon, selected, tooltip)` | Square button with a built-in icon (select, brush, eraser, box, bucket, picker, flipx, flipy, rotate, grid, palette, plus, minus, play, eye) |
+| `GUILayout.Toolbar(selected, options...)` | Segmented control filling the width; returns the selected index |
+| `GUILayout.TileGrid(TileGridOptions)` | A texture cut into tiles, in its own layout with zoom and scrolling; returns a `TileGridEvent` (clicked tile, or a dragged rectangle, with Shift/Ctrl) |
+| `EditorGUILayout.Header(text)`, `EditorGUILayout.Slider(label, value, min, max)` | Section titles and sliders |
+| `GUILayout.TextureButton(texture, x, y, w, h, size, selected)` | Button showing a pixel rectangle of a texture (palettes) |
+| `SceneView.mouseOver`, `mouseOnPlane`, `mouseLocal`, `mouseWorld` | Mouse on the target's local XY plane |
+| `SceneView.GetMouseButton/Down/Up(button)`, `shift`, `control`, `alt`, `scrollDelta` | Input in the Scene view |
+| `SceneView.TakeMouse()` | Keeps the left mouse for the tool this frame (no selection clicks, no gizmo) |
+| `Handles.color`, `DrawLine`, `DrawRect`, `DrawTexture`, `Label` | Overlays in the target's local coordinates |
+| `EditorWindow` + `EditorWindow.GetWindow<T>(title)` | Dockable windows drawn with the same controls |
+
+`Assets.GetTextureSize(path)` returns a texture's size in pixels. The optional 2D Tilemap package (`Packages/com.stardust.tilemap`) is a complete example of these APIs.
 
 ```csharp
 using Stardust;

@@ -15,8 +15,9 @@ namespace Stardust.Interop
     internal sealed class GameLoadContext : AssemblyLoadContext
     {
         public GameLoadContext() : base("StardustGame", isCollectible: true) { }
+        // Editor scripts reference the game assembly by name: hand back the one already loaded here
         protected override Assembly Load(AssemblyName name) =>
-            name.Name == "Stardust.ScriptCore" ? typeof(Entity).Assembly : null;
+            name.Name == "Stardust.ScriptCore" ? typeof(Entity).Assembly : Assemblies.FirstOrDefault(a => a.GetName().Name == name.Name);
     }
 
     internal sealed class ScriptType
@@ -90,7 +91,8 @@ namespace Stardust.Interop
                     // Walk declared fields so private serialized fields inherited from a base script work too.
                     for (Type owner = t; owner != null && owner != typeof(ScriptBehaviour); owner = owner.BaseType)
                         foreach (var f in owner.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly))
-                            if (!f.IsInitOnly && !f.IsLiteral && !f.IsDefined(typeof(HideInInspector)) &&
+                            // [HideInInspector] fields are still saved, like Unity; only the inspector skips them
+                            if (!f.IsInitOnly && !f.IsLiteral &&
                                 (f.IsPublic || f.IsDefined(typeof(SerializeField))) &&
                                 SupportedField(f.FieldType) &&
                                 !st.Fields.Any(existing => existing.Name == f.Name)) st.Fields.Add(f);
@@ -136,7 +138,7 @@ namespace Stardust.Interop
                     fields.Add(new JsonObject
                     {
                         ["name"] = f.Name,
-                        ["type"] = TypeName(f.FieldType),["schema"]=FieldSchema(f.FieldType),
+                        ["type"] = TypeName(f.FieldType),["schema"]=HiddenSchema(f),
                         ["default"] = defaults != null ? ToJson(f.GetValue(defaults)) : null,
                     });
                 arr.Add(new JsonObject { ["name"] = name, ["fields"] = fields, ["methods"] = ActionMethods(st.Type,true) });
@@ -295,6 +297,17 @@ namespace Stardust.Interop
                 else {
                     Stardust.Editor.EditorGUI.Begin(q["events"] as JsonObject);
                     if(kind=="window") {if(Stardust.Editor.EditorWindow.Open.TryGetValue(q["id"].GetValue<string>(),out var window)){if(q["close"]?.GetValue<bool>()==true)window.Close();else window.OnGUI();}}
+                    if(kind=="scene"){
+                        string name=q["class"].GetValue<string>();
+                        if(s_CustomEditors.TryGetValue(name,out var custom)&&s_Types.TryGetValue(name,out var script)&&custom.GetMethod("OnSceneGUI")?.DeclaringType!=typeof(Stardust.Editor.Editor)){
+                            var target=(ScriptBehaviour)Activator.CreateInstance(script.Type);target.ID=ulong.Parse(q["entity"].GetValue<string>(),System.Globalization.NumberStyles.HexNumber);
+                            var fields=q["fields"] as JsonObject??new();foreach(var f in script.Fields)if(fields[f.Name]!=null)TrySet(target,f,fields[f.Name]);
+                            Stardust.Editor.SceneView.Begin(q["input"] as JsonObject);Stardust.Editor.Handles.Begin();
+                            var editor=(Stardust.Editor.Editor)Activator.CreateInstance(custom);editor.target=target;editor.OnSceneGUI();
+                            var updated=new JsonObject();foreach(var f in script.Fields)if(!NeedsReferences(f.FieldType))updated[f.Name]=ToJson(f.GetValue(target));
+                            response["fields"]=updated;response["handled"]=true;response["capture"]=Stardust.Editor.SceneView.Captured;response["handles"]=Stardust.Editor.Handles.Commands.DeepClone();
+                        }
+                    }
                     if(kind=="inspector"){
                         string name=q["class"].GetValue<string>();
                         if(s_CustomEditors.TryGetValue(name,out var custom)&&s_Types.TryGetValue(name,out var script)){
@@ -315,6 +328,7 @@ namespace Stardust.Interop
         static Type ElementType(Type t)=>t.IsArray?t.GetElementType():t.GetGenericArguments()[0];
         static bool SupportedField(Type t,int depth=0){if(depth>8)return false;if(s_FieldTypes.Contains(t)||t.IsEnum||IsReference(t)||typeof(Asset).IsAssignableFrom(t))return true;if(ListType(t))return SupportedField(ElementType(t),depth+1);if(DictionaryType(t)){var args=t.GetGenericArguments();return (args[0]==typeof(string)||args[0]==typeof(int)||args[0]==typeof(bool)||args[0].IsEnum)&&SupportedField(args[1],depth+1);}return false;}
         static bool NeedsReferences(Type t)=>IsReference(t)||ListType(t)&&NeedsReferences(ElementType(t))||DictionaryType(t)&&NeedsReferences(t.GetGenericArguments()[1]);
+        static JsonObject HiddenSchema(FieldInfo f){var schema=FieldSchema(f.FieldType);if(f.IsDefined(typeof(HideInInspector)))schema["hidden"]=true;return schema;}
         static JsonObject FieldSchema(Type t){var result=new JsonObject{["kind"]=TypeName(t)};if(ListType(t))result["element"]=FieldSchema(ElementType(t));else if(DictionaryType(t)){result["key"]=FieldSchema(t.GetGenericArguments()[0]);result["value"]=FieldSchema(t.GetGenericArguments()[1]);}else if(t.IsEnum){result["names"]=new JsonArray(Enum.GetNames(t).Select(n=>(JsonNode)JsonValue.Create(n)).ToArray());result["values"]=new JsonArray(Enum.GetValues(t).Cast<object>().Select(v=>(JsonNode)JsonValue.Create(Convert.ToInt32(v))).ToArray());}result["default"]=ListType(t)||DictionaryType(t)?new JsonArray():t==typeof(string)?JsonValue.Create(""):IsReference(t)?JsonValue.Create("0"):t.IsEnum?JsonValue.Create(0):ToJson(Activator.CreateInstance(t));return result;}
         static object FieldValue(Type t,JsonNode node){if(node==null)return t.IsValueType?Activator.CreateInstance(t):null;if(ListType(t)){var element=ElementType(t);var values=node.AsArray();if(t.IsArray){var array=Array.CreateInstance(element,values.Count);for(int i=0;i<values.Count;++i)array.SetValue(FieldValue(element,values[i]),i);return array;}var list=(System.Collections.IList)Activator.CreateInstance(t);foreach(var v in values)list.Add(FieldValue(element,v));return list;}if(DictionaryType(t)){var args=t.GetGenericArguments();var dict=(System.Collections.IDictionary)Activator.CreateInstance(t);foreach(var pair in node.AsArray())dict.Add(FieldValue(args[0],pair["key"]),FieldValue(args[1],pair["value"]));return dict;}return ActionValue(t,node);}
         static string TypeName(Type t) =>

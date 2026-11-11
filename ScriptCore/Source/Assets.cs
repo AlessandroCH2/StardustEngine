@@ -36,6 +36,8 @@ namespace Stardust {
             fixed(byte* p=Native.Utf8(path))fixed(byte* buffer=result)if(Native.Api.ReadAsset(p,0,buffer,(ulong)length)!=length)throw new IOException("Asset read failed: "+path);
             return result;
         }
+        /// <summary>Pixel size of a texture asset (loads it if needed); zero when it cannot be read.</summary>
+        public static Vector2 GetTextureSize(string path){var size=Native.Query(new System.Text.Json.Nodes.JsonObject{["kind"]="textureSize",["path"]=path??""});return new Vector2(size["width"]?.GetValue<float>()??0,size["height"]?.GetValue<float>()??0);}
         public static string ReadAllText(string path)=>Encoding.UTF8.GetString(ReadAllBytes(path)).TrimStart('\uFEFF');
         public static T Load<T>(string path) where T:class {
             if(string.IsNullOrEmpty(path))return null;

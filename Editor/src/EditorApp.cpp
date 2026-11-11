@@ -4,6 +4,7 @@
 #include "TitleBar.h"
 #include "Core/FileSystem.h"
 #include "EditorIcons.h"
+#include "GizmoMath.h"
 #include "SceneViewOverlay.h"
 #include "ManagedEditorUI.h"
 #include "Core/Log.h"
@@ -408,6 +409,7 @@ void EditorApp::OnImGui() {
     DrawDockspace();
     DrawBuildSettings();
     DrawProjectSettings();
+    DrawPackageManager();
     if (m_ShowHierarchy) DrawHierarchy();
     if (m_ShowInspector) DrawInspector();
     if (m_ShowProject) DrawProject();
@@ -419,6 +421,7 @@ void EditorApp::OnImGui() {
     DrawManagedWindows();
     if (m_ShowDemo) ImGui::ShowDemoWindow(&m_ShowDemo);
     DecorateDockTabs(); // last: every tab bar of this frame has been submitted
+    DrawWindowShadows();
 }
 
 void EditorApp::DrawDockspace() {
@@ -565,6 +568,7 @@ void EditorApp::DrawMenuBar() {
         ImGui::MenuItem("Project", nullptr, &m_ShowProject);
         ImGui::MenuItem("Console", nullptr, &m_ShowConsole);
         ImGui::MenuItem("Stats", nullptr, &m_ShowStats);
+        ImGui::MenuItem("Package Manager", nullptr, &m_ShowPackageManager);
         if (ImGui::MenuItem("Lighting", nullptr, m_ShowLighting)) { m_ShowLighting = !m_ShowLighting; m_LightingFocusRequest = m_ShowLighting; }
         if(ImGui::MenuItem("Animation",nullptr,m_ShowAnimationEditor)){m_ShowAnimationEditor=!m_ShowAnimationEditor;m_AnimationFocusRequest=m_ShowAnimationEditor;}
         if(ImGui::MenuItem("Animator",nullptr,m_ShowAnimatorEditor)){m_ShowAnimatorEditor=!m_ShowAnimatorEditor;m_AnimatorFocusRequest=m_ShowAnimatorEditor;}
@@ -771,6 +775,7 @@ void EditorApp::DrawSceneView() {
     ImGuizmo::SetRect(m_SceneView.min.x,m_SceneView.min.y,m_SceneView.size.x,m_SceneView.size.y);
     // Terrain brush (owns the mouse while a terrain tool is active)
     bool brushActive = !m_AnimationPreviewScene&&UpdateTerrainBrush();
+    brushActive |= UpdateManagedSceneTools();
 
     // Gizmo
     Scene& gizmoScene=m_AnimationRecording&&m_AnimationPreviewScene?*m_AnimationPreviewScene:ActiveScene();
@@ -810,7 +815,7 @@ void EditorApp::DrawSceneView() {
         { m_SceneRenderer->RequestPick((u32)x, (u32)y); m_ScenePickPending = true; }
     }
 
-    if(m_ShowGizmos)DrawColliderGizmos();
+    if(m_ShowGizmos){DrawColliderGizmos();DrawCameraGizmos();}
     if (!m_AnimationPreviewScene && !gizmoActive && !m_UIRectEntity && !ImGui::IsDragDropActive()) if (auto clicked = CanvasRenderer::HandleInput(ActiveScene(),m_SceneView.min,m_SceneView.size,m_Camera.GetRenderCamera(m_SceneView.size.x/m_SceneView.size.y),true,false)) { bool occluded=false;
         if(!m_Camera.Is2D()){
             auto camera=m_Camera.GetRenderCamera(m_SceneView.size.x/m_SceneView.size.y);auto mouse=ImGui::GetMousePos();glm::vec2 ndc{(mouse.x-m_SceneView.min.x)/m_SceneView.size.x*2-1,1-(mouse.y-m_SceneView.min.y)/m_SceneView.size.y*2};auto inv=glm::inverse(camera.projection*camera.view);auto p=inv*glm::vec4(ndc,.5f,1);auto ray=glm::normalize(glm::vec3(p)/p.w-camera.position);float distance;auto hit=PickEntityCPU(camera.position,ray,&distance);
@@ -853,6 +858,66 @@ void EditorApp::UpdateScripts() {
 }
 
 // Wireframe colliders of the selected entity (green, like Unity)
+// Each camera shows where it looks: a short frustum for every camera, a longer one with the near plane and a
+// direction arrow for the selected one. A triangle above the frustum marks the camera's up side, as in Unity.
+void EditorApp::DrawCameraGizmos() {
+    Scene& scene = ActiveScene();
+    Registry& reg = scene.Reg();
+    const RenderCamera view = m_Camera.GetRenderCamera(m_SceneView.size.x / std::max(1.0f, m_SceneView.size.y));
+    const glm::mat4 vp = view.projection * view.view;
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->PushClipRect({ m_SceneView.min.x, m_SceneView.min.y }, { m_SceneView.min.x + m_SceneView.size.x, m_SceneView.min.y + m_SceneView.size.y }, true);
+    const ImVec2 viewMin(m_SceneView.min.x, m_SceneView.min.y), viewSize(m_SceneView.size.x, m_SceneView.size.y);
+    auto project = [&](const glm::vec3& p, ImVec2& out) { return Gizmo::ProjectPoint(vp, p, viewMin, viewSize, out); };
+    reg.Each<CameraComponent>([&](EntityID e, CameraComponent& c) {
+        if (!scene.IsActiveInHierarchy(e)) return;
+        const bool selected = e == m_Selected || std::find(m_EntitySelection.begin(), m_EntitySelection.end(), e) != m_EntitySelection.end();
+        const ImU32 color = selected ? IM_COL32(255, 255, 255, 210) : IM_COL32(200, 205, 215, 110);
+        auto line = [&](const glm::vec3& a, const glm::vec3& b, float width = 1.2f) { ImVec2 pa, pb; if (Gizmo::ProjectSegment(vp, a, b, viewMin, viewSize, pa, pb)) dl->AddLine(pa, pb, color, width); };
+        glm::vec3 pos, scale, skew; glm::vec4 perspective; glm::quat rot;
+        glm::decompose(scene.GetWorldMatrix(e), scale, rot, pos, skew, perspective);
+        rot = glm::normalize(rot);
+        const glm::vec3 forward = rot * glm::vec3(0, 0, -1), up = rot * glm::vec3(0, 1, 0), right = rot * glm::vec3(1, 0, 0);
+        // Same aspect as what the camera renders: its render texture, or the Game view
+        const float aspect = !c.targetTexture.empty() ? (float)std::max(1, c.targetWidth) / std::max(1, c.targetHeight)
+                                                      : m_GameRenderSize.x / std::max(1.0f, m_GameRenderSize.y);
+        const float nearD = std::max(0.01f, c.nearPlane);
+        const float farD = selected ? std::min(c.farPlane, std::max(nearD + 1.0f, c.orthographic ? 20.0f : 12.0f)) : std::min(c.farPlane, nearD + 1.5f);
+        auto halfSize = [&](float d) {
+            const float h = c.orthographic ? c.orthographicSize : std::tan(glm::radians(c.fovDegrees) * 0.5f) * d;
+            return glm::vec2(h * aspect, h);
+        };
+        auto corners = [&](float d, glm::vec3* out) {
+            const glm::vec2 h = halfSize(d);
+            const glm::vec3 center = pos + forward * d;
+            out[0] = center - right * h.x - up * h.y; out[1] = center + right * h.x - up * h.y;
+            out[2] = center + right * h.x + up * h.y; out[3] = center - right * h.x + up * h.y;
+        };
+        glm::vec3 nearC[4], farC[4];
+        corners(nearD, nearC); corners(farD, farC);
+        for (int i = 0; i < 4; ++i) {
+            line(farC[i], farC[(i + 1) % 4], selected ? 1.6f : 1.2f);
+            line(c.orthographic ? nearC[i] : pos, farC[i]);
+            if (selected || c.orthographic) line(nearC[i], nearC[(i + 1) % 4]);
+        }
+        // Up marker above the far rectangle
+        const glm::vec2 h = halfSize(farD);
+        const glm::vec3 topCenter = pos + forward * farD + up * h.y;
+        ImVec2 a, b, t;
+        if (project(topCenter - right * h.x * 0.25f, a) && project(topCenter + right * h.x * 0.25f, b) && project(topCenter + up * h.y * 0.25f, t))
+            dl->AddTriangleFilled(a, b, t, selected ? IM_COL32(255, 255, 255, 120) : IM_COL32(200, 205, 215, 60));
+        // Direction from the camera, with an arrow head
+        if (selected) {
+            const glm::vec3 tip = pos + forward * std::min(farD, nearD + 3.0f);
+            line(pos, tip, 2.0f);
+            ImVec2 pt, pl, pr;
+            if (project(tip, pt) && project(tip - forward * 0.35f + right * 0.15f, pl) && project(tip - forward * 0.35f - right * 0.15f, pr))
+                dl->AddTriangleFilled(pt, pl, pr, color);
+        }
+    });
+    dl->PopClipRect();
+}
+
 void EditorApp::DrawColliderGizmos() {
     Registry& reg = ActiveScene().Reg();
     if (!reg.Valid(m_Selected)) return;
@@ -861,15 +926,9 @@ void EditorApp::DrawColliderGizmos() {
     glm::mat4 vp = cam.projection * cam.view;
     ImDrawList* dl = ImGui::GetWindowDrawList();
     const ImU32 col = IM_COL32(120, 255, 120, 200);
-    auto project = [&](const glm::vec3& p, ImVec2& out) {
-        glm::vec4 c = vp * glm::vec4(p, 1.0f);
-        if (c.w <= 0.01f) return false;
-        out = ImVec2(m_SceneView.min.x + (c.x / c.w * 0.5f + 0.5f) * m_SceneView.size.x, m_SceneView.min.y + (0.5f - c.y / c.w * 0.5f) * m_SceneView.size.y);
-        return true;
-    };
     auto line = [&](const glm::vec3& a, const glm::vec3& b) {
         ImVec2 pa, pb;
-        if (project(a, pa) && project(b, pb)) dl->AddLine(pa, pb, col, 1.5f);
+        if (Gizmo::ProjectSegment(vp, a, b, { m_SceneView.min.x, m_SceneView.min.y }, { m_SceneView.size.x, m_SceneView.size.y }, pa, pb)) dl->AddLine(pa, pb, col, 1.5f);
     };
     auto circle = [&](const glm::vec3& c, const glm::vec3& u, const glm::vec3& v, float r) {
         glm::vec3 prev = c + u * r;
@@ -889,6 +948,19 @@ void EditorApp::DrawColliderGizmos() {
         for (int i = 0; i < 8; ++i) corners[i] = c + hx * ((i & 1) ? 1.f : -1.f) + hy * ((i & 2) ? 1.f : -1.f) + hz * ((i & 4) ? 1.f : -1.f);
         const int edges[12][2] = { {0,1},{2,3},{4,5},{6,7},{0,2},{1,3},{4,6},{5,7},{0,4},{1,5},{2,6},{3,7} };
         for (auto& e : edges) line(corners[e[0]], corners[e[1]]);
+    }
+    // 2D colliders: outlines on the object's XY plane
+    if (auto* b = reg.TryGet<BoxCollider2DComponent>(m_Selected)) {
+        const glm::vec3 c = pos + ax * b->offset.x + ay * b->offset.y, hx = ax * b->size.x * 0.5f, hy = ay * b->size.y * 0.5f;
+        line(c - hx - hy, c + hx - hy); line(c + hx - hy, c + hx + hy); line(c + hx + hy, c - hx + hy); line(c - hx + hy, c - hx - hy);
+    }
+    if (auto* s = reg.TryGet<CircleCollider2DComponent>(m_Selected))
+        circle(pos + ax * s->offset.x + ay * s->offset.y, glm::normalize(ax), glm::normalize(ay), s->radius * std::max(glm::length(ax), glm::length(ay)));
+    if (auto* cap = reg.TryGet<CapsuleCollider2DComponent>(m_Selected)) {
+        const glm::vec3 c = pos + ax * cap->offset.x + ay * cap->offset.y, nx = glm::normalize(ax), ny = glm::normalize(ay);
+        const float r = cap->size.x * 0.5f * glm::length(ax), half = std::max(0.0f, cap->size.y * 0.5f * glm::length(ay) - r);
+        circle(c + ny * half, nx, ny, r); circle(c - ny * half, nx, ny, r);
+        line(c + nx * r + ny * half, c + nx * r - ny * half); line(c - nx * r + ny * half, c - nx * r - ny * half);
     }
     float maxScale = std::max({ glm::length(ax), glm::length(ay), glm::length(az) });
     glm::vec3 nx = glm::normalize(ax), ny = glm::normalize(ay), nz = glm::normalize(az);

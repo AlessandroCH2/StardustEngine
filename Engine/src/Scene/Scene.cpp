@@ -1,4 +1,7 @@
+#include <map>
+#include <chrono>
 #include "Scene/Scene.h"
+#include "Assets/TextureImport.h"
 #include "Scene/ComponentState.h"
 #include "Core/FileSystem.h"
 #include <nlohmann/json.hpp>
@@ -86,6 +89,7 @@ void Scene::CopyComponents(EntityID src, EntityID dst) {
     m_Registry.Get<NameComponent>(dst) = m_Registry.Get<NameComponent>(src);
     m_Registry.Get<TransformComponent>(dst) = m_Registry.Get<TransformComponent>(src);
     if (auto* c = m_Registry.TryGet<SpriteRendererComponent>(src)) m_Registry.Add<SpriteRendererComponent>(dst,*c);
+    if (auto* c = m_Registry.TryGet<SpriteBatchComponent>(src)) { auto& copy = m_Registry.Add<SpriteBatchComponent>(dst,*c); copy.Touch(); }
     if (auto* c = m_Registry.TryGet<MeshRendererComponent>(src)) m_Registry.Add<MeshRendererComponent>(dst, *c);
     if (auto* c = m_Registry.TryGet<CameraComponent>(src)) m_Registry.Add<CameraComponent>(dst, *c);
     if (auto* c = m_Registry.TryGet<DirectionalLightComponent>(src)) m_Registry.Add<DirectionalLightComponent>(dst, *c);
@@ -96,6 +100,10 @@ void Scene::CopyComponents(EntityID src, EntityID dst) {
     if (auto* c = m_Registry.TryGet<TerrainComponent>(src)) m_Registry.Add<TerrainComponent>(dst, *c);
     if (auto* c = m_Registry.TryGet<RigidbodyComponent>(src)) m_Registry.Add<RigidbodyComponent>(dst, *c);
     if (auto* c = m_Registry.TryGet<BoxColliderComponent>(src)) m_Registry.Add<BoxColliderComponent>(dst, *c);
+    if (auto* c = m_Registry.TryGet<Rigidbody2DComponent>(src)) m_Registry.Add<Rigidbody2DComponent>(dst, *c);
+    if (auto* c = m_Registry.TryGet<BoxCollider2DComponent>(src)) m_Registry.Add<BoxCollider2DComponent>(dst, *c);
+    if (auto* c = m_Registry.TryGet<CircleCollider2DComponent>(src)) m_Registry.Add<CircleCollider2DComponent>(dst, *c);
+    if (auto* c = m_Registry.TryGet<CapsuleCollider2DComponent>(src)) m_Registry.Add<CapsuleCollider2DComponent>(dst, *c);
     if (auto* c = m_Registry.TryGet<SphereColliderComponent>(src)) m_Registry.Add<SphereColliderComponent>(dst, *c);
     if (auto* c = m_Registry.TryGet<CapsuleColliderComponent>(src)) m_Registry.Add<CapsuleColliderComponent>(dst, *c);
     if (auto* c = m_Registry.TryGet<MeshColliderComponent>(src)) m_Registry.Add<MeshColliderComponent>(dst, *c);
@@ -550,8 +558,105 @@ void Scene::SubmitToRenderer(SceneRenderer& renderer, RHI::Device& device,bool a
         }
         Material material;if(auto custom=AssetManager::GetMaterial(c.material))material=*custom;else material.shader=ShaderType::UI;
         material.runtimeAlbedo=texture;material.color*=c.color;material.doubleSided=true;
+        if(material.shader==ShaderType::UI){material.normalStrength=0;material.metallic=1;material.albedoMap=sprite.texture;} // not text (SDF); filter as imported
         renderer.Submit(cache.second,m_WorldCache[e],material,e,false,0,0,true,c.sortingOrder);
     }
+    // Sprite Batches: meshes per chunk of quads (one per texture and colour), rebuilt only when their chunk changes.
+    // Animated quads live in one extra mesh, rebuilt when an animation moves to its next frame.
+    static const auto s_BatchClock = std::chrono::steady_clock::now();
+    const double batchTime = std::chrono::duration<double>(std::chrono::steady_clock::now() - s_BatchClock).count();
+    m_Registry.Each<SpriteBatchComponent>([&](EntityID e, SpriteBatchComponent& c) {
+        if (!m_Registry.TryGetEnabled<SpriteBatchComponent>(e) || !IsActiveInHierarchy(e) || c.quads.empty()) return;
+        if (!(renderer.Camera().cullingMask & (1u << std::clamp(m_Registry.Get<NameComponent>(e).layer, 0, 31)))) return;
+        if (c.chunkVersions.size() != (c.quads.size() + SpriteBatchComponent::kChunk - 1) / SpriteBatchComponent::kChunk) c.Touch();
+        auto& cache = m_SpriteBatchMeshes[m_Registry.Get<IDComponent>(e).uuid];
+        // Textures (and whether they are point filtered) once per structure change
+        if (cache.version != c.version || cache.textures.size() != c.textures.size()) {
+            cache.version = c.version; cache.textures.assign(c.textures.size(), nullptr); cache.point.assign(c.textures.size(), false);
+            cache.chunks.clear(); cache.animated = {};
+        }
+        bool texturesReady = true;
+        for (size_t i = 0; i < c.textures.size(); ++i) {
+            if (!cache.textures[i]) { cache.textures[i] = AssetManager::GetTexture(c.textures[i], true); cache.point[i] = TextureImportSettings::Load(c.textures[i]).filter == 0; }
+            if (!cache.textures[i]) texturesReady = false;
+        }
+        // Appends one quad to its texture/colour group, with the given pixel rectangle
+        using Groups = std::map<std::pair<u16, u32>, std::pair<std::vector<Vertex>, std::vector<u32>>>;
+        auto addQuad = [&](Groups& groups, const SpriteQuad& q, glm::vec4 r) {
+            if (q.texture >= cache.textures.size() || !cache.textures[q.texture] || (q.size.x == 0 && q.size.y == 0)) return;
+            const float tw = (float)cache.textures[q.texture]->Desc().width, th = (float)cache.textures[q.texture]->Desc().height;
+            if (r.z <= 0 || r.w <= 0) r = { 0, 0, tw, th };
+            // Inset so filtering never reaches the neighbouring tile of an atlas: half a texel when bilinear, a hair when point
+            const float inset = cache.point[q.texture] ? 0.02f : 0.5f;
+            float u0 = (r.x + inset) / tw, u1 = (r.x + r.z - inset) / tw, v0 = (r.y + inset) / th, v1 = (r.y + r.w - inset) / th;
+            if (q.flags & 1) std::swap(u0, u1);
+            if (q.flags & 2) std::swap(v0, v1);
+            // Corners bottom-left, bottom-right, top-right, top-left; turning shifts which UV each corner takes
+            const glm::vec2 uv[4] = { { u0, v1 }, { u1, v1 }, { u1, v0 }, { u0, v0 } };
+            const int turns = (q.flags >> 2) & 3;
+            const glm::vec2 lo = q.position, hi = q.position + q.size;
+            auto& [vertices, indices] = groups[{ q.texture, q.color }];
+            const u32 base = (u32)vertices.size();
+            vertices.push_back({ { lo.x, lo.y, 0 }, { 0, 0, 1 }, uv[(0 + turns) & 3] });
+            vertices.push_back({ { hi.x, lo.y, 0 }, { 0, 0, 1 }, uv[(1 + turns) & 3] });
+            vertices.push_back({ { hi.x, hi.y, 0 }, { 0, 0, 1 }, uv[(2 + turns) & 3] });
+            vertices.push_back({ { lo.x, hi.y, 0 }, { 0, 0, 1 }, uv[(3 + turns) & 3] });
+            for (u32 index : { 0u, 1u, 2u, 2u, 3u, 0u }) indices.push_back(base + index);
+        };
+        auto toParts = [&](Groups& groups, std::vector<SpriteBatchPart>& parts) {
+            parts.clear();
+            for (auto& [key, data] : groups) {
+                const u32 rgba = key.second;
+                const glm::vec4 color((rgba & 255) / 255.f, (rgba >> 8 & 255) / 255.f, (rgba >> 16 & 255) / 255.f, (rgba >> 24 & 255) / 255.f);
+                parts.push_back({ cache.textures[key.first], MakeRef<Mesh>(device, data.first, data.second, "SpriteBatch"), color, c.textures[key.first] });
+            }
+        };
+        const size_t chunkCount = c.chunkVersions.size();
+        cache.chunks.resize(chunkCount);
+        bool anyChunkRebuilt = false;
+        for (size_t k = 0; k < chunkCount; ++k) {
+            auto& chunk = cache.chunks[k];
+            if (chunk.version == c.chunkVersions[k] || !texturesReady) continue;
+            Groups groups;
+            for (size_t i = k * SpriteBatchComponent::kChunk; i < std::min(c.quads.size(), (k + 1) * SpriteBatchComponent::kChunk); ++i)
+                if ((c.quads[i].flags >> 4) == 0) addQuad(groups, c.quads[i], c.quads[i].rect);
+            toParts(groups, chunk.parts);
+            chunk.version = c.chunkVersions[k];
+            anyChunkRebuilt = true;
+        }
+        // Animated quads: the frame each animation shows now
+        if (!c.animations.empty() && texturesReady) {
+            std::vector<u32> frames(c.animations.size());
+            for (size_t a = 0; a < c.animations.size(); ++a) {
+                const auto& anim = c.animations[a];
+                frames[a] = anim.frames.empty() ? 0 : (u32)(std::max(0.0, batchTime * std::max(0.0f, anim.fps))) % (u32)anim.frames.size();
+            }
+            if (anyChunkRebuilt || frames != cache.animatedFrames || cache.animated.empty() && !cache.animatedChecked) {
+                cache.animatedFrames = frames;
+                cache.animatedChecked = true;
+                Groups groups;
+                for (const SpriteQuad& q : c.quads) {
+                    const u32 animation = q.flags >> 4;
+                    if (animation == 0) continue;
+                    if (animation > c.animations.size() || c.animations[animation - 1].frames.empty()) { addQuad(groups, q, q.rect); continue; }
+                    addQuad(groups, q, c.animations[animation - 1].frames[frames[animation - 1]]);
+                }
+                toParts(groups, cache.animated);
+            }
+        }
+        Material base;
+        if (auto custom = AssetManager::GetMaterial(c.material)) base = *custom; else base.shader = ShaderType::UI;
+        auto submit = [&](const SpriteBatchPart& part) {
+            Material material = base;
+            material.runtimeAlbedo = part.texture;
+            material.color *= c.color * part.color;
+            material.doubleSided = true;
+            if (material.shader == ShaderType::UI) { material.normalStrength = 0; material.metallic = 1; material.albedoMap = part.path; } // not text (SDF); filter as imported
+            renderer.Submit(part.mesh, m_WorldCache[e], material, e, false, 0, 0, true, c.sortingOrder);
+        };
+        for (const auto& chunk : cache.chunks) for (const auto& part : chunk.parts) submit(part);
+        for (const auto& part : cache.animated) submit(part);
+    });
     m_Registry.Each<PointLightComponent>([&](EntityID e, PointLightComponent& l) {
         if (!IsActiveInHierarchy(e)||!(renderer.Camera().cullingMask&(1u<<std::clamp(m_Registry.Get<NameComponent>(e).layer,0,31)))) return;
         renderer.SubmitLight({ glm::vec3(m_WorldCache[e][3]), l.range, l.color * l.intensity, 0.0f, glm::vec3(0, -1, 0), 0.0f, 1.0f, {} });

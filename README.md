@@ -10,6 +10,7 @@ A game engine written from scratch in C++20, with a Unity-like editor, C# script
 - **Scripting**: C# components with Inspector fields, prefabs, scene loading, input axes, physics, UI, audio and editor-only scripts.
 - **Rendering**: PBR materials, shadows, procedural sky and clouds, terrain with vegetation, water, post processing, LOD Groups, render textures and custom shaders.
 - **Animation**: skinned FBX models, Animator controllers with transitions and 1D/2D blend trees.
+- **2D**: sprites, Sprite Batch with animated quads, 2D physics (Rigidbody 2D, box, circle and capsule colliders), and the official Tilemap package with brushes, auto-tiles and animated tiles.
 - **Media**: audio through miniaudio, Video Player (MPEG-1 everywhere; MP4/MOV/WMV/AVI on Windows).
 - **Builds**: standalone Player for Windows and Linux, assets packed in binary paks with optional encryption.
 
@@ -29,6 +30,7 @@ The editor is written to `build/bin/Release/StardustEditor.exe`. Close the edito
 - [C# Scripting Guide](docs/CSHARP_SCRIPTING.md)
 - [Rendering, input and editor API](docs/RENDERING_INPUT_EDITOR_API.md)
 - [Custom shader properties](docs/CUSTOM_SHADER_PROPERTIES.md)
+- [2D Tilemap package](docs/TILEMAP.md)
 - [Engine architecture](docs/ARCHITECTURE.md)
 - [Linux Player](docs/LINUX_PLAYER.md)
 - [All documents](docs/README.md)

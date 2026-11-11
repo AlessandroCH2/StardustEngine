@@ -21,11 +21,11 @@ fs::path ExecutableDir() {
 #endif
 }
 
-fs::path EngineRoot() {
-    // A packaged build runs away from its source tree, with the engine folders next to the executable
-    static const fs::path root = fs::is_directory(fs::path(STARDUST_ROOT_DIR)) ? fs::path(STARDUST_ROOT_DIR) : ExecutableDir();
-    return root;
-}
+// The engine folders (Packages, Assets/Shaders, docs...) are copied next to the executable at build time
+// (cmake/RuntimeFiles.cmake), so every build folder and every distribution works on its own
+static fs::path s_EngineRootOverride;
+fs::path EngineRoot() { return s_EngineRootOverride.empty() ? ExecutableDir() : s_EngineRootOverride; }
+void SetEngineRoot(const fs::path& root) { s_EngineRootOverride = root; }
 
 bool Exists(const fs::path& path) { return Pak::Contains(path)||fs::exists(path); }
 

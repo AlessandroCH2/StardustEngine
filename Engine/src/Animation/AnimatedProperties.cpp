@@ -73,6 +73,26 @@ struct Table {
         Insert(std::move(e));
     }
 
+    // An asset path (sprite, texture...): stored in keys as a reference number, stepped like integers
+    template<typename C, typename Accessor>
+    void AddReference(const char* group, const char* label, Accessor accessor) {
+        Entry e;
+        e.property.group = group;
+        e.property.label = label;
+        e.property.dimension = 1;
+        e.property.kind = 'r';
+        e.available = [](Scene& s, EntityID x) { return s.Reg().Has<C>(x); };
+        e.get = [accessor](Scene& s, EntityID x, glm::vec4& out) { out = { AnimatedProperties::ReferenceKey(accessor(s.Reg().Get<C>(x))), 0, 0, 0 }; };
+        e.set = [accessor](Scene& s, EntityID x, const glm::vec4& in) {
+            auto& path = accessor(s.Reg().Get<C>(x));
+            if (AnimatedProperties::ReferenceKey(path) == in.x) return;
+            if (in.x == 0) { path.clear(); return; }
+            std::string resolved = AnimatedProperties::ReferencePath(in.x);
+            if (!resolved.empty()) path = resolved;
+        };
+        Insert(std::move(e));
+    }
+
     // The toggle at the top of a component
     template<typename C>
     void AddEnabled(const char* group) {
@@ -93,6 +113,7 @@ struct Table {
 };
 
 #define P(Component, Group, Label, field) t.Add<Component>(Group, Label, [](Component& c) -> auto& { return c.field; })
+#define REF(Component, Group, Label, field) t.AddReference<Component>(Group, Label, [](Component& c) -> std::string& { return c.field; })
 #define COLOR(Component, Group, Label, field) t.Add<Component>(Group, Label, [](Component& c) -> auto& { return c.field; }, true)
 
 const Table& Properties() {
@@ -131,6 +152,8 @@ const Table& Properties() {
 
         using IM = UIImageComponent;
         t.AddEnabled<IM>("Image");
+        REF(IM, "Image", "Sprite", sprite);
+        REF(IM, "Image", "Texture", texture);
         COLOR(IM, "Image", "Color", color);
         P(IM, "Image", "Fill Amount", fillAmount);
         P(IM, "Image", "Fill Method", fillMethod);
@@ -189,6 +212,8 @@ const Table& Properties() {
 
         using SP = SpriteRendererComponent;
         t.AddEnabled<SP>("Sprite Renderer");
+        REF(SP, "Sprite Renderer", "Sprite", sprite);
+        REF(SP, "Sprite Renderer", "Material", material);
         COLOR(SP, "Sprite Renderer", "Color", color);
         P(SP, "Sprite Renderer", "Pixels Per Unit", pixelsPerUnit);
         P(SP, "Sprite Renderer", "Flip X", flipX);
@@ -343,6 +368,34 @@ ScriptTarget FindScriptField(Scene& scene, EntityID entity, const std::string& i
 }
 
 } // namespace
+
+namespace {
+std::unordered_map<u32, std::string>& ReferenceTable() { static std::unordered_map<u32, std::string> table; return table; }
+}
+float AnimatedProperties::ReferenceKey(const std::string& path) {
+    if (path.empty()) return 0;
+    u32 hash = 2166136261u;
+    for (unsigned char c : path) { hash ^= c; hash *= 16777619u; }
+    hash &= 0xFFFFFF;
+    if (hash == 0) hash = 1; // 0 means "none"
+    ReferenceTable()[hash] = path;
+    return (float)hash;
+}
+std::string AnimatedProperties::ReferencePath(float key) {
+    auto found = ReferenceTable().find((u32)std::lround(key));
+    return found != ReferenceTable().end() ? found->second : std::string();
+}
+void AnimatedProperties::RegisterReferences(const json& track) {
+    auto references = track.find("references");
+    if (references == track.end() || !references->is_object()) return;
+    for (auto& [key, path] : references->items())
+        if (path.is_string()) ReferenceTable()[(u32)std::strtoul(key.c_str(), nullptr, 10)] = path.get<std::string>();
+}
+void AnimatedProperties::StoreReference(json& track, float key) {
+    if (key == 0) return;
+    const std::string path = ReferencePath(key);
+    if (!path.empty()) track["references"][std::to_string((u32)std::lround(key))] = path;
+}
 
 std::string AnimatedProperty::ChannelKey() const { return std::format("prop:{}{}:{}", dimension, kind, id); }
 
