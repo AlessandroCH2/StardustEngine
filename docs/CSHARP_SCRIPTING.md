@@ -187,10 +187,11 @@ The C# `Rigidbody.MovePosition` and `MoveRotation` methods currently set the ent
 | `Input.GetMouseButtonDown(MouseButton.Left)` | Mouse button pressed this frame. |
 | `Input.mousePosition`, `mouseDelta`, `mouseScroll` | Pointer position, movement and scroll. |
 | `Input.cursorLocked` | Request normal/locked cursor mode. |
-| `Input.GetAxis("Horizontal")` | D/right arrow minus A/left arrow. |
-| `Input.GetAxis("Vertical")` | W/up arrow minus S/down arrow. |
+| `Input.GetAxis("Horizontal")` | D/right arrow minus A/left arrow, smoothed: moves toward the target at the axis Sensitivity and returns to zero at its Gravity, like Unity. |
+| `Input.GetAxis("Vertical")` | W/up arrow minus S/down arrow, smoothed the same way. |
+| `Input.GetAxisRaw("Horizontal")` | The same axis without smoothing: exactly -1, 0 or 1 for keys (gamepad sticks keep their analog value). |
 
-Other axis names return zero. There is no configurable input-map API or key-up callback yet. In editor Play mode, gameplay input is routed to the Game view; editor panel clicks are excluded. The editor can release cursor lock when leaving Game, so the managed `cursorLocked` request is not a guaranteed query of OS cursor state.
+Axes are defined in the project's Input Manager settings (keys, gamepad axis, dead zone, Sensitivity, Gravity, Snap, Invert); names that are not defined return zero. There is no key-up callback yet. In editor Play mode, gameplay input is routed to the Game view; editor panel clicks are excluded. The editor can release cursor lock when leaving Game, so the managed `cursorLocked` request is not a guaranteed query of OS cursor state.
 
 `Time.deltaTime` and callback `dt` are scaled by `Time.timeScale`. `Time.fixedDeltaTime` is normally `1f / 60f`; `Time.time` is accumulated script runtime time. `Time.timeScale = 0` stops fixed-step progression while frame callbacks still run with zero scaled `dt`. Persistent objects keep their script runtime time across scene replacement.
 
@@ -513,14 +514,15 @@ Persistent button actions are configured in the Inspector: assign a scene target
 
 | Component | Exposed C# API |
 | --- | --- |
-| `Animator` | `Play(state)`, `SetFloat`, `SetInteger`, `SetBool`, `SetTrigger`, `ResetTrigger`, `speed`, `playing` |
-| `Camera` | `orthographic`, `orthographicSize`, `fieldOfView`, `nearClipPlane`, `farClipPlane` |
+| `Animator` | `Play(state)`, `SetFloat`, `SetInteger`, `SetBool`, `SetVector2`, `SetTrigger`, `ResetTrigger`, `speed`, `playing` |
+| `Camera` | `orthographic`, `orthographicSize`, `fieldOfView`, `nearClipPlane`, `farClipPlane`, `cullingMask`, `targetTexture`, `SetRenderTarget(name, width, height)` |
+| `VideoPlayer` | `clip`, `Play()`, `Pause()`, `Stop()`, `isPlaying`, `loop`, `time`, `length`, `playbackSpeed`, `renderMode`, `targetTexture`, `audioEnabled`, `volume` |
 | `MeshRenderer` | `color` |
 | `Light` | `color`, `intensity`, `range` for supported local lights |
 | `DirectionalLight` | Component reference only; configure in Inspector. |
 | `AudioSource` | `Play()`, `Stop()`, `isPlaying`, write-only `volume`, write-only `pitch`, static `PlayClipAtPoint(clip, position, volume)` |
 
-Animator parameter/state names must match the controller. Trigger parameters are consumed by a successful transition. Controller support currently includes one base state machine, conditions, Any State, exit time and timed transition blending; blend trees, masks and additional layers are not implemented.
+Animator parameter/state names must match the controller. Trigger parameters are consumed by a successful transition. Controller support currently includes one base state machine, Float/Int/Bool/Trigger/Vector2 parameters, conditions (Bool and Trigger conditions take no comparison), Any State, exit time, Mute, Can Transition To Self, timed transition blending, and 1D and 2D (Simple Directional) blend trees. `SetVector2("Move", v)` drives a 2D blend tree from a Vector2 parameter. Avatar masks and additional layers are not implemented.
 
 Orthographic size is the half-height of the camera view. Camera field of view is in degrees. Changing Scene view's 2D mode does not automatically change the runtime Camera.
 
@@ -581,6 +583,6 @@ Keep runtime script types independent from editor-only classes so exported scrip
 | Object disappears after a level change | Mark its root persistent during runtime; avoid keeping references to nonpersistent level objects. |
 | Async gameplay access misbehaves | Perform engine access on the main thread; poll I/O tasks from `OnUpdate`. |
 
-`Application` exposes `Quit()`, `IsPlaying`, `GetVersion()`, `GetProductName()`, `GetCompanyName()`, `GetDataPath()`, `GetPersistentDataPath()`, and `GetProjectPath()`. Use the persistent-data path for writable saves/downloads and `Assets` for virtual asset reads. `Application.Quit()` leaves Play mode in the editor. `Screen.width` and `Screen.height` refer to the gameplay viewport. Logging uses `Debug.Log`, `LogWarning`, and `LogError`.
+`Application.runInBackground` keeps a built game updating while its window is unfocused or minimized; it is off by default, so the Player pauses (audio included) in the background. `Application` also exposes `Quit()`, `IsPlaying`, `GetVersion()`, `GetProductName()`, `GetCompanyName()`, `GetDataPath()`, `GetPersistentDataPath()`, and `GetProjectPath()`. Use the persistent-data path for writable saves/downloads and `Assets` for virtual asset reads. `Application.Quit()` leaves Play mode in the editor. `Screen.width` and `Screen.height` refer to the gameplay viewport. Logging uses `Debug.Log`, `LogWarning`, and `LogError`.
 
 Version 0.6 adds terrain editing, environment/post-processing, render textures, sprites, video, gamepad input, custom meshes and editor extension APIs. See [Rendering, input and editor APIs](RENDERING_INPUT_EDITOR_API.md) for the updated reference. Runtime script attachment, coroutines and a general main-thread task dispatcher remain outside this API.

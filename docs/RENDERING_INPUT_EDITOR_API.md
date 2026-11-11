@@ -83,7 +83,13 @@ InputManager.Bind("Interact", new InputBinding {
 
 ## Video and UI transitions
 
-`VideoPlayer`: `clip`, `targetTexture`, `isPlaying`, `loop`, `time`, `length`, `playbackSpeed`, `Play`, `Pause`, `Stop`. Add Rect Transform to display video as a UI Image. The decoder streams MPEG-1 `.mpg`/`.mpeg` from loose files or an indexed pak without extracting the movie. Use `Tools/ImportVideo.py` with FFmpeg for conversion. Movie audio uses a separate AudioSource; embedded movie audio is not decoded. Codec/container support is not equivalent to Unity VideoPlayer.
+`VideoPlayer`: `clip`, `targetTexture`, `isPlaying`, `loop`, `time`, `length`, `playbackSpeed`, `renderMode`, `audioEnabled`, `volume`, `Play`, `Pause`, `Stop`.
+
+- Formats: MPEG-1 `.mpg`/`.mpeg` on every platform; on Windows also `.mp4`, `.mov`, `.wmv` and `.avi` through Media Foundation (H.264/HEVC/... as far as the system has decoders). Linux players only play MPEG-1; `Tools/ImportVideo.py` converts with FFmpeg.
+- Clips stream from loose files or from (encrypted) paks without extracting the movie; decoding runs on a worker thread.
+- Embedded audio plays in sync with the picture when `audioEnabled` is on, at `volume`.
+- `renderMode = VideoRenderMode.RenderTexture` writes into the `.rendertexture` asset in `targetTexture`; `VideoRenderMode.MaterialOverride` replaces the albedo of the object's MeshRenderer. With a Rect Transform the video shows as a UI Image.
+- Play On Awake starts the clip when Play mode starts.
 
 `Stardust.UI.Button.transition` selects None (0), ColorTint (1) or Animation (2). Set `fadeDuration`, `highlightedColor`, `pressedColor`, `disabledColor` for color fades. Animation mode uses state names configured in the button inspector and an Animator on the button object. Existing serialized actions and C# listeners support arguments; see the main scripting guide.
 
