@@ -43,11 +43,15 @@ endif()
 add_subdirectory(Player)
 add_subdirectory(ScriptCore)
 
+add_executable(StardustPacker Tools/AssetPacker.cpp)
+
+# Test programs: off by default, turn on with -DSTARDUST_BUILD_TESTS=ON
+option(STARDUST_BUILD_TESTS "Build the test programs" OFF)
+if(STARDUST_BUILD_TESTS)
 if(WIN32)
 add_executable(StardustRuntimeTests EXCLUDE_FROM_ALL Tests/RuntimeTests.cpp)
 target_link_libraries(StardustRuntimeTests PRIVATE StardustEngine)
 endif()
-add_executable(StardustPacker Tools/AssetPacker.cpp)
 add_executable(StardustGpuFeatureTests EXCLUDE_FROM_ALL Tests/GpuFeatureTests.cpp)
 target_link_libraries(StardustGpuFeatureTests PRIVATE StardustEngine)
 target_sources(StardustGpuFeatureTests PRIVATE Editor/src/EditorTheme.cpp Editor/src/AssetUI.cpp)
@@ -60,6 +64,7 @@ add_custom_command(OUTPUT ${TEST_PROPERTY_SHADER}
     DEPENDS Tests/Fixtures/CustomProperties.ps.hlsl Assets/Shaders/MeshCommon.hlsli Assets/Shaders/Common.hlsli Assets/Shaders/Bindless.hlsli VERBATIM)
 add_custom_target(StardustTestPropertyShader DEPENDS ${TEST_PROPERTY_SHADER})
 add_dependencies(StardustGpuFeatureTests StardustTestPropertyShader)
+endif()
 
 target_link_libraries(StardustPacker PRIVATE StardustEngine)
 
