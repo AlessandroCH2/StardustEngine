@@ -32,3 +32,7 @@ The editor is written to `build/bin/Release/StardustEditor.exe`. Close the edito
 - [Engine architecture](docs/ARCHITECTURE.md)
 - [Linux Player](docs/LINUX_PLAYER.md)
 - [All documents](docs/README.md)
+
+## License
+
+See [LICENSE](LICENSE). Third-party libraries keep their own licenses.
