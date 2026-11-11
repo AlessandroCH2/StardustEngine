@@ -56,6 +56,7 @@ static bool LayerMaskField(const char* label, u32& mask) {
 }
 void DrawTerrainVegetationInspector(Scene& scene, EntityID e, TerrainVegetationComponent& c);
 void DrawLODGroupInspector(Scene& scene, EntityID e, LODGroupComponent& g, const RenderCamera* sceneCamera);
+void DrawParticleSystemInspector(Scene& scene, EntityID e, ParticleSystemComponent& c);
 
 // ------------------------------------------------------------------------------------------------ widgets
 
@@ -172,6 +173,14 @@ void EditorApp::DrawEntityContextItems() {
     if (ImGui::BeginMenu("Audio")) {
         if (ImGui::MenuItem("Audio Source")) { m_Selected = scene.CreateEntity("Audio Source"); scene.Reg().Add<AudioSourceComponent>(m_Selected); }
         if (ImGui::MenuItem("Audio Listener")) { m_Selected = scene.CreateEntity("Audio Listener"); scene.Reg().Add<AudioListenerComponent>(m_Selected); }
+        ImGui::EndMenu();
+    }
+    if (ImGui::BeginMenu("Effects")) {
+        if (ImGui::MenuItem("Particle System")) {
+            m_Selected = scene.CreateEntity("Particle System");
+            scene.Reg().Add<ParticleSystemComponent>(m_Selected);
+            scene.Reg().Get<TransformComponent>(m_Selected).position = m_Camera.Position() + m_Camera.Forward() * 6.0f;
+        }
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("UI")) {
@@ -554,6 +563,7 @@ void EditorApp::DrawInspector() {
         Insp::Checkbox("Audio",&c.audio);if(c.audio)Insp::SliderFloat("Volume",&c.volume,0,1);
         if(ActiveScene().IsRunning()){Insp::Checkbox("Playing",&c.playing);Insp::SliderFloat("Time",&c.time,0,std::max(.01f,c.duration));}
         else ImGui::TextDisabled("Plays in Play mode.");});
+    ComponentSection<ParticleSystemComponent>(inspectScene,e,"Particle System",true,[&](auto& c){DrawParticleSystemInspector(inspectScene,e,c);});
     ComponentSection<SpriteBatchComponent>(inspectScene,e,"Sprite Batch",true,[](auto& c){
         // The quads come from scripts (the Tilemap package, effects...); here only how they are drawn
         ImGui::TextDisabled("%zu quads, %zu textures", c.quads.size(), c.textures.size());
@@ -747,6 +757,7 @@ void EditorApp::DrawInspector() {
         if(!reg.Has<VideoPlayerComponent>(e)&&item("Video Player"))reg.Add<VideoPlayerComponent>(e);
         if (!reg.Has<SpriteRendererComponent>(e) && item("Sprite Renderer")) reg.Add<SpriteRendererComponent>(e);
         if (!reg.Has<SpriteBatchComponent>(e) && item("Sprite Batch")) reg.Add<SpriteBatchComponent>(e);
+        if (!reg.Has<ParticleSystemComponent>(e) && item("Particle System")) reg.Add<ParticleSystemComponent>(e);
         if (!reg.Has<LODGroupComponent>(e) && item("LOD Group")) reg.Add<LODGroupComponent>(e);
         if (!reg.Has<CameraComponent>(e) && item("Camera")) reg.Add<CameraComponent>(e);
         if (!reg.Has<DirectionalLightComponent>(e) && item("Directional Light")) reg.Add<DirectionalLightComponent>(e);

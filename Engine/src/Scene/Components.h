@@ -106,6 +106,68 @@ struct SpriteBatchComponent {
         for (size_t c = first / kChunk; c < chunkVersions.size() && c * kChunk < first + count; ++c) chunkVersions[c] = NextVersion();
     }
 };
+// ------------------------------------------------------------------ Particle System
+// A random value between min and max (equal values: constant)
+struct ParticleRange { float min = 1, max = 1; };
+struct ParticleColorKey { float time = 0; glm::vec4 color{ 1 }; };
+struct ParticleFloatKey { float time = 0, value = 1; };
+// Emits count particles at time (seconds into the cycle), cycles times every interval (cycles 0 = for ever)
+struct ParticleBurst { float time = 0; int count = 30; int cycles = 1; float interval = 0.5f; float probability = 1; };
+struct Particle {
+    glm::vec3 position{ 0 }, velocity{ 0 };  // simulation space (local or world)
+    glm::vec4 color{ 1 };
+    float size = 1, rotation = 0, angularVelocity = 0;
+    float age = 0, lifetime = 1;
+    float seed = 0;                           // random 0..1, fixed for the particle's life
+};
+enum class ParticleShape : int { Sphere, Hemisphere, Cone, Box, Circle, Edge, Point };
+// Unity-style particle emitter: modules for emission, shape and changes over the lifetime of each particle.
+// The emitter's up axis (+Y) is its forward: a cone opens upwards, a box and an edge emit upwards.
+struct ParticleSystemComponent {
+    // Main
+    float duration = 5; bool looping = true, prewarm = false, playOnAwake = true;
+    ParticleRange startDelay{ 0, 0 }, startLifetime{ 5, 5 }, startSpeed{ 5, 5 }, startSize{ 1, 1 }, startRotation{ 0, 0 }; // rotation in degrees
+    glm::vec4 startColor{ 1 }, startColor2{ 1 };    // random between the two
+    float gravityModifier = 0, simulationSpeed = 1;
+    int simulationSpace = 0;                        // 0 Local (particles follow the object), 1 World (they stay behind)
+    int maxParticles = 1000;
+    // Emission
+    bool emission = true; float rateOverTime = 10, rateOverDistance = 0;
+    std::vector<ParticleBurst> bursts;
+    // Shape
+    bool shapeEnabled = true; ParticleShape shape = ParticleShape::Cone;
+    float radius = 1, radiusThickness = 1, angle = 25, arc = 360, randomizeDirection = 0;
+    glm::vec3 boxSize{ 1 }, shapeOffset{ 0 };
+    // Over lifetime
+    bool velocityOverLifetime = false; glm::vec3 velocity{ 0 };
+    bool forceOverLifetime = false; glm::vec3 force{ 0 };
+    bool limitVelocity = false; float speedLimit = 10, drag = 0;
+    bool colorOverLifetime = false; std::vector<ParticleColorKey> colorKeys{ { 0, { 1, 1, 1, 1 } }, { 1, { 1, 1, 1, 0 } } };
+    bool sizeOverLifetime = false; std::vector<ParticleFloatKey> sizeKeys{ { 0, 1 }, { 1, 0 } };
+    bool rotationOverLifetime = false; ParticleRange angularVelocity{ 45, 45 }; // degrees per second
+    bool noise = false; float noiseStrength = 1, noiseFrequency = 0.5f, noiseScrollSpeed = 0.5f;
+    // Collision with a horizontal world plane
+    bool collision = false; float collisionPlane = 0, bounce = 0.5f, dampen = 0, lifetimeLoss = 0;
+    // Texture Sheet Animation: the texture is a grid of frames, read left to right, top to bottom
+    bool textureSheet = false; int tilesX = 2, tilesY = 2; float sheetFps = 0, sheetCycles = 1; bool randomStartFrame = false;
+    // Renderer
+    std::string texture, material;
+    int blendMode = 0;      // 0 Alpha, 1 Additive
+    int renderMode = 0;     // 0 Billboard, 1 Stretched Billboard, 2 Horizontal, 3 Vertical
+    float lengthScale = 2, speedScale = 0; // Stretched: length = size * lengthScale + speed * speedScale
+    float intensity = 1;    // HDR colour multiplier (above 1 glows with bloom)
+    bool sortByDistance = false;
+    int sortingOrder = 0;
+    u32 seed = 0;           // 0 = different every run
+
+    // Runtime (not saved)
+    std::vector<Particle> particles;
+    float time = 0, emitAccumulator = 0, delayLeft = 0;
+    bool started = false, playing = false, paused = false, emitting = false;
+    glm::vec3 lastPosition{ 0 }; bool hasLastPosition = false;
+    u32 random = 1;
+};
+
 struct VideoPlayerComponent {
     std::string clip;
     int renderMode=0;          // 0 Render Texture, 1 Material Override (this object's mesh). A UI object always shows it in its Image.

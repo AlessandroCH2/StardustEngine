@@ -293,6 +293,8 @@ void EditorApp::OnUpdate(float dt) {
         if (SceneManager::TakeQuitRequest()) { SD_INFO("Application.Quit() called: leaving play mode"); Stop(); }
     }
     m_StepFrame = false;
+    // Outside Play mode the selected Particle System (and its children) plays in the Scene view
+    if (m_State == PlayState::Edit && !m_AnimationPreviewScene) UpdateParticlePreview(*m_ActiveScene, m_Selected, dt);
     UpdateUndo();
     if (m_SceneDirty) { static bool shown = false; if (!shown) { UpdateTitle(); shown = true; } }
 
@@ -585,7 +587,7 @@ void EditorApp::DrawMenuBar() {
 
     // Project and scene in the middle, transport controls on the right
     {
-        // "Project - Scene - Stardust 0.6.2" with a chevron like Unity's title; it opens the project info
+        // "Project - Scene - Stardust 0.6.4" with a chevron like Unity's title; it opens the project info
         std::string title = (Project::IsLoaded() ? Project::Config().name + " - " : std::string()) + ActiveScene().Name() + (m_SceneDirty ? "*" : "") + " - Stardust " STARDUST_VERSION;
         float windowWidth = ImGui::GetWindowWidth(), buttonSize = ImGui::GetFrameHeight();
         const float menusEnd = ImGui::GetCursorScreenPos().x + 8, transportX = windowWidth - 46 * 3 - 28 - (buttonSize + 6) * 3;
@@ -925,7 +927,7 @@ void EditorApp::DrawColliderGizmos() {
     RenderCamera cam = m_Camera.GetRenderCamera(m_SceneView.size.x / m_SceneView.size.y);
     glm::mat4 vp = cam.projection * cam.view;
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    const ImU32 col = IM_COL32(120, 255, 120, 200);
+    ImU32 col = IM_COL32(120, 255, 120, 200);
     auto line = [&](const glm::vec3& a, const glm::vec3& b) {
         ImVec2 pa, pb;
         if (Gizmo::ProjectSegment(vp, a, b, { m_SceneView.min.x, m_SceneView.min.y }, { m_SceneView.size.x, m_SceneView.size.y }, pa, pb)) dl->AddLine(pa, pb, col, 1.5f);
@@ -979,6 +981,43 @@ void EditorApp::DrawColliderGizmos() {
         circle(top, nz, ny, r); circle(bottom, nz, ny, r);
         line(top + nx * r, bottom + nx * r); line(top - nx * r, bottom - nx * r);
         line(top + nz * r, bottom + nz * r); line(top - nz * r, bottom - nz * r);
+    }
+    // Particle System emitter shape, in light blue; the emitter's up axis is its forward
+    if (auto* ps = reg.TryGet<ParticleSystemComponent>(m_Selected); ps && ps->shapeEnabled) {
+        col = IM_COL32(120, 190, 255, 210);
+        const glm::vec3 c = pos + ax * ps->shapeOffset.x + ay * ps->shapeOffset.y + az * ps->shapeOffset.z;
+        const float r = ps->radius * std::max(glm::length(ax), glm::length(az));
+        switch (ps->shape) {
+        case ParticleShape::Sphere: circle(c, nx, ny, r); circle(c, nx, nz, r); circle(c, ny, nz, r); break;
+        case ParticleShape::Hemisphere: {
+            circle(c, nx, nz, r);
+            auto arc = [&](const glm::vec3& u) { glm::vec3 prev = c + u * r; for (int i = 1; i <= 20; ++i) { float a = glm::pi<float>() * i / 20; glm::vec3 next = c + (u * std::cos(a) + ny * std::sin(a)) * r; line(prev, next); prev = next; } };
+            arc(nx); arc(nz);
+            break;
+        }
+        case ParticleShape::Cone: {
+            const float length = std::max(1.0f, r * 2.0f + 1.0f) * std::max(0.01f, glm::length(ay));
+            const float top = r + std::tan(glm::radians(std::clamp(ps->angle, 0.0f, 89.0f))) * length;
+            circle(c, nx, nz, r); circle(c + ny * length, nx, nz, top);
+            for (int i = 0; i < 4; ++i) { const float a = glm::half_pi<float>() * i; const glm::vec3 dir = nx * std::cos(a) + nz * std::sin(a); line(c + dir * r, c + ny * length + dir * top); }
+            break;
+        }
+        case ParticleShape::Box: {
+            const glm::vec3 hx = ax * ps->boxSize.x * 0.5f, hy = ay * ps->boxSize.y * 0.5f, hz = az * ps->boxSize.z * 0.5f;
+            for (int sy : { -1, 1 }) for (int sz : { -1, 1 }) line(c - hx + hy * (float)sy + hz * (float)sz, c + hx + hy * (float)sy + hz * (float)sz);
+            for (int sx : { -1, 1 }) for (int sz : { -1, 1 }) line(c + hx * (float)sx - hy + hz * (float)sz, c + hx * (float)sx + hy + hz * (float)sz);
+            for (int sx : { -1, 1 }) for (int sy : { -1, 1 }) line(c + hx * (float)sx + hy * (float)sy - hz, c + hx * (float)sx + hy * (float)sy + hz);
+            break;
+        }
+        case ParticleShape::Circle: circle(c, nx, nz, r); break;
+        case ParticleShape::Edge: line(c - nx * ps->radius * glm::length(ax), c + nx * ps->radius * glm::length(ax)); break;
+        case ParticleShape::Point: line(c, c + ny * 0.5f); break;
+        }
+        if (ps->collision) {
+            col = IM_COL32(255, 200, 90, 160);
+            const glm::vec3 base(pos.x, ps->collisionPlane, pos.z);
+            for (int i = -2; i <= 2; ++i) { line(base + glm::vec3(-2, 0, i), base + glm::vec3(2, 0, i)); line(base + glm::vec3(i, 0, -2), base + glm::vec3(i, 0, 2)); }
+        }
     }
 }
 

@@ -5,7 +5,7 @@
     <AssemblyName>Stardust.ScriptCore</AssemblyName>
     <RootNamespace>Stardust</RootNamespace>
     <!-- Kept in step with the engine; CMake passes the version from CMakeLists.txt -->
-    <Version>0.6.2</Version>
+    <Version>0.6.4</Version>
     <Nullable>disable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <!-- Required for native hosting: produces Stardust.ScriptCore.runtimeconfig.json -->

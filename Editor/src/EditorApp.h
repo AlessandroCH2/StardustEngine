@@ -17,6 +17,8 @@ struct ViewportState {
 };
 
 enum class PlayState { Edit, Play, Pause };
+// Particle System preview outside Play mode (ParticleInspector.cpp)
+void UpdateParticlePreview(Scene& scene, EntityID selected, float dt);
 
 class EditorApp final : public Application {
 public:

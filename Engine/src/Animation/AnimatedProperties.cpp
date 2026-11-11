@@ -210,6 +210,15 @@ const Table& Properties() {
         t.AddEnabled<UIMaskComponent>("Mask");
         P(UIMaskComponent, "Mask", "Show Graphic", showGraphic);
 
+        using PS = ParticleSystemComponent;
+        t.AddEnabled<PS>("Particle System");
+        P(PS, "Particle System", "Rate over Time", rateOverTime);
+        P(PS, "Particle System", "Simulation Speed", simulationSpeed);
+        P(PS, "Particle System", "Gravity Modifier", gravityModifier);
+        P(PS, "Particle System", "Intensity", intensity);
+        COLOR(PS, "Particle System", "Start Color", startColor);
+        COLOR(PS, "Particle System", "Start Color 2", startColor2);
+
         using SP = SpriteRendererComponent;
         t.AddEnabled<SP>("Sprite Renderer");
         REF(SP, "Sprite Renderer", "Sprite", sprite);

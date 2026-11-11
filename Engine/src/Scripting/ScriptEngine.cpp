@@ -2,6 +2,7 @@
 #include "Scripting/ScriptEngine.h"
 #include "Scene/ComponentState.h"
 #include "Scene/Scene.h"
+#include "Scene/ParticleSystem.h"
 #include "Physics/PhysicsWorld.h"
 #include "Assets/AssetManager.h"
 #include "Core/Log.h"
@@ -41,7 +42,7 @@ struct RigidbodyNative { int type; float mass; float drag; float angularDrag; in
 
 enum class ComponentType : int {
     Transform = 0, MeshRenderer, Rigidbody, BoxCollider, SphereCollider, CapsuleCollider, Camera, Light, Script, MeshCollider,
-    AnyLight = 10, AudioSource = 11, Animator = 12, Canvas = 13, RectTransform = 14, UIImage = 15, UIText = 16, UIButton = 17, CanvasGroup = 18, RectMask = 19, UILayout = 20, UIInputField = 21, SpriteRenderer=22, Environment=23, Terrain=24, SpotLight=25, VideoPlayer=26, SpriteBatch=27, Rigidbody2D=28, BoxCollider2D=29, CircleCollider2D=30, CapsuleCollider2D=31,
+    AnyLight = 10, AudioSource = 11, Animator = 12, Canvas = 13, RectTransform = 14, UIImage = 15, UIText = 16, UIButton = 17, CanvasGroup = 18, RectMask = 19, UILayout = 20, UIInputField = 21, SpriteRenderer=22, Environment=23, Terrain=24, SpotLight=25, VideoPlayer=26, SpriteBatch=27, Rigidbody2D=28, BoxCollider2D=29, CircleCollider2D=30, CapsuleCollider2D=31, ParticleSystem=32,
 };
 
 struct NativeApi {
@@ -261,6 +262,7 @@ static void InitNativeApi() {
         Registry& r = S()->Reg();
         switch ((ComponentType)t) {
         case ComponentType::SpriteBatch:return r.Has<SpriteBatchComponent>(e);
+        case ComponentType::ParticleSystem:return r.Has<ParticleSystemComponent>(e);
         case ComponentType::Rigidbody2D:return r.Has<Rigidbody2DComponent>(e);case ComponentType::BoxCollider2D:return r.Has<BoxCollider2DComponent>(e);
         case ComponentType::CircleCollider2D:return r.Has<CircleCollider2DComponent>(e);case ComponentType::CapsuleCollider2D:return r.Has<CapsuleCollider2DComponent>(e);
         case ComponentType::VideoPlayer:return r.Has<VideoPlayerComponent>(e);case ComponentType::SpriteRenderer:return r.Has<SpriteRendererComponent>(e);case ComponentType::Environment:return r.Has<EnvironmentComponent>(e);case ComponentType::Terrain:return r.Has<TerrainComponent>(e);case ComponentType::SpotLight:return r.Has<SpotLightComponent>(e);case ComponentType::Transform: return 1;
@@ -294,6 +296,7 @@ static void InitNativeApi() {
         Registry& r = S()->Reg();
         switch ((ComponentType)t) {
         case ComponentType::SpriteBatch:if(!r.Has<SpriteBatchComponent>(e))r.Add<SpriteBatchComponent>(e);break;
+        case ComponentType::ParticleSystem:if(!r.Has<ParticleSystemComponent>(e))r.Add<ParticleSystemComponent>(e);break;
         case ComponentType::Rigidbody2D:if(!r.Has<Rigidbody2DComponent>(e))r.Add<Rigidbody2DComponent>(e);RebuildBody(e);break;
         case ComponentType::BoxCollider2D:if(!r.Has<BoxCollider2DComponent>(e))r.Add<BoxCollider2DComponent>(e);RebuildBody(e);break;
         case ComponentType::CircleCollider2D:if(!r.Has<CircleCollider2DComponent>(e))r.Add<CircleCollider2DComponent>(e);RebuildBody(e);break;
@@ -328,6 +331,7 @@ static void InitNativeApi() {
         switch ((ComponentType)t) {
         case ComponentType::SpriteRenderer:r.Remove<SpriteRendererComponent>(e);break;
         case ComponentType::SpriteBatch:r.Remove<SpriteBatchComponent>(e);break;
+        case ComponentType::ParticleSystem:r.Remove<ParticleSystemComponent>(e);break;
         case ComponentType::Rigidbody2D:r.Remove<Rigidbody2DComponent>(e);RebuildBody(e);break;
         case ComponentType::BoxCollider2D:r.Remove<BoxCollider2DComponent>(e);RebuildBody(e);break;
         case ComponentType::CircleCollider2D:r.Remove<CircleCollider2DComponent>(e);RebuildBody(e);break;
@@ -551,6 +555,7 @@ static void InitNativeApi() {
         if(type==101)data={{"layers",Project::Config().layers}};
         if(type==100){data["connected"]=Input::GamepadConnected((int)id);data["axes"]=j::array();data["buttons"]=j::array();data["pressed"]=j::array();for(int i=0;i<6;++i)data["axes"].push_back(Input::GamepadAxis((int)id,i));for(int i=0;i<15;++i){data["buttons"].push_back(Input::GamepadButton((int)id,i));data["pressed"].push_back(Input::GamepadButton((int)id,i,true));}}
         if(e){auto& r=S()->Reg();
+            if(type==32)if(auto* c=r.TryGet<ParticleSystemComponent>(e)){ParticleSystems::ToJson(*c,data);data["isPlaying"]=c->playing&&!c->paused;data["isPaused"]=c->paused;data["isEmitting"]=c->emitting;data["particleCount"]=c->particles.size();data["time"]=c->time;}
             // Quads are not in here (they can be megabytes): QueryJson "spriteBatchQuads" reads them
             if(type==27)if(auto* c=r.TryGet<SpriteBatchComponent>(e)){u64 v=c->version;for(u64 chunk:c->chunkVersions)v=v*1099511628211ull^chunk;data={{"textures",c->textures},{"count",c->quads.size()},{"material",c->material},{"color",vec4(c->color)},{"sortingOrder",c->sortingOrder},{"version",std::to_string(v)},{"animations",c->animations.size()}};}
             if(type==26)if(auto* c=r.TryGet<VideoPlayerComponent>(e))data={{"clip",c->clip},{"targetTexture",c->targetTexture},{"renderMode",c->renderMode},{"playing",c->playing},{"loop",c->loop},{"time",c->time},{"duration",c->duration},{"speed",c->speed},{"audio",c->audio},{"volume",c->volume}};
@@ -628,6 +633,14 @@ static void InitNativeApi() {
                     if(vertices.empty()||indices.empty()||indices.size()%3||vertices.size()>1000000||std::any_of(indices.begin(),indices.end(),[&](auto i){return i>=vertices.size();}))return;
                     ComputeNormalsAndTangents(vertices,indices,true);c->mesh="runtime:mesh:"+std::to_string(id);AssetManager::SetRuntimeMesh(c->mesh,MakeRef<Mesh>(*AssetManager::Device(),vertices,indices,c->mesh));RebuildBody(e);
                 }
+            }
+            if(type==32)if(auto* c=r.TryGet<ParticleSystemComponent>(e)){
+                ParticleSystems::FromJson(data,*c);
+                const std::string command=data.value("command",std::string());
+                if(command=="play")ParticleSystems::Play(*c);else if(command=="pause")ParticleSystems::Pause(*c);
+                else if(command=="stop")ParticleSystems::Stop(*c,false);else if(command=="stopAndClear")ParticleSystems::Stop(*c,true);
+                else if(command=="clear")ParticleSystems::Clear(*c);else if(command=="restart"){ParticleSystems::ResetRuntime(*c);ParticleSystems::Play(*c);}
+                else if(command=="emit")ParticleSystems::Emit(*S(),e,*c,data.value("count",1));
             }
             if(type==27)if(auto* c=r.TryGet<SpriteBatchComponent>(e)){
                 bool structure=false;

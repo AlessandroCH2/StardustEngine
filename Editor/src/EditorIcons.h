@@ -1,5 +1,6 @@
 #pragma once
 #include <imgui.h>
+#include <algorithm>
 #include <cmath>
 #include <string_view>
 namespace Stardust::EditorIcons {
@@ -23,6 +24,7 @@ inline void Component(ImDrawList* d,ImVec2 p,float s,std::string_view name,ImU32
  else if(name.find("Audio")!=name.npos){d->AddQuad({x-r,y-r*.3f},{x-r*.4f,y-r*.3f},{x+r*.1f,y-r*.9f},{x+r*.1f,y+r*.9f},tint);line(-1,.3f,-.4f,.3f);d->PathArcTo({x+r*.05f,y},r*.95f,-.8f,.8f,10);d->PathStroke(tint,0,1.3f);}
  else if(name.find("Animator")!=name.npos){d->AddRect({x-r,y-r},{x-r*.2f,y-r*.3f},tint);d->AddRect({x+r*.15f,y+r*.3f},{x+r,y+r},tint);line(-.5f,-.3f,.5f,.3f);}
  else if(name.find("Canvas")!=name.npos||name.find("UI")!=name.npos||name.find("Rect")!=name.npos){d->AddRect({x-r,y-r*.8f},{x+r,y+r*.8f},IM_COL32(125,195,220,255));line(-.6f,-.35f,.6f,-.35f);line(-.6f,.2f,.3f,.2f);}
+ else if(name.find("Particle")!=name.npos){auto star=[&](float cx,float cy,float k,ImU32 c){line(cx-k,cy,cx+k,cy,c);line(cx,cy-k,cx,cy+k,c);};star(-.35f,.3f,.65f,IM_COL32(245,190,110,255));star(.55f,-.5f,.42f,IM_COL32(250,225,150,255));d->AddCircleFilled({x+r*.6f,y+r*.62f},r*.16f,tint);}
  else if(name.find("Bone")!=name.npos||name.find("Skeleton")!=name.npos){line(-.6f,.6f,.6f,-.6f);d->AddCircle({x-r*.6f,y+r*.6f},r*.25f,tint);d->AddCircle({x+r*.6f,y-r*.6f},r*.25f,tint);}
  else {ImVec2 points[]={{x,y-r},{x+r*.85f,y-r*.45f},{x+r*.85f,y+r*.45f},{x,y+r},{x-r*.85f,y+r*.45f},{x-r*.85f,y-r*.45f}};d->AddPolyline(points,6,tint,ImDrawFlags_Closed,1.2f);line(-.85f,-.45f,0,0);line(.85f,-.45f,0,0);line(0,0,0,1);}
 }
@@ -56,8 +58,25 @@ inline bool ComponentHeader(const char* label,bool* enabled,bool removable,bool&
  if(ImGui::BeginPopup("ComponentSettings")){if(removable&&ImGui::MenuItem("Remove Component"))remove=true;ImGui::EndPopup();}
  return open;
 }
+// Page tabs of settings windows: a segmented bar like the C# EditorGUI.Toolbar (Tilemap inspector), the selected
+// page raised with a blue underline
 inline void SettingsTabs(const char* id,int& selected,const char* const* names,int count){
- ImGui::PushID(id);ImGui::BeginChild("Navigation",{0,ImGui::GetFrameHeight()+12},ImGuiChildFlags_None,ImGuiWindowFlags_NoScrollbar|ImGuiWindowFlags_NoScrollWithMouse);float width=(ImGui::GetContentRegionAvail().x-(count-1)*4)/count;
- for(int i=0;i<count;++i){if(i)ImGui::SameLine(0,4);ImGui::PushStyleColor(ImGuiCol_Button,selected==i?IM_COL32(41, 43, 46, 255):IM_COL32(26, 28, 31, 255));ImGui::PushStyleColor(ImGuiCol_ButtonHovered,IM_COL32(46, 48, 51, 255));ImGui::PushStyleColor(ImGuiCol_Text,selected==i?IM_COL32(255,255,255,255):IM_COL32(194,194,194,255));if(ImGui::Button(names[i],{width,ImGui::GetFrameHeight()+3}))selected=i;ImGui::PopStyleColor(3);}ImGui::EndChild();ImGui::PopID();ImGui::Separator();
+ ImGui::PushID(id);
+ const float ui=ImGui::GetFontSize()/14.0f,gap=2*ui,height=ImGui::GetFrameHeight()+4*ui,full=ImGui::GetContentRegionAvail().x,width=(full-gap*(count-1))/count;
+ ImGui::Dummy({0,2*ui});
+ const ImVec2 start=ImGui::GetCursorScreenPos();auto* d=ImGui::GetWindowDrawList();
+ d->AddRectFilled(start,{start.x+full,start.y+height},IM_COL32(28,30,34,255),4*ui);
+ for(int i=0;i<count;++i){
+  if(i)ImGui::SameLine(0,gap);
+  ImGui::PushID(i);const ImVec2 p=ImGui::GetCursorScreenPos();
+  if(ImGui::InvisibleButton("##page",{width,height}))selected=i;
+  const bool hovered=ImGui::IsItemHovered(),on=selected==i;
+  if(on||hovered)d->AddRectFilled({p.x+1,p.y+1},{p.x+width-1,p.y+height-1},on?IM_COL32(58,62,70,255):IM_COL32(40,43,48,255),3*ui);
+  if(on)d->AddRectFilled({p.x+6*ui,p.y+height-3*ui},{p.x+width-6*ui,p.y+height-1*ui},IM_COL32(47,128,237,255),1);
+  const ImVec2 text=ImGui::CalcTextSize(names[i]);const ImVec4 clip(p.x,p.y,p.x+width,p.y+height);
+  d->AddText(nullptr,0,{p.x+std::max(4.0f,(width-text.x)*0.5f),p.y+(height-text.y)*0.5f},on?IM_COL32(240,242,246,255):hovered?IM_COL32(205,209,216,255):IM_COL32(165,170,178,255),names[i],nullptr,0,&clip);
+  ImGui::PopID();
+ }
+ ImGui::Dummy({0,4*ui});ImGui::PopID();
 }
 }

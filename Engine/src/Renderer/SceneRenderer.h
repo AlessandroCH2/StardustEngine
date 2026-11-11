@@ -104,6 +104,8 @@ public:
     void Submit(const Ref<Mesh>& mesh, const glm::mat4& transform, const Material& material, u32 entityId, bool castShadows = true,u32 firstIndex=0,u32 indexCount=0,bool receiveShadows=true,int sortingOrder=0);
     const RenderCamera& Camera()const{return m_Camera;}
     void SubmitUI(const Ref<Mesh>& mesh, const glm::mat4& transform, const Material& material, u32 entityId, bool overlay);
+    // Particle quads (world space, colour in the vertex tangent): drawn with the transparent objects, alpha or additive
+    void SubmitParticles(const Ref<Mesh>& mesh, const Material& material, u32 entityId, u32 indexCount, bool additive, int sortingOrder);
     size_t TerrainCount()const{return m_ActiveTerrains.size();}
     size_t SubmittedDrawCount()const{return m_Draws.size();}
     void SetTerrain(const Ref<TerrainData>& terrain, const glm::vec3& origin, u32 entityId);
@@ -151,6 +153,7 @@ private:
     Ref<RHI::Pipeline> m_MeshPipelines[(int)ShaderType::Count][2];
     Ref<RHI::Pipeline> m_SkyPipeline, m_ShadowPipeline, m_GridPipeline,m_Grid2DPipeline;
     Ref<RHI::Pipeline> m_UIOverlayPipeline;
+    Ref<RHI::Pipeline> m_ParticlePipelines[2]; // alpha, additive
     std::array<Ref<RHI::Buffer>, RHI::kFramesInFlight> m_DrawBuffers;
     std::vector<DrawDataGPU> m_DrawData;
     std::vector<glm::vec4> m_MaterialValues;

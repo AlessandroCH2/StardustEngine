@@ -95,6 +95,10 @@ private:
         std::vector<SpriteBatchPart> animated; std::vector<u32> animatedFrames; bool animatedChecked = false;
     };
     std::unordered_map<u64,SpriteBatchCache> m_SpriteBatchMeshes;
+    // Particle quads: CPU-written vertex buffers, reused once the GPU is done with the frame that drew them
+    struct ParticleMeshSlot { Ref<Mesh> mesh; Ref<RHI::Buffer> vertices; u32 capacity = 0; u64 frame = 0; };
+    std::unordered_map<u64,std::vector<ParticleMeshSlot>> m_ParticleMeshes;
+    std::vector<Vertex> m_ParticleScratch;
     std::vector<EntityID> m_PendingDestroy;
     float m_FixedAccumulator = 0.0f;
     std::unordered_set<u64> m_PersistentRoots;

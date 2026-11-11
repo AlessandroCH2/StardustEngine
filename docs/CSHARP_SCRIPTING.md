@@ -518,6 +518,7 @@ Persistent button actions are configured in the Inspector: assign a scene target
 | `Camera` | `orthographic`, `orthographicSize`, `fieldOfView`, `nearClipPlane`, `farClipPlane`, `cullingMask`, `targetTexture`, `SetRenderTarget(name, width, height)` |
 | `Rigidbody2D`, `BoxCollider2D`, `CircleCollider2D`, `CapsuleCollider2D` | 2D physics on the XY plane: `velocity`, `AddForce(Vector2, ForceMode2D)`, `gravityScale`, `bodyType`...; `Physics2D.Raycast`. See [2D Tilemap package](TILEMAP.md#colliders-and-2d-physics) |
 | `SpriteBatch` | `SetQuads(textures, quads, count)`, `SetQuadRange(start, quads)` (rebuilds only the touched chunks), `Resize`, `GetQuads()`, `SetAnimations`, `Clear()`, `quadCount`, `version`, `textures`, `color`, `material`, `sortingOrder` |
+| `ParticleSystem` | `Play()`, `Pause()`, `Stop(clear)`, `Clear()`, `Restart()`, `Emit(count)`, `isPlaying`, `particleCount`, and every module setting (`rateOverTime`, `bursts`, `startSpeed`, `startColor`, `colorOverLifetime`, `shape`, `blendMode`...): see [Particle System](PARTICLES.md) |
 | `VideoPlayer` | `clip`, `Play()`, `Pause()`, `Stop()`, `isPlaying`, `loop`, `time`, `length`, `playbackSpeed`, `renderMode`, `targetTexture`, `audioEnabled`, `volume` |
 | `MeshRenderer` | `color` |
 | `Light` | `color`, `intensity`, `range` for supported local lights |

@@ -2,6 +2,7 @@
 #include "Scene/SceneSerializer.h"
 #include "Scene/ComponentState.h"
 #include "Scene/PrefabSystem.h"
+#include "Scene/ParticleSystem.h"
 #include "Scripting/ScriptEngine.h"
 #include "Core/FileSystem.h"
 #include "Core/Log.h"
@@ -59,6 +60,7 @@ static void WriteEntity(Scene& scene, EntityID e, json& out) {
     if(auto* c=reg.TryGet<VideoPlayerComponent>(e))j["videoPlayer"]={{"clip",c->clip},{"renderMode",c->renderMode},{"targetTexture",c->targetTexture},{"playOnStart",c->playOnStart},{"loop",c->loop},{"speed",c->speed},{"audio",c->audio},{"volume",c->volume}};
     if(auto* c=reg.TryGet<SpriteBatchComponent>(e)){j["spriteBatch"]={{"textures",c->textures},{"quads",Base64::Encode(c->quads.data(),c->quads.size()*sizeof(SpriteQuad))},{"material",c->material},{"color",Vec(c->color)},{"sortingOrder",c->sortingOrder}};
         if(!c->animations.empty()){json anims=json::array();for(auto& a:c->animations){json frames=json::array();for(auto& f:a.frames)frames.push_back({f.x,f.y,f.z,f.w});anims.push_back({{"frames",frames},{"fps",a.fps}});}j["spriteBatch"]["animations"]=anims;}}
+    if(auto* c=reg.TryGet<ParticleSystemComponent>(e)){nlohmann::json settings;ParticleSystems::ToJson(*c,settings);j["particleSystem"]=json::parse(settings.dump());}
     if(auto* c=reg.TryGet<SpriteRendererComponent>(e))j["spriteRenderer"]={{"sprite",c->sprite},{"material",c->material},{"color",Vec(c->color)},{"pixelsPerUnit",c->pixelsPerUnit},{"flipX",c->flipX},{"flipY",c->flipY},{"sortingOrder",c->sortingOrder}};
     if (auto* c = reg.TryGet<CameraComponent>(e))
         j["camera"] = { {"cullingMask",c->cullingMask},{"clearFlags",c->clearFlags},{"background",{c->background.r,c->background.g,c->background.b,c->background.a}},{"renderShadows",c->renderShadows},{"postProcessing",c->postProcessing},{"targetTexture",c->targetTexture},{"targetWidth",c->targetWidth},{"targetHeight",c->targetHeight}, {"orthographic",c->orthographic},{"orthographicSize",c->orthographicSize},{"far",c->farPlane}, { "fov", c->fovDegrees }, { "near", c->nearPlane }, { "primary", c->primary } };
@@ -251,6 +253,7 @@ static std::vector<EntityID> ReadEntities(Scene& sceneRef, const json& entities,
         }
         if(j.contains("videoPlayer")){auto& c=reg.Add<VideoPlayerComponent>(e);auto& m=j["videoPlayer"];c.clip=m.value("clip","");c.targetTexture=m.value("targetTexture","");c.playing=c.playOnStart=m.value("playOnStart",true);c.loop=m.value("loop",true);c.speed=m.value("speed",1.f);c.renderMode=std::clamp(m.value("renderMode",0),0,1);c.audio=m.value("audio",true);c.volume=m.value("volume",1.f);}
         if(j.contains("spriteBatch")&&j["spriteBatch"].is_object()){auto& c=reg.Add<SpriteBatchComponent>(e);auto& m=j["spriteBatch"];if(m.contains("textures")&&m["textures"].is_array())for(auto& t:m["textures"])if(t.is_string())c.textures.push_back(t.get<std::string>());auto bytes=Base64::Decode(m.value("quads",std::string()));c.quads.resize(bytes.size()/sizeof(SpriteQuad));if(!c.quads.empty())std::memcpy(c.quads.data(),bytes.data(),c.quads.size()*sizeof(SpriteQuad));c.material=m.value("material","");c.color=Vec4(m.value("color",json()),glm::vec4(1));c.sortingOrder=m.value("sortingOrder",0);for(auto& a:m.value("animations",json::array())){SpriteAnimation anim;anim.fps=a.value("fps",8.f);for(auto& f:a.value("frames",json::array()))if(f.is_array()&&f.size()==4)anim.frames.push_back({f[0].get<float>(),f[1].get<float>(),f[2].get<float>(),f[3].get<float>()});c.animations.push_back(anim);}c.Touch();}
+        if(j.contains("particleSystem")&&j["particleSystem"].is_object())ParticleSystems::FromJson(nlohmann::json::parse(j["particleSystem"].dump()),reg.Add<ParticleSystemComponent>(e));
         if(j.contains("spriteRenderer")){auto& c=reg.Add<SpriteRendererComponent>(e);auto& m=j["spriteRenderer"];c.sprite=m.value("sprite","");c.material=m.value("material","");c.color=Vec4(m.value("color",json()),glm::vec4(1));c.pixelsPerUnit=m.value("pixelsPerUnit",0.f);c.flipX=m.value("flipX",false);c.flipY=m.value("flipY",false);c.sortingOrder=m.value("sortingOrder",0);}
         if (j.contains("camera")) {
             const json& m = j["camera"];

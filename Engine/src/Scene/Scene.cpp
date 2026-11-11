@@ -16,6 +16,7 @@
 #include "Scene/SceneManager.h"
 #include "Audio/AudioEngine.h"
 #include "Animation/AnimatorSystem.h"
+#include "Scene/ParticleSystem.h"
 #include "Animation/ModelSkeleton.h"
 #include <glm/gtx/matrix_decompose.hpp>
 #include <random>
@@ -79,7 +80,7 @@ void Scene::DestroyEntity(EntityID e) {
         AudioEngine::RemoveEntity(e);
         if (m_Physics) m_Physics->DestroyBody(e);
     }
-    auto uuid=m_Registry.Get<IDComponent>(e).uuid;m_SpriteMeshes.erase(uuid);
+    auto uuid=m_Registry.Get<IDComponent>(e).uuid;m_SpriteMeshes.erase(uuid);m_ParticleMeshes.erase(uuid);
     if(auto path=m_CameraTexturePaths.find(uuid);path!=m_CameraTexturePaths.end()){AssetManager::SetRuntimeTexture(path->second,nullptr);m_CameraTexturePaths.erase(path);}m_CameraTargets.erase(uuid);
     m_UUIDMap.erase(m_Registry.Get<IDComponent>(e).uuid);
     m_Registry.Destroy(e);
@@ -90,6 +91,7 @@ void Scene::CopyComponents(EntityID src, EntityID dst) {
     m_Registry.Get<TransformComponent>(dst) = m_Registry.Get<TransformComponent>(src);
     if (auto* c = m_Registry.TryGet<SpriteRendererComponent>(src)) m_Registry.Add<SpriteRendererComponent>(dst,*c);
     if (auto* c = m_Registry.TryGet<SpriteBatchComponent>(src)) { auto& copy = m_Registry.Add<SpriteBatchComponent>(dst,*c); copy.Touch(); }
+    if (auto* c = m_Registry.TryGet<ParticleSystemComponent>(src)) { auto& copy = m_Registry.Add<ParticleSystemComponent>(dst,*c); ParticleSystems::ResetRuntime(copy); }
     if (auto* c = m_Registry.TryGet<MeshRendererComponent>(src)) m_Registry.Add<MeshRendererComponent>(dst, *c);
     if (auto* c = m_Registry.TryGet<CameraComponent>(src)) m_Registry.Add<CameraComponent>(dst, *c);
     if (auto* c = m_Registry.TryGet<DirectionalLightComponent>(src)) m_Registry.Add<DirectionalLightComponent>(dst, *c);
@@ -317,6 +319,8 @@ void Scene::OnRuntimeStart() {
     m_FixedAccumulator = 0.0f;
     // Video Players start from the beginning, playing only with Play On Awake
     m_Registry.Each<VideoPlayerComponent>([](EntityID,VideoPlayerComponent& c){c.playing=c.playOnStart;c.time=0;});
+    // Particle Systems start fresh (Play On Awake decides whether they play)
+    m_Registry.Each<ParticleSystemComponent>([](EntityID,ParticleSystemComponent& c){ParticleSystems::ResetRuntime(c);});
     ComputeWorldMatrices();
     m_Physics = MakeScope<PhysicsWorld>(*this);
     timeScale = 1.0f;
@@ -340,6 +344,7 @@ void Scene::OnUpdate(float dt) {
     dt *= std::max(timeScale, 0.0f);
     VideoPlayerSystem::Update(*this,dt);
     AnimatorSystem::Update(*this, dt);
+    ParticleSystems::Update(*this, dt);
     const float fixedDt = 1.0f / 60.0f;
     m_FixedAccumulator = std::min(m_FixedAccumulator + dt, fixedDt * 5.0f);
     while (m_FixedAccumulator >= fixedDt) {
@@ -656,6 +661,42 @@ void Scene::SubmitToRenderer(SceneRenderer& renderer, RHI::Device& device,bool a
         };
         for (const auto& chunk : cache.chunks) for (const auto& part : chunk.parts) submit(part);
         for (const auto& part : cache.animated) submit(part);
+    });
+    // Particle Systems: camera-facing quads written into a vertex buffer the CPU maps, one draw per system
+    m_Registry.Each<ParticleSystemComponent>([&](EntityID e, ParticleSystemComponent& c) {
+        if (c.particles.empty() || !m_Registry.IsEnabled<ParticleSystemComponent>(e) || !IsActiveInHierarchy(e)) return;
+        if (!(renderer.Camera().cullingMask & (1u << std::clamp(m_Registry.Get<NameComponent>(e).layer, 0, 31)))) return;
+        glm::vec3 boundsMin, boundsMax;
+        const u32 quads = ParticleSystems::BuildVertices(*this, e, c, renderer.Camera(), m_ParticleScratch, boundsMin, boundsMax);
+        if (!quads) return;
+        auto& slots = m_ParticleMeshes[m_Registry.Get<IDComponent>(e).uuid];
+        const u64 frame = device.FrameNumber();
+        ParticleMeshSlot* slot = nullptr;
+        for (auto& s : slots) if (s.frame + RHI::kFramesInFlight + 1 <= frame && s.capacity >= quads) { slot = &s; break; }
+        if (!slot) for (auto& s : slots) if (s.frame + RHI::kFramesInFlight + 1 <= frame) { slot = &s; break; }
+        if (!slot) { slots.emplace_back(); slot = &slots.back(); }
+        if (slot->capacity < quads) {
+            u32 capacity = 64;
+            while (capacity < quads) capacity *= 2;
+            std::vector<u32> indices; indices.reserve(capacity * 6);
+            for (u32 q = 0; q < capacity; ++q) for (u32 k : { 0u, 1u, 2u, 2u, 3u, 0u }) indices.push_back(q * 4 + k);
+            std::vector<Vertex> placeholder(4);
+            slot->mesh = MakeRef<Mesh>(device, placeholder, indices, "Particles");
+            slot->vertices = device.CreateBuffer({ (u64)capacity * 4 * sizeof(Vertex), RHI::BufferUsage::Storage, RHI::MemoryUsage::CPUToGPU, "Particles.VB" });
+            slot->mesh->SetVertexBuffer(slot->vertices);
+            slot->capacity = capacity;
+        }
+        std::memcpy(slot->vertices->Mapped(), m_ParticleScratch.data(), (size_t)quads * 4 * sizeof(Vertex));
+        slot->mesh->SetBounds({ boundsMin, boundsMax });
+        slot->frame = frame;
+        Material material;
+        if (auto custom = AssetManager::GetMaterial(c.material)) material = *custom; else material.shader = ShaderType::Unlit;
+        Ref<RHI::Texture> texture = c.texture.empty() ? ParticleSystems::DefaultTexture(device) : AssetManager::GetTexture(c.texture, true);
+        if (!texture) texture = ParticleSystems::DefaultTexture(device);
+        material.runtimeAlbedo = texture;
+        material.doubleSided = true;
+        if (material.customPixelShader.empty()) { material.metallic = c.texture.empty() ? 0.0f : 1.0f; material.albedoMap = c.texture; } // texture's own filtering
+        renderer.SubmitParticles(slot->mesh, material, e, quads * 6, c.blendMode == 1, c.sortingOrder);
     });
     m_Registry.Each<PointLightComponent>([&](EntityID e, PointLightComponent& l) {
         if (!IsActiveInHierarchy(e)||!(renderer.Camera().cullingMask&(1u<<std::clamp(m_Registry.Get<NameComponent>(e).layer,0,31)))) return;

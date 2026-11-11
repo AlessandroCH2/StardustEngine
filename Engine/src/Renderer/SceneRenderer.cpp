@@ -51,6 +51,18 @@ SceneRenderer::SceneRenderer(Device& device) : m_Device(device) {
     ui.depthTest=false; ui.depthWrite=false; ui.cull=CullMode::None; ui.blend=BlendMode::Alpha;
     m_UIOverlayPipeline=device.CreateGraphicsPipeline(ui);
 
+    for (int additive = 0; additive < 2; ++additive) {
+        GraphicsPipelineDesc particles;
+        particles.name = additive ? "Particles (additive)" : "Particles";
+        particles.vs = "Particle.vs"; particles.ps = "Particle.ps";
+        particles.colorFormats = { kHDRFormat, kIdFormat };
+        particles.depthFormat = kDepthFormat;
+        particles.depthWrite = false;
+        particles.cull = CullMode::None;
+        particles.blend = additive ? BlendMode::Additive : BlendMode::Alpha;
+        m_ParticlePipelines[additive] = device.CreateGraphicsPipeline(particles);
+    }
+
     GraphicsPipelineDesc sky;
     sky.name = "Sky";
     sky.vs = "Fullscreen.vs"; sky.ps = "Sky.ps";
@@ -228,6 +240,19 @@ void SceneRenderer::SubmitUI(const Ref<Mesh>& mesh, const glm::mat4& transform, 
     }
 }
 
+void SceneRenderer::SubmitParticles(const Ref<Mesh>& mesh, const Material& material, u32 entityId, u32 indexCount, bool additive, int sortingOrder) {
+    Material m = material;
+    const bool custom = !m.customPixelShader.empty();
+    if (!custom) { m.shader = ShaderType::Transparent; }
+    size_t previous = m_Draws.size();
+    Submit(mesh, glm::mat4(1), m, entityId, false, 0, indexCount, false, sortingOrder);
+    if (m_Draws.size() == previous) return;
+    if (!custom) {
+        m_Draws.back().customPipeline = m_ParticlePipelines[additive ? 1 : 0];
+        m_DrawData.back().params.z = additive ? 1.0f : 0.0f;
+    }
+}
+
 // Draw items and their GPU data share the same index
 void SceneRenderer::DrawMeshes(CommandList& cmd, Buffer* frameBuf, bool transparent) {
     std::vector<u32> order;
@@ -235,9 +260,9 @@ void SceneRenderer::DrawMeshes(CommandList& cmd, Buffer* frameBuf, bool transpar
         if (!m_Draws[i].uiOverlay && ((m_Draws[i].shader == ShaderType::Transparent || m_Draws[i].shader == ShaderType::UI || m_Draws[i].shader==ShaderType::Water) == transparent)) order.push_back(i);
     if (transparent) {
         for (u32 i : order) m_Draws[i].sortDepth = glm::length(m_Draws[i].boundsCenter - m_Camera.position);
-        std::sort(order.begin(), order.end(), [&](u32 a, u32 b) { bool au=m_Draws[a].shader==ShaderType::UI,bu=m_Draws[b].shader==ShaderType::UI;
-            if(au!=bu) return !au;
+        std::stable_sort(order.begin(), order.end(), [&](u32 a, u32 b) { bool au=m_Draws[a].shader==ShaderType::UI,bu=m_Draws[b].shader==ShaderType::UI;
             if(m_Draws[a].sortingOrder!=m_Draws[b].sortingOrder)return m_Draws[a].sortingOrder<m_Draws[b].sortingOrder;
+            if(au!=bu) return !au;
             if(au) return a<b;
             return m_Draws[a].sortDepth > m_Draws[b].sortDepth; });
     } else {

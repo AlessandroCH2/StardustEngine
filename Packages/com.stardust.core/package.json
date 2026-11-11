@@ -1,7 +1,7 @@
 {
   "name": "com.stardust.core",
   "displayName": "Stardust Engine",
-  "version": "0.6.2",
+  "version": "0.6.4",
   "engine": true,
   "description": "Engine runtime, built-in primitives, materials and shader library.",
   "builtins": ["Cube", "Sphere", "Plane", "Cylinder"],
