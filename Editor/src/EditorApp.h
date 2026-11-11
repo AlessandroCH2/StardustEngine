@@ -245,6 +245,7 @@ private:
     float m_UndoTimer = 0.0f;
     int m_UndoRebase = 0;
     bool m_UndoWasBusy = false;
+    bool m_UndoPending = false;   // keys typed since the last undo check
     EntityID m_UndoSelected = 0;
     void RefreshAnimationPreview();
     bool m_SceneDirty = false;

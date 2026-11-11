@@ -1,3 +1,4 @@
+#include <chrono>
 #include "Renderer/SceneRenderer.h"
 #include "Renderer/Quality.h"
 #include "Assets/TextureImport.h"
@@ -195,12 +196,21 @@ void SceneRenderer::Submit(const Ref<Mesh>& sourceMesh, const glm::mat4& transfo
     if(!m.customPixelShader.empty()||m.shader==ShaderType::Water){auto values=m.PropertyValues();if(m_MaterialValues.size()+values.size()<=65536){m_Draws.back().propertyOffset=(u32)m_MaterialValues.size();m_Draws.back().propertyCount=(u32)values.size();m_MaterialValues.insert(m_MaterialValues.end(),values.begin(),values.end());}}
     m_Draws.back().sortingOrder=sortingOrder;m_Draws.back().firstIndex=firstIndex;m_Draws.back().indexCount=indexCount?indexCount:mesh->IndexCount();
     if (!m.customPixelShader.empty()) {
-        auto path = AssetManager::ToAbsolute(m.customPixelShader);
-        std::error_code ec;
-        auto stamp = std::filesystem::last_write_time(path, ec);
-        if (!ec||Pak::Contains(path)) {
-            std::string key = FileSystem::Utf8(path) + std::to_string(m.doubleSided) + std::to_string(transparent);
-            key += std::to_string(ec?Pak::Generation():stamp.time_since_epoch().count());
+        // The shader file's version is looked up at most twice a second per shader, not for every draw
+        struct ShaderVersion { std::string version; bool valid = false; std::chrono::steady_clock::time_point checked; };
+        static std::unordered_map<std::string, ShaderVersion> versions;
+        auto now = std::chrono::steady_clock::now();
+        auto& sv = versions[m.customPixelShader];
+        if (sv.version.empty() || now - sv.checked > std::chrono::milliseconds(500)) {
+            sv.checked = now;
+            auto path = AssetManager::ToAbsolute(m.customPixelShader);
+            std::error_code ec;
+            auto stamp = std::filesystem::last_write_time(path, ec);
+            sv.valid = !ec || Pak::Contains(path);
+            sv.version = FileSystem::Utf8(path) + "|" + std::to_string(ec ? Pak::Generation() : stamp.time_since_epoch().count());
+        }
+        if (sv.valid) {
+            std::string key = sv.version + std::to_string(m.doubleSided) + std::to_string(transparent);
             auto& pipeline = m_CustomPipelines[key];
             if (!pipeline) {
                 GraphicsPipelineDesc custom;

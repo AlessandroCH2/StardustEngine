@@ -9,7 +9,7 @@ class SceneSerializer {
 public:
     static bool Save(Scene& scene, const std::filesystem::path& path);
     static Ref<Scene> Load(const std::filesystem::path& path);   // nullptr on failure
-    static std::string ToJson(Scene& scene);
+    static std::string ToJson(Scene& scene, bool compact = false);   // compact: no indentation (undo snapshots)
     static std::vector<EntityID> AppendScene(Scene& scene,const std::string& json);
     static Ref<Scene> FromJson(const std::string& json);
 

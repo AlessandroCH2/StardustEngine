@@ -95,6 +95,20 @@ const nlohmann::json& Material::PropertyLayout()const {
  return water;
 }
 std::vector<glm::vec4> Material::PropertyValues()const {
+ using json=nlohmann::json;
+ // Many draws share a material: its values are worked out once per frame (texture slots can change
+ // between frames while textures stream in, so the cache never outlives the frame)
+ struct Cached{u64 frame=~0ull;std::vector<glm::vec4> values;};
+ static std::unordered_map<std::string,Cached> cache;
+ const u64 frame=AssetManager::Device()?AssetManager::Device()->FrameNumber():~1ull;
+ std::string key=customPixelShader+''+std::to_string((int)shader)+''+propertiesJson;
+ if(auto found=cache.find(key);found!=cache.end()&&found->second.frame==frame&&frame!=~1ull)return found->second.values;
+ if(cache.size()>4096)cache.clear();
+ auto values=ComputePropertyValues();
+ auto& entry=cache[key];entry.frame=frame;entry.values=values;
+ return values;
+}
+std::vector<glm::vec4> Material::ComputePropertyValues()const {
  using json=nlohmann::json;const auto& fields=PropertyLayout();auto values=json::parse(propertiesJson,nullptr,false);if(!values.is_object())values=json::object();std::vector<glm::vec4> output;
  for(auto& field:fields){auto name=field.value("name","");auto value=values.contains(name)?values[name]:field.value("default",json(0));auto type=field.value("type","float");glm::vec4 v(0);
   if(type=="texture"){auto path=value.is_string()?value.get<std::string>():std::string();v.x=(float)AssetManager::TextureSRV(path,field.value("srgb",true),DefaultTexture::White);v.y=(float)TextureImportSettings::Load(path).Sampler();}

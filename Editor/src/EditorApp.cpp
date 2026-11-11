@@ -1,4 +1,5 @@
 #include "EditorApp.h"
+#include "Core/Profiler.h"
 #include "Version.h"
 #include "Renderer/Quality.h"
 #include "TitleBar.h"
@@ -271,6 +272,7 @@ void EditorApp::LoadSceneInPlayMode(const std::string& assetPath) {
 }
 
 void EditorApp::OnUpdate(float dt) {
+    Profiler::EndFrame();
     UpdateAnimationPreview(dt);
     if (m_ShowHub || !m_ActiveScene) return;
     if (m_State == PlayState::Play || (m_State == PlayState::Pause && m_StepFrame)) {
@@ -338,8 +340,9 @@ void EditorApp::OnRender(RHI::CommandList& cmd) {
         float aspect = m_SceneView.size.x / std::max(1.0f, m_SceneView.size.y);
         m_LastSceneCamera = m_Camera.GetRenderCamera(aspect); m_HasSceneCamera = true;
         m_SceneRenderer->BeginScene(m_LastSceneCamera, env, time);
-        scene.SubmitToRenderer(*m_SceneRenderer, GetDevice(),bool(m_AnimationPreviewScene));
-        CanvasRenderer::Submit(scene,*m_SceneRenderer,GetDevice(),m_SceneView.size,true,m_Camera.Is2D());
+        { SD_PROFILE("Scene view: submit"); scene.SubmitToRenderer(*m_SceneRenderer, GetDevice(),bool(m_AnimationPreviewScene));
+          CanvasRenderer::Submit(scene,*m_SceneRenderer,GetDevice(),m_SceneView.size,true,m_Camera.Is2D()); }
+        SD_PROFILE("Scene view: record");
         bool grid=m_SceneRenderer->drawGrid;
         m_SceneRenderer->grid2D=m_Camera.Is2D();
         m_SceneRenderer->Render(cmd);
@@ -351,8 +354,9 @@ void EditorApp::OnRender(RHI::CommandList& cmd) {
         RenderCamera cam;
         if (!scene.GetPrimaryCamera(cam, aspect)) cam = m_Camera.GetRenderCamera(aspect);
         m_GameRenderer->BeginScene(cam, env, time);
-        scene.SubmitToRenderer(*m_GameRenderer, GetDevice(),bool(m_AnimationPreviewScene));
-        CanvasRenderer::Submit(scene,*m_GameRenderer,GetDevice(),m_GameRenderSize,false);
+        { SD_PROFILE("Game view: submit"); scene.SubmitToRenderer(*m_GameRenderer, GetDevice(),bool(m_AnimationPreviewScene));
+          CanvasRenderer::Submit(scene,*m_GameRenderer,GetDevice(),m_GameRenderSize,false); }
+        SD_PROFILE("Game view: record");
         m_GameRenderer->Render(cmd);
     }
 }

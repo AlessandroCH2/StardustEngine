@@ -243,6 +243,36 @@ public class ForceMovementExample : ScriptBehaviour
 }
 ```
 
+### Vehicles
+
+A car is a dynamic Rigidbody with colliders, a **Vehicle Controller** and a **Wheel Collider** on each wheel object (children of the car). The Vehicle Controller uses Jolt's wheeled vehicle: suspension, tyre friction, engine, automatic gearbox, differentials between the driven wheels and anti-roll bars. Wheels on the same axle are paired automatically; mark the driven ones with **Motor** and the rear ones with **Handbrake**, and give the front ones a **Max Steer Angle**. Place each wheel object at the wheel centre with the suspension fully extended: in play mode the engine moves it along the suspension and turns it for steering and rolling, so a wheel mesh (axle along X) can sit on it or below it.
+
+| API | Meaning |
+| --- | --- |
+| `VehicleController.SetInput(throttle, steer, brake, handbrake)` | Driver input: throttle -1 (reverse) .. 1, steer -1 (left) .. 1 (right), brake and handbrake 0..1. Also as properties. |
+| `VehicleController.speed`, `rpm`, `gear` | Forward speed (m/s, negative in reverse), engine RPM, gear (-1 reverse, 0 neutral, 1..). |
+| `VehicleController.engineTorque`, `maxRPM`, `centerOfMassOffset`, `antiRollBars` | Settings; changing one rebuilds the vehicle. |
+| `WheelCollider.radius`, `suspensionDistance`, `springFrequency`, `springDamping`, `maxSteerAngle`, `motor`, `handbrake`, `forwardFriction`, `sidewaysFriction` | Wheel settings. |
+| `WheelCollider.isGrounded`, `compression`, `steerAngle`, `rotationAngle` | Wheel state in play mode. |
+
+```csharp
+using Stardust;
+
+public class CarDriver : ScriptBehaviour
+{
+    VehicleController car;
+    void OnCreate() { car = GetComponent<VehicleController>(); }
+    void OnFixedUpdate(float dt)
+    {
+        float v = Input.GetAxisRaw("Vertical");
+        // pressing against the direction of travel brakes first
+        bool braking = (v < 0 && car.speed > 1) || (v > 0 && car.speed < -1);
+        car.SetInput(braking ? 0 : v, Input.GetAxisRaw("Horizontal"), braking ? 1 : 0,
+                     Input.GetKey(KeyCode.Space) ? 1 : 0);
+    }
+}
+```
+
 `Physics.Raycast(origin, direction, out RaycastHit hit, maxDistance = 1000f, ignore = null)` returns the closest hit. The result contains `entity`, `point`, `normal`, and `distance`. Use the optional `ignore` entity for checks originating inside your own collider.
 
 ## Scene loading and persistent objects

@@ -415,6 +415,43 @@ struct MeshColliderComponent {
     PhysicsMaterialProps material;
 };
 
+// A wheel of a Vehicle Controller (on a child of the vehicle). The entity's position is the wheel
+// centre with the suspension fully extended; in play mode the engine moves the entity along its
+// suspension and turns it for steering and rolling, so a wheel mesh can sit on it (axle along X).
+struct WheelColliderComponent {
+    float radius = 0.35f;
+    float width = 0.25f;
+    float suspensionDistance = 0.3f;    // travel above the modelled position (m)
+    float springFrequency = 1.6f;       // Hz: how stiff the suspension is
+    float springDamping = 0.5f;         // 0..1
+    float maxSteerAngle = 0.0f;         // degrees; front wheels usually 30..40
+    bool motor = false;                 // driven by the engine
+    bool handbrake = false;
+    float brakeTorque = 1500.0f;        // Nm
+    float handbrakeTorque = 4000.0f;    // Nm
+    float forwardFriction = 1.0f;       // multipliers of the tyre curves
+    float sidewaysFriction = 1.0f;
+    // runtime (play mode), not serialized
+    glm::vec3 restPosition{ 0.0f }; bool restCaptured = false;
+    float steerAngle = 0, rotationAngle = 0, suspensionLength = 0, compression = 0; bool grounded = false;
+};
+
+// Car physics (Jolt wheeled vehicle) for a dynamic Rigidbody with colliders: engine, automatic gearbox,
+// differentials between the driven wheels and anti-roll bars. Its wheels are the Wheel Colliders on
+// child objects. Scripts drive it with throttle / steer / brake / handbrake.
+struct VehicleControllerComponent {
+    float engineTorque = 600.0f;        // Nm
+    float minRPM = 1000.0f, maxRPM = 6500.0f;
+    float shiftUpRPM = 5200.0f, shiftDownRPM = 2200.0f;
+    float centerOfMassOffset = -0.35f;  // lowers the centre of mass (m) for stability
+    float maxPitchRoll = 60.0f;         // degrees the body may tilt before it is held back
+    bool antiRollBars = true;
+    float limitedSlipRatio = 1.4f;
+    // runtime (play mode), not serialized
+    float throttle = 0, steer = 0, brake = 0, handbrake = 0;
+    float speed = 0, rpm = 0; int gear = 0;
+};
+
 // ---------------------------------------------------------------- scripting (C#)
 
 struct ScriptSlot {

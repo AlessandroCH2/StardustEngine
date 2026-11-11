@@ -1,3 +1,4 @@
+#include "Core/Profiler.h"
 // Project Hub, Build Settings, Project Settings, player builds and undo/redo
 #include "Assets/AssetMeta.h"
 #include "Renderer/Quality.h"
@@ -786,7 +787,7 @@ void EditorApp::UpdateUndo() {
     // Drawing a freshly restored or selected object can tidy its data (material slots...). That is not an edit.
     if (m_UndoRebase > 0) {
         --m_UndoRebase;
-        m_UndoSnapshot = SceneSerializer::ToJson(*m_EditorScene);
+        m_UndoSnapshot = SceneSerializer::ToJson(*m_EditorScene, true);
         return;
     }
     const bool busy = ImGui::IsAnyItemActive() || ImGui::IsMouseDown(0) || ImGui::IsMouseDown(1) || m_Stroking;
@@ -794,10 +795,19 @@ void EditorApp::UpdateUndo() {
     const bool selectionChanged = m_UndoSelected != m_Selected;
     m_UndoWasBusy = busy;
     m_UndoTimer += DeltaTime();
-    if (busy || (!gestureEnded && !selectionChanged && m_UndoTimer < 0.25f)) return;
+    // Serializing the whole scene is expensive in big scenes: compare only when something can have
+    // changed (a mouse gesture ended, the selection changed, keys were typed) and as a slow fallback
+    auto& io = ImGui::GetIO();
+    bool keys = io.InputQueueCharacters.Size > 0;
+    for (int k = ImGuiKey_NamedKey_BEGIN; !keys && k < ImGuiKey_NamedKey_END; ++k) keys = ImGui::IsKeyPressed((ImGuiKey)k, false);
+    m_UndoPending |= keys;
+    const bool due = gestureEnded || selectionChanged || (m_UndoPending && m_UndoTimer >= 0.25f) || m_UndoTimer >= 5.0f;
+    if (busy || !due) return;
+    SD_PROFILE("Undo snapshot");
+    m_UndoPending = false;
     m_UndoTimer = 0.0f;
     m_UndoSelected = m_Selected;
-    std::string now = SceneSerializer::ToJson(*m_EditorScene);
+    std::string now = SceneSerializer::ToJson(*m_EditorScene, true);
     if (m_UndoSnapshot.empty()) { m_UndoSnapshot = std::move(now); m_UndoRebase = selectionChanged ? 2 : 0; return; }
     if (now != m_UndoSnapshot) {
         m_Undo.push_back(std::move(m_UndoSnapshot));
@@ -846,7 +856,7 @@ void EditorApp::RestoreSnapshot(const std::string& json) {
     m_UndoSelected = m_Selected;
     ScriptEngine::SetEditorScene(scene.get());
     // The reloaded scene can serialize slightly differently; compare against what it writes from now on
-    m_UndoSnapshot = SceneSerializer::ToJson(*scene);
+    m_UndoSnapshot = SceneSerializer::ToJson(*scene, true);
     m_UndoRebase = 2;
     m_UndoWasBusy = false;
     m_SceneDirty = true;
@@ -856,7 +866,7 @@ void EditorApp::RestoreSnapshot(const std::string& json) {
 void EditorApp::Undo() {
     if ((m_AnimationWindowFocused || m_AnimatorWindowFocused || m_AnimationRecording) && StepAnimationHistory(false)) return;
     if (m_State != PlayState::Edit) return;
-    std::string now = SceneSerializer::ToJson(*m_EditorScene);
+    std::string now = SceneSerializer::ToJson(*m_EditorScene, true);
     if (!m_UndoSnapshot.empty() && now != m_UndoSnapshot) { // commit an edit newer than the last check
         m_Undo.push_back(m_UndoSnapshot);
         m_Redo.clear();

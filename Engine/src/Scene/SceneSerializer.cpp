@@ -114,6 +114,13 @@ static void WriteEntity(Scene& scene, EntityID e, json& out) {
         j["capsuleCollider"] = { { "radius", c->radius }, { "height", c->height }, { "center", Vec(c->center) }, { "material", matJson(c->material) } };
     if (auto* c = reg.TryGet<MeshColliderComponent>(e))
         j["meshCollider"] = { { "convex", c->convex }, { "material", matJson(c->material) } };
+    if (auto* c = reg.TryGet<WheelColliderComponent>(e))
+        j["wheelCollider"] = { { "radius", c->radius }, { "width", c->width }, { "suspensionDistance", c->suspensionDistance }, { "springFrequency", c->springFrequency },
+                               { "springDamping", c->springDamping }, { "maxSteerAngle", c->maxSteerAngle }, { "motor", c->motor }, { "handbrake", c->handbrake },
+                               { "brakeTorque", c->brakeTorque }, { "handbrakeTorque", c->handbrakeTorque }, { "forwardFriction", c->forwardFriction }, { "sidewaysFriction", c->sidewaysFriction } };
+    if (auto* c = reg.TryGet<VehicleControllerComponent>(e))
+        j["vehicleController"] = { { "engineTorque", c->engineTorque }, { "minRPM", c->minRPM }, { "maxRPM", c->maxRPM }, { "shiftUpRPM", c->shiftUpRPM }, { "shiftDownRPM", c->shiftDownRPM },
+                                   { "centerOfMassOffset", c->centerOfMassOffset }, { "maxPitchRoll", c->maxPitchRoll }, { "antiRollBars", c->antiRollBars }, { "limitedSlipRatio", c->limitedSlipRatio } };
     if (auto* c = reg.TryGet<ScriptComponent>(e)) {
         j["scripts"] = json::array();
         for (size_t i = 0; i < c->Count(); ++i) {
@@ -149,14 +156,14 @@ static void WriteEntity(Scene& scene, EntityID e, json& out) {
     for (EntityID c : scene.GetChildren(e)) WriteEntity(scene, c, out);
 }
 
-std::string SceneSerializer::ToJson(Scene& scene) {
+std::string SceneSerializer::ToJson(Scene& scene, bool compact) {
     json root;
     root["version"] = kSceneVersion;
     root["name"] = scene.Name();
     json entities = json::array();
     for (EntityID e : scene.GetRoots()) WriteEntity(scene, e, entities); // parents always precede children
     root["entities"] = std::move(entities);
-    return root.dump(2);
+    return compact ? root.dump() : root.dump(2);
 }
 
 // Creates the entities of a JSON array. freshIds: give new UUIDs (prefab instances / duplicates) and remap parents.
@@ -344,6 +351,23 @@ static std::vector<EntityID> ReadEntities(Scene& sceneRef, const json& entities,
             auto& c = reg.Add<MeshColliderComponent>(e);
             c.convex = m.value("convex", c.convex);
             readMat(m, c.material);
+        }
+        if (j.contains("wheelCollider")) {
+            const json& m = j["wheelCollider"];
+            auto& c = reg.Add<WheelColliderComponent>(e);
+            c.radius = m.value("radius", c.radius); c.width = m.value("width", c.width); c.suspensionDistance = m.value("suspensionDistance", c.suspensionDistance);
+            c.springFrequency = m.value("springFrequency", c.springFrequency); c.springDamping = m.value("springDamping", c.springDamping);
+            c.maxSteerAngle = m.value("maxSteerAngle", c.maxSteerAngle); c.motor = m.value("motor", c.motor); c.handbrake = m.value("handbrake", c.handbrake);
+            c.brakeTorque = m.value("brakeTorque", c.brakeTorque); c.handbrakeTorque = m.value("handbrakeTorque", c.handbrakeTorque);
+            c.forwardFriction = m.value("forwardFriction", c.forwardFriction); c.sidewaysFriction = m.value("sidewaysFriction", c.sidewaysFriction);
+        }
+        if (j.contains("vehicleController")) {
+            const json& m = j["vehicleController"];
+            auto& c = reg.Add<VehicleControllerComponent>(e);
+            c.engineTorque = m.value("engineTorque", c.engineTorque); c.minRPM = m.value("minRPM", c.minRPM); c.maxRPM = m.value("maxRPM", c.maxRPM);
+            c.shiftUpRPM = m.value("shiftUpRPM", c.shiftUpRPM); c.shiftDownRPM = m.value("shiftDownRPM", c.shiftDownRPM);
+            c.centerOfMassOffset = m.value("centerOfMassOffset", c.centerOfMassOffset); c.maxPitchRoll = m.value("maxPitchRoll", c.maxPitchRoll);
+            c.antiRollBars = m.value("antiRollBars", c.antiRollBars); c.limitedSlipRatio = m.value("limitedSlipRatio", c.limitedSlipRatio);
         }
         if (j.contains("scripts") || j.contains("script")) {
             auto slots = j.contains("scripts") ? j["scripts"] : json::array({j["script"]});

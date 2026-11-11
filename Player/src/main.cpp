@@ -1,4 +1,5 @@
 // Stardust Player: runs a scene full-screen without the editor.
+#include "Core/Profiler.h"
 #include "Renderer/Quality.h"
 #include "Version.h"
 #include "Core/Application.h"
@@ -99,6 +100,7 @@ protected:
     }
 
     void OnUpdate(float dt) override {
+        Profiler::EndFrame();   // keeps the per-frame section totals bounded
         ScriptEngine::SetScreenSize((float)GetWindow().Width(), (float)GetWindow().Height());
         m_Scene->OnUpdate(dt);
         std::string path;

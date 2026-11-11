@@ -17,6 +17,7 @@ struct Material {
     std::string propertiesJson="{}";
     const nlohmann::json& PropertyLayout() const;
     std::vector<glm::vec4> PropertyValues() const;
+    std::vector<glm::vec4> ComputePropertyValues() const;   // uncached
     std::string customPixelShader; // compiled asset-relative .spv, using MeshCommon.hlsli interface
     Ref<RHI::Texture> runtimeAlbedo; // dynamic UI/font atlases; never serialized
     Ref<RHI::Texture> runtimeMask;   // UI Mask image, read through the normal slot

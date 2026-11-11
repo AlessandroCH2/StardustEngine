@@ -29,6 +29,10 @@
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
 #include <Jolt/Physics/Body/BodyLock.h>
 #include <Jolt/Physics/Body/BodyFilter.h>
+#include <Jolt/Physics/Collision/Shape/OffsetCenterOfMassShape.h>
+#include <Jolt/Physics/Vehicle/VehicleConstraint.h>
+#include <Jolt/Physics/Vehicle/WheeledVehicleController.h>
+#include <Jolt/Physics/Vehicle/VehicleCollisionTester.h>
 #pragma warning(pop)
 
 namespace Stardust {
@@ -93,6 +97,8 @@ struct PhysicsWorld::Impl {
     std::unordered_map<EntityID, glm::mat4> transforms;
     std::unordered_map<u32, EntityID> bodyToEntity;  // only modified outside PhysicsSystem::Update
     std::unordered_map<u32, bool> sensors;
+    struct Vehicle { JPH::Ref<VehicleConstraint> constraint; JPH::Ref<VehicleCollisionTester> tester; std::vector<EntityID> wheels; };
+    std::unordered_map<EntityID, Vehicle> vehicles;
 };
 
 static Vec3 ToJ(const glm::vec3& v) { return Vec3(v.x, v.y, v.z); }
@@ -140,6 +146,8 @@ PhysicsWorld::PhysicsWorld(Scene& scene) : m_Scene(scene), m_Impl(MakeScope<Impl
 
 PhysicsWorld::~PhysicsWorld() {
     BodyInterface& bi = m_System->GetBodyInterface();
+    for (auto& [e, v] : m_Impl->vehicles) { m_System->RemoveStepListener(v.constraint); m_System->RemoveConstraint(v.constraint); }
+    m_Impl->vehicles.clear();
     for (auto& [e, id] : m_Impl->bodies) { bi.RemoveBody(id); bi.DestroyBody(id); }
     m_Impl->bodies.clear();
     m_System.reset();
@@ -257,6 +265,11 @@ void PhysicsWorld::CreateBody(EntityID e) {
         }
     }
     if (glm::length(center) > 1e-5f) shape = new RotatedTranslatedShape(ToJ(center), Quat::sIdentity(), shape);
+    auto* vehicle = !is2D && rb && rb->type == BodyType::Dynamic ? reg.TryGetEnabled<VehicleControllerComponent>(e) : nullptr;
+    if (vehicle && std::abs(vehicle->centerOfMassOffset) > 1e-4f) {
+        auto r = OffsetCenterOfMassShapeSettings(Vec3(0, vehicle->centerOfMassOffset, 0), shape).Create();
+        if (!r.HasError()) shape = r.Get();
+    }
 
     EMotionType motion = type == BodyType::Dynamic ? EMotionType::Dynamic : type == BodyType::Kinematic ? EMotionType::Kinematic : EMotionType::Static;
     BodyCreationSettings bs(shape, RVec3(pos.x, pos.y, pos.z), ToJ(rot), motion, motion == EMotionType::Static ? Layers::NonMoving : Layers::Moving);
@@ -281,7 +294,7 @@ void PhysicsWorld::CreateBody(EntityID e) {
         if (motion == EMotionType::Dynamic) {
             bs.mOverrideMassProperties = EOverrideMassProperties::CalculateInertia;
             bs.mMassPropertiesOverride.mMass = std::max(rb->mass, 0.001f);
-            if (rb->freezeRotation) bs.mAllowedDOFs = EAllowedDOFs::TranslationX | EAllowedDOFs::TranslationY | EAllowedDOFs::TranslationZ;
+            if (rb->freezeRotation && !vehicle) bs.mAllowedDOFs = EAllowedDOFs::TranslationX | EAllowedDOFs::TranslationY | EAllowedDOFs::TranslationZ;
         }
     }
     BodyID id = m_System->GetBodyInterface().CreateAndAddBody(bs, motion == EMotionType::Static ? EActivation::DontActivate : EActivation::Activate);
@@ -291,6 +304,105 @@ void PhysicsWorld::CreateBody(EntityID e) {
     m_Impl->scales[e] = scale;
     m_Impl->transforms[e] = m_Scene.GetWorldMatrix(e);
     RegisterBody(e, id.GetIndexAndSequenceNumber(), mat.isTrigger);
+    if (vehicle) CreateVehicle(e);
+}
+
+// ------------------------------------------------------------------------------------------------ vehicles
+
+static void CollectWheels(Scene& scene, EntityID e, std::vector<EntityID>& out) {
+    for (EntityID c : scene.GetChildren(e)) {
+        if (scene.Reg().TryGetEnabled<WheelColliderComponent>(c) && scene.IsActiveInHierarchy(c)) out.push_back(c);
+        CollectWheels(scene, c, out);
+    }
+}
+
+static void ScaleCurve(LinearCurve& curve, float scale) { for (auto& p : curve.mPoints) p.mY *= scale; }
+
+void PhysicsWorld::CreateVehicle(EntityID e) {
+    Registry& reg = m_Scene.Reg();
+    auto& vc = reg.Get<VehicleControllerComponent>(e);
+    std::vector<EntityID> wheels;
+    CollectWheels(m_Scene, e, wheels);
+    if (wheels.empty()) { SD_WARN("Vehicle Controller on '{}' has no Wheel Collider children", reg.Get<NameComponent>(e).name); return; }
+
+    const glm::mat4 rootInverse = glm::inverse(m_Scene.GetWorldMatrix(e));
+    VehicleConstraintSettings settings;
+    settings.mUp = Vec3(0, 1, 0);
+    settings.mForward = Vec3(0, 0, -1);       // the engine's forward
+    settings.mMaxPitchRollAngle = glm::radians(std::clamp(vc.maxPitchRoll, 1.0f, 180.0f));
+    std::vector<glm::vec3> positions;
+    for (EntityID w : wheels) {
+        auto& wc = reg.Get<WheelColliderComponent>(w);
+        if (!wc.restCaptured) { wc.restPosition = glm::vec3(rootInverse * m_Scene.GetWorldMatrix(w)[3]); wc.restCaptured = true; }
+        positions.push_back(wc.restPosition);
+        JPH::Ref<WheelSettingsWV> ws = new WheelSettingsWV;
+        const float travel = std::max(0.02f, wc.suspensionDistance);
+        ws->mPosition = ToJ(wc.restPosition + glm::vec3(0, travel, 0));
+        ws->mSuspensionDirection = Vec3(0, -1, 0);
+        ws->mSteeringAxis = Vec3(0, 1, 0);
+        ws->mWheelUp = Vec3(0, 1, 0);
+        ws->mWheelForward = Vec3(0, 0, -1);
+        ws->mSuspensionMinLength = 0.0f;
+        ws->mSuspensionMaxLength = travel;
+        ws->mSuspensionSpring.mFrequency = std::max(0.1f, wc.springFrequency);
+        ws->mSuspensionSpring.mDamping = std::clamp(wc.springDamping, 0.0f, 1.0f);
+        ws->mRadius = std::max(0.05f, wc.radius);
+        ws->mWidth = std::max(0.02f, wc.width);
+        ws->mMaxSteerAngle = glm::radians(std::clamp(wc.maxSteerAngle, 0.0f, 89.0f));
+        ws->mMaxBrakeTorque = std::max(0.0f, wc.brakeTorque);
+        ws->mMaxHandBrakeTorque = wc.handbrake ? std::max(0.0f, wc.handbrakeTorque) : 0.0f;
+        ScaleCurve(ws->mLongitudinalFriction, std::max(0.0f, wc.forwardFriction));
+        ScaleCurve(ws->mLateralFriction, std::max(0.0f, wc.sidewaysFriction));
+        settings.mWheels.push_back(ws.GetPtr());
+    }
+    // Wheels on the same axle (similar Z, opposite sides) form pairs: driven pairs get a differential,
+    // every pair an anti-roll bar
+    std::vector<std::pair<int, int>> axles;
+    std::vector<bool> used(wheels.size(), false);
+    for (size_t i = 0; i < wheels.size(); ++i) {
+        if (used[i]) continue;
+        int partner = -1;
+        for (size_t j = i + 1; j < wheels.size(); ++j)
+            if (!used[j] && std::abs(positions[j].z - positions[i].z) < 0.3f && (positions[j].x > 0) != (positions[i].x > 0)) { partner = (int)j; break; }
+        used[i] = true; if (partner >= 0) used[partner] = true;
+        int left = (int)i, right = partner;
+        if (partner >= 0 && positions[i].x > positions[partner].x) std::swap(left, right);
+        axles.push_back({ left, right });
+    }
+    JPH::Ref<WheeledVehicleControllerSettings> controller = new WheeledVehicleControllerSettings;
+    controller->mEngine.mMaxTorque = std::max(1.0f, vc.engineTorque);
+    controller->mEngine.mMinRPM = std::max(100.0f, vc.minRPM);
+    controller->mEngine.mMaxRPM = std::max(controller->mEngine.mMinRPM + 100.0f, vc.maxRPM);
+    controller->mTransmission.mShiftUpRPM = vc.shiftUpRPM;
+    controller->mTransmission.mShiftDownRPM = vc.shiftDownRPM;
+    controller->mDifferentialLimitedSlipRatio = std::max(1.0f, vc.limitedSlipRatio);
+    for (auto [left, right] : axles) {
+        bool driven = reg.Get<WheelColliderComponent>(wheels[left]).motor || (right >= 0 && reg.Get<WheelColliderComponent>(wheels[right]).motor);
+        if (driven) { VehicleDifferentialSettings d; d.mLeftWheel = left; d.mRightWheel = right; controller->mDifferentials.push_back(d); }
+        if (vc.antiRollBars && right >= 0) { VehicleAntiRollBar bar; bar.mLeftWheel = left; bar.mRightWheel = right; settings.mAntiRollBars.push_back(bar); }
+    }
+    for (auto& d : controller->mDifferentials) d.mEngineTorqueRatio = 1.0f / controller->mDifferentials.size();
+    settings.mController = controller;
+
+    auto id = m_Impl->bodies[e];
+    BodyLockWrite lock(m_System->GetBodyLockInterface(), id);
+    if (!lock.Succeeded()) return;
+    Impl::Vehicle v;
+    v.constraint = new VehicleConstraint(lock.GetBody(), settings);
+    v.tester = new VehicleCollisionTesterCastCylinder(Layers::Moving);
+    v.constraint->SetVehicleCollisionTester(v.tester);
+    v.wheels = wheels;
+    m_System->AddConstraint(v.constraint);
+    m_System->AddStepListener(v.constraint);
+    m_Impl->vehicles[e] = std::move(v);
+}
+
+void PhysicsWorld::DestroyVehicle(EntityID e) {
+    auto it = m_Impl->vehicles.find(e);
+    if (it == m_Impl->vehicles.end()) return;
+    m_System->RemoveStepListener(it->second.constraint);
+    m_System->RemoveConstraint(it->second.constraint);
+    m_Impl->vehicles.erase(it);
 }
 
 void PhysicsWorld::RegisterBody(EntityID e, u32 id, bool sensor) {
@@ -307,6 +419,7 @@ void PhysicsWorld::RecreateBody(EntityID e) {
 }
 
 void PhysicsWorld::DestroyBody(EntityID e) {
+    DestroyVehicle(e);
     auto it = m_Impl->bodies.find(e);
     if (it == m_Impl->bodies.end()) return;
     BodyInterface& bi = m_System->GetBodyInterface();
@@ -348,6 +461,15 @@ void PhysicsWorld::Step(float dt) {
         else bi.SetPositionAndRotation(id, RVec3(pos.x, pos.y, pos.z), ToJ(glm::normalize(rot)), EActivation::Activate);
     }
 
+    // Vehicle inputs from the components (set by scripts)
+    for (auto& [e, v] : m_Impl->vehicles) {
+        auto* vc = reg.TryGet<VehicleControllerComponent>(e);
+        if (!vc || !m_Impl->bodies.contains(e)) continue;
+        auto* controller = static_cast<WheeledVehicleController*>(v.constraint->GetController());
+        controller->SetDriverInput(std::clamp(vc->throttle, -1.0f, 1.0f), std::clamp(vc->steer, -1.0f, 1.0f), std::clamp(vc->brake, 0.0f, 1.0f), std::clamp(vc->handbrake, 0.0f, 1.0f));
+        if (vc->throttle != 0 || vc->steer != 0) bi.ActivateBody(m_Impl->bodies[e]);
+    }
+
     m_System->Update(dt, 1, m_Temp.get(), m_Jobs.get());
 
     // Parents must be written before children; unordered body iteration can otherwise apply an
@@ -374,6 +496,35 @@ void PhysicsWorld::Step(float dt) {
             bi.SetPositionAndRotation(m_Impl->bodies[e], RVec3(p.x, p.y, p.z), ToJ(glm::normalize(r)), EActivation::DontActivate);
         }
         m_Impl->transforms[e] = world;
+    }
+
+    // Vehicles: read back speed and engine state, place the wheel objects (suspension, steering, rolling)
+    for (auto& [e, v] : m_Impl->vehicles) {
+        auto* vc = reg.TryGet<VehicleControllerComponent>(e);
+        if (!vc || !m_Impl->bodies.contains(e)) continue;
+        auto id = m_Impl->bodies[e];
+        Vec3 velocity = bi.GetLinearVelocity(id);
+        Quat rotation = bi.GetRotation(id);
+        vc->speed = velocity.Dot(rotation * Vec3(0, 0, -1));
+        auto* controller = static_cast<WheeledVehicleController*>(v.constraint->GetController());
+        vc->rpm = controller->GetEngine().GetCurrentRPM();
+        vc->gear = controller->GetTransmission().GetCurrentGear();
+        for (size_t i = 0; i < v.wheels.size(); ++i) {
+            EntityID w = v.wheels[i];
+            if (!reg.Valid(w)) continue;
+            auto& wc = reg.Get<WheelColliderComponent>(w);
+            const Wheel* wheel = v.constraint->GetWheel((uint)i);
+            wc.steerAngle = glm::degrees(wheel->GetSteerAngle());
+            wc.rotationAngle = glm::degrees(wheel->GetRotationAngle());
+            wc.suspensionLength = wheel->GetSuspensionLength();
+            wc.compression = 1.0f - wc.suspensionLength / std::max(0.02f, wc.suspensionDistance);
+            wc.grounded = wheel->HasContact();
+            RMat44 m = v.constraint->GetWheelWorldTransform((uint)i, Vec3(1, 0, 0), Vec3(0, 1, 0));
+            glm::mat4 world(1.0f);
+            for (int c = 0; c < 4; ++c) { Vec4 col = m.GetColumn4(c); world[c] = glm::vec4(col.GetX(), col.GetY(), col.GetZ(), col.GetW()); }
+            glm::vec3 scale = reg.Get<TransformComponent>(w).scale;
+            m_Scene.SetWorldMatrix(w, world * glm::scale(glm::mat4(1.0f), scale));
+        }
     }
 }
 

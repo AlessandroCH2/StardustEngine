@@ -56,6 +56,8 @@ public:
 
 private:
     void CreateTerrainBody(EntityID e);
+    void CreateVehicle(EntityID e);
+    void DestroyVehicle(EntityID e);
     void RegisterBody(EntityID e, u32 bodyIndexAndSequence, bool sensor);
 
     Scene& m_Scene;

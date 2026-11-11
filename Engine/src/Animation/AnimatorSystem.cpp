@@ -8,18 +8,136 @@
 #include "Core/Log.h"
 #include <nlohmann/json.hpp>
 #include <sstream>
+#include <chrono>
+#include <algorithm>
 #include <unordered_set>
 namespace Stardust {
 using json = nlohmann::json;
+// Bumped whenever an asset is (re)parsed, so compiled clips know when to rebuild
+static u64 s_AssetGeneration = 1;
 static const json& ReadAsset(const std::string& path) {
     static const json empty = json::object();
-    static std::unordered_map<std::string, std::pair<std::filesystem::file_time_type,json>> cache;
+    struct Entry { std::filesystem::file_time_type stamp; json data; std::chrono::steady_clock::time_point checked; bool exists = false; };
+    static std::unordered_map<std::string, Entry> cache;
+    if (path.empty()) return empty;
+    // The file's time stamp is checked at most twice a second (editing an asset still reloads it),
+    // not on every one of the several lookups per animated object and frame
+    auto now = std::chrono::steady_clock::now();
+    auto found = cache.find(path);
+    if (found != cache.end() && now - found->second.checked < std::chrono::milliseconds(500))
+        return found->second.exists && found->second.data.is_object() ? found->second.data : empty;
+    auto& entry = cache[path];
+    entry.checked = now;
     auto resolved = AssetManager::ToAbsolute(path);
     std::error_code ec; auto stamp = std::filesystem::last_write_time(resolved,ec);
-    if (ec && !FileSystem::Exists(resolved)) return empty;
-    auto& cached = cache[FileSystem::Utf8(resolved)];
-    if (cached.second.is_null() || (!ec && cached.first != stamp)) { cached.first = stamp; cached.second = json::parse(FileSystem::ReadText(resolved),nullptr,false); }
-    return cached.second.is_object() ? cached.second : empty;
+    entry.exists = !(ec && !FileSystem::Exists(resolved));
+    if (!entry.exists) return empty;
+    if (entry.data.is_null() || (!ec && entry.stamp != stamp)) { entry.stamp = stamp; entry.data = json::parse(FileSystem::ReadText(resolved),nullptr,false); ++s_AssetGeneration; }
+    return entry.data.is_object() ? entry.data : empty;
+}
+
+// ---------------------------------------------------------------- compiled clips
+// Generic (non-humanoid) clips are converted once into flat key arrays, and each animated object
+// keeps the entities its tracks resolve to, so sampling a frame does no JSON or name lookups.
+namespace {
+struct CompiledChannel { std::vector<float> times; std::vector<glm::vec3> values; };
+struct CompiledTrack { std::vector<std::string> path; bool constant = false; CompiledChannel position, rotation, scale; };
+struct CompiledClip { u64 generation = 0; bool fast = false; std::vector<CompiledTrack> tracks; };
+struct Binding { u64 rootUuid = 0; std::vector<EntityID> targets; std::vector<u64> uuids; };
+
+CompiledChannel CompileChannel(const json& keys, bool& ok) {
+    CompiledChannel c;
+    if (!keys.is_array()) { ok = false; return c; }
+    for (auto& k : keys) {
+        if (!k.is_array() || k.size() < 4) continue;
+        c.times.push_back(k[0].get<float>());
+        c.values.push_back({ k[1].get<float>(), k[2].get<float>(), k[3].get<float>() });
+    }
+    for (size_t i = 1; i < c.times.size(); ++i) if (c.times[i] < c.times[i - 1]) ok = false; // unsorted: keep the generic path
+    return c;
+}
+
+const CompiledClip& Compile(const json& clip) {
+    static std::unordered_map<const json*, CompiledClip> cache;
+    auto& c = cache[&clip];
+    if (c.generation == s_AssetGeneration) return c;
+    c = CompiledClip{}; c.generation = s_AssetGeneration;
+    if (clip.value("humanoid", false)) return c;
+    bool ok = true;
+    for (auto& track : clip.value("tracks", json::array())) {
+        CompiledTrack t;
+        for (auto& [key, value] : track.items())
+            if (key != "path" && key != "position" && key != "rotation" && key != "scale" && key != "interpolation") ok = false; // animated properties
+        auto interpolation = track.value("interpolation", std::string("Linear"));
+        if (interpolation == "Cubic") ok = false;
+        t.constant = interpolation == "Constant";
+        std::stringstream segments(track.value("path", std::string())); std::string name;
+        while (std::getline(segments, name, '/')) if (!name.empty()) t.path.push_back(name);
+        if (track.contains("position")) t.position = CompileChannel(track["position"], ok);
+        if (track.contains("rotation")) t.rotation = CompileChannel(track["rotation"], ok);
+        if (track.contains("scale")) t.scale = CompileChannel(track["scale"], ok);
+        c.tracks.push_back(std::move(t));
+        if (!ok) break;
+    }
+    c.fast = ok;
+    return c;
+}
+
+glm::vec3 SampleChannel(const CompiledChannel& c, float time, bool constant) {
+    auto it = std::upper_bound(c.times.begin(), c.times.end(), time);
+    if (it == c.times.begin()) return c.values.front();
+    if (it == c.times.end()) return c.values.back();
+    size_t b = (size_t)(it - c.times.begin()), a = b - 1;
+    if (constant) return c.values[a];
+    float span = c.times[b] - c.times[a];
+    float t = span > 0 ? std::clamp((time - c.times[a]) / span, 0.f, 1.f) : 0.f;
+    return glm::mix(c.values[a], c.values[b], t);
+}
+
+const Binding& Bind(Scene& scene, EntityID root, const CompiledClip& clip) {
+    static std::unordered_map<const void*, std::unordered_map<u64, Binding>> bindings;  // per scene and clip
+    auto& perClip = bindings[&clip];
+    auto& reg = scene.Reg();
+    const u64 rootUuid = reg.Get<IDComponent>(root).uuid;
+    u64 key = rootUuid ^ ((u64)(uintptr_t)&scene * 0x9E3779B97F4A7C15ull);
+    auto& b = perClip[key];
+    bool valid = b.rootUuid == rootUuid && b.targets.size() == clip.tracks.size();
+    for (size_t i = 0; valid && i < b.targets.size(); ++i)
+        if (b.targets[i] && (!reg.Valid(b.targets[i]) || reg.Get<IDComponent>(b.targets[i]).uuid != b.uuids[i])) valid = false;
+    if (valid) return b;
+    if (perClip.size() > 4096) { perClip.clear(); return Bind(scene, root, clip); }
+    b.rootUuid = rootUuid; b.targets.assign(clip.tracks.size(), kNullEntity); b.uuids.assign(clip.tracks.size(), 0);
+    for (size_t i = 0; i < clip.tracks.size(); ++i) {
+        EntityID target = root;
+        for (auto& name : clip.tracks[i].path) {
+            EntityID child = kNullEntity;
+            for (auto candidate : scene.GetChildren(target)) if (reg.Get<NameComponent>(candidate).name == name) { child = candidate; break; }
+            target = child; if (!target) break;
+        }
+        b.targets[i] = target;
+        b.uuids[i] = target ? reg.Get<IDComponent>(target).uuid : 0;
+    }
+    return b;
+}
+}
+
+// Samples a clip asset: the compiled path when the clip only moves transforms with linear/constant keys
+static void SampleClipAsset(Scene& scene, EntityID root, const json& clip, float time, bool loop) {
+    const CompiledClip& compiled = Compile(clip);
+    if (!compiled.fast) { AnimatorSystem::SampleClip(scene, root, clip, time, loop); return; }
+    float duration = std::max(.0001f, clip.value("duration", 1.f));
+    float t = loop ? std::fmod(std::max(0.f, time), duration) : std::clamp(time, 0.f, duration);
+    const Binding& binding = Bind(scene, root, compiled);
+    auto& reg = scene.Reg();
+    for (size_t i = 0; i < compiled.tracks.size(); ++i) {
+        EntityID target = binding.targets[i];
+        if (!target) continue;
+        const CompiledTrack& track = compiled.tracks[i];
+        auto& transform = reg.Get<TransformComponent>(target);
+        if (!track.position.times.empty()) transform.position = SampleChannel(track.position, t, track.constant);
+        if (!track.rotation.times.empty()) transform.SetEuler(SampleChannel(track.rotation, t, track.constant));
+        if (!track.scale.times.empty()) transform.scale = SampleChannel(track.scale, t, track.constant);
+    }
 }
 static glm::vec3 Sample(const json& keys, float time, glm::vec3 fallback,const std::string& interpolation="Linear") {
     if (!keys.is_array() || keys.empty()) return fallback;
@@ -82,19 +200,29 @@ void AnimatorSystem::SampleClip(Scene& scene,EntityID root,const json& clip,floa
 }
 bool AnimatorSystem::AdvanceController(AnimatorComponent& animator,const json& controller,float duration,const json* parameterOwner){
  const json& owner=parameterOwner?*parameterOwner:controller;
- for(auto& p:owner.value("parameters",json::array())){auto name=p.value("name",std::string());auto d=p.find("default");
+ if(auto ps=owner.find("parameters");ps!=owner.end()&&ps->is_array())for(auto& p:*ps){auto name=p.value("name",std::string());auto d=p.find("default");
   if(p.value("type","")=="Vector2"){bool pair=d!=p.end()&&d->is_array()&&d->size()==2;animator.parameters.try_emplace(name+".x",pair?(*d)[0].get<float>():0.f);animator.parameters.try_emplace(name+".y",pair?(*d)[1].get<float>():0.f);}
   else animator.parameters.try_emplace(name,d!=p.end()&&d->is_number()?d->get<float>():0.f);}
  if(animator.state.empty())animator.state=controller.value("defaultState","");
- for(auto& t:controller.value("transitions",json::array())){
+ static const json noArray=json::array(),noObject=json::object();
+ auto transitions=controller.find("transitions");
+ auto statesIt=controller.find("states");
+ const json& states=statesIt!=controller.end()&&statesIt->is_object()?*statesIt:noObject;
+ const json& parameters=[&]()->const json&{auto f=owner.find("parameters");return f!=owner.end()&&f->is_array()?*f:noArray;}();
+ if(transitions==controller.end()||!transitions->is_array())return false;
+ for(const json& t:*transitions){
   if(t.value("mute",false))continue;
-  auto from=t.value("from","");if(from!=animator.state&&from!="Any State")continue;auto to=t.value("to","");if(to==animator.state&&!t.value("canTransitionToSelf",false))continue;
+  auto fromIt=t.find("from"),toIt=t.find("to");if(fromIt==t.end()||toIt==t.end()||!fromIt->is_string()||!toIt->is_string())continue;
+  const std::string& from=fromIt->get_ref<const std::string&>();const std::string& to=toIt->get_ref<const std::string&>();
+  if(from!=animator.state&&from!="Any State")continue;if(to==animator.state&&!t.value("canTransitionToSelf",false))continue;
   if(t.value("hasExitTime",false)&&animator.time<std::max(.0001f,duration)*t.value("exitTime",1.f))continue;
-  bool pass=true;auto conditions=t.value("conditions",json::array());
-  if(conditions.empty()&&!t.value("parameter",std::string()).empty())conditions.push_back({{"parameter",t["parameter"]},{"mode",">="},{"threshold",t.value("threshold",.5f)}});
-  for(auto& c:conditions){auto parameter=c.value("parameter","");auto found=animator.parameters.find(parameter);if(found==animator.parameters.end()){pass=false;break;}float value=found->second,threshold=c.value("threshold",0.f);auto op=c.value("mode",">");bool match=op=="If"?value!=0:op=="IfNot"?value==0:op==">"?value>threshold:op=="<"?value<threshold:op=="=="?value==threshold:op=="!="?value!=threshold:op=="<="?value<=threshold:value>=threshold;if(!match){pass=false;break;}}
-  if(!pass)continue;if(to!="Exit"&&!controller.value("states",json::object()).contains(to))continue;
-  for(auto& c:conditions)for(auto& p:owner.value("parameters",json::array()))if(p.value("name","")==c.value("parameter","")&&p.value("type","")=="Trigger")animator.parameters[p.value("name","")]=0;
+  bool pass=true;
+  json legacy;const json* conditions=&noArray;
+  if(auto c=t.find("conditions");c!=t.end()&&c->is_array())conditions=&*c;
+  if(conditions->empty()&&!t.value("parameter",std::string()).empty()){legacy=json::array({{{"parameter",t["parameter"]},{"mode",">="},{"threshold",t.value("threshold",.5f)}}});conditions=&legacy;}
+  for(auto& c:*conditions){auto parameter=c.value("parameter","");auto found=animator.parameters.find(parameter);if(found==animator.parameters.end()){pass=false;break;}float value=found->second,threshold=c.value("threshold",0.f);auto op=c.value("mode",">");bool match=op=="If"?value!=0:op=="IfNot"?value==0:op==">"?value>threshold:op=="<"?value<threshold:op=="=="?value==threshold:op=="!="?value!=threshold:op=="<="?value<=threshold:value>=threshold;if(!match){pass=false;break;}}
+  if(!pass)continue;if(to!="Exit"&&!states.contains(to))continue;
+  for(auto& c:*conditions)for(auto& p:parameters)if(p.value("name","")==c.value("parameter","")&&p.value("type","")=="Trigger")animator.parameters[p.value("name","")]=0;
   animator.previousState=animator.state;animator.previousTime=animator.time;animator.transitionTime=0;animator.transitionDuration=std::max(0.f,t.value("duration",0.f))*(t.value("fixedDuration",true)?1.f:duration);animator.state=to;animator.time=std::max(0.f,t.value("offset",0.f));animator.blendDuration=0;if(to=="Exit")animator.playing=false;return true;
  }return false;
 }
@@ -164,14 +292,14 @@ static void BlendTransform(TransformComponent& dest, const TransformComponent& f
 void AnimatorSystem::SampleState(Scene& scene,EntityID root,const json& state,float time,const std::unordered_map<std::string,float>& parameters){
     const bool loop=state.value("loop",true);
     auto tree=state.find("blendTree");
-    if(tree==state.end()||!tree->is_object()){std::string clip=state.value("clip",std::string());if(!clip.empty())SampleClip(scene,root,ReadAsset(clip),time,loop);return;}
+    if(tree==state.end()||!tree->is_object()){auto clip=state.find("clip");if(clip!=state.end()&&clip->is_string()&&!clip->get_ref<const std::string&>().empty())SampleClipAsset(scene,root,ReadAsset(clip->get_ref<const std::string&>()),time,loop);return;}
     auto weights=BlendWeights(*tree,BlendPoint(*tree,parameters));
     if(weights.empty())return;
     const json& children=(*tree)["children"];
     // Every child runs at the same normalized time, so a walk and a run keep their feet in step
     const float phase=time/StateDuration(state,parameters);
     std::vector<int> active;for(int i=0;i<(int)weights.size();++i)if(weights[i]>.001f&&!children[i].value("clip",std::string()).empty())active.push_back(i);
-    auto sampleChild=[&](int i){const json& child=children[i];const float length=ClipSeconds(child);float t=phase*length;if(child.value("speed",1.f)<0)t=length-std::fmod(t,length);SampleClip(scene,root,ReadAsset(child.value("clip",std::string())),t,loop);};
+    auto sampleChild=[&](int i){const json& child=children[i];const float length=ClipSeconds(child);float t=phase*length;if(child.value("speed",1.f)<0)t=length-std::fmod(t,length);SampleClipAsset(scene,root,ReadAsset(child.value("clip",std::string())),t,loop);};
     if(active.empty())return;
     if(active.size()==1){sampleChild(active[0]);return;}
     PoseSnapshot original=CapturePose(scene,root),result;float total=0;
@@ -213,9 +341,14 @@ static void CollectEvents(EntityID e, AnimatorComponent& a, const json& states, 
 }
 
 static PoseSnapshot CapturePose(Scene& scene, EntityID root) {
+    // The animated object and its descendants, walked through the hierarchy (not the whole scene)
     PoseSnapshot pose;
-    for (EntityID entity : scene.Reg().AllEntities())
-        if (entity == root || scene.IsDescendantOf(entity, root)) pose.push_back({ entity, scene.Reg().Get<TransformComponent>(entity) });
+    std::vector<EntityID> stack{ root };
+    while (!stack.empty()) {
+        EntityID entity = stack.back(); stack.pop_back();
+        pose.push_back({ entity, scene.Reg().Get<TransformComponent>(entity) });
+        for (EntityID child : scene.GetChildren(entity)) stack.push_back(child);
+    }
     return pose;
 }
 static void BlendTransform(TransformComponent& dest, const TransformComponent& from, float weight) {

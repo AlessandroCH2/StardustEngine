@@ -42,7 +42,7 @@ struct RigidbodyNative { int type; float mass; float drag; float angularDrag; in
 
 enum class ComponentType : int {
     Transform = 0, MeshRenderer, Rigidbody, BoxCollider, SphereCollider, CapsuleCollider, Camera, Light, Script, MeshCollider,
-    AnyLight = 10, AudioSource = 11, Animator = 12, Canvas = 13, RectTransform = 14, UIImage = 15, UIText = 16, UIButton = 17, CanvasGroup = 18, RectMask = 19, UILayout = 20, UIInputField = 21, SpriteRenderer=22, Environment=23, Terrain=24, SpotLight=25, VideoPlayer=26, SpriteBatch=27, Rigidbody2D=28, BoxCollider2D=29, CircleCollider2D=30, CapsuleCollider2D=31, ParticleSystem=32,
+    AnyLight = 10, AudioSource = 11, Animator = 12, Canvas = 13, RectTransform = 14, UIImage = 15, UIText = 16, UIButton = 17, CanvasGroup = 18, RectMask = 19, UILayout = 20, UIInputField = 21, SpriteRenderer=22, Environment=23, Terrain=24, SpotLight=25, VideoPlayer=26, SpriteBatch=27, Rigidbody2D=28, BoxCollider2D=29, CircleCollider2D=30, CapsuleCollider2D=31, ParticleSystem=32, VehicleController=33, WheelCollider=34,
 };
 
 struct NativeApi {
@@ -236,6 +236,13 @@ static void RebuildBody(EntityID e) {
     S()->Physics()->CreateBody(e);
 }
 
+// A wheel belongs to the closest ancestor with a Vehicle Controller: that body is rebuilt
+static void RebuildVehicleOf(EntityID e) {
+    if (!S()) return;
+    for (EntityID p = e; p; p = S()->GetParent(p))
+        if (S()->Reg().Has<VehicleControllerComponent>(p)) { RebuildBody(p); return; }
+}
+
 static void InitNativeApi() {
     NativeApi& a = s_Native;
     a.Log = [](int level, const char* msg) {
@@ -263,6 +270,8 @@ static void InitNativeApi() {
         switch ((ComponentType)t) {
         case ComponentType::SpriteBatch:return r.Has<SpriteBatchComponent>(e);
         case ComponentType::ParticleSystem:return r.Has<ParticleSystemComponent>(e);
+        case ComponentType::VehicleController:return r.Has<VehicleControllerComponent>(e);
+        case ComponentType::WheelCollider:return r.Has<WheelColliderComponent>(e);
         case ComponentType::Rigidbody2D:return r.Has<Rigidbody2DComponent>(e);case ComponentType::BoxCollider2D:return r.Has<BoxCollider2DComponent>(e);
         case ComponentType::CircleCollider2D:return r.Has<CircleCollider2DComponent>(e);case ComponentType::CapsuleCollider2D:return r.Has<CapsuleCollider2DComponent>(e);
         case ComponentType::VideoPlayer:return r.Has<VideoPlayerComponent>(e);case ComponentType::SpriteRenderer:return r.Has<SpriteRendererComponent>(e);case ComponentType::Environment:return r.Has<EnvironmentComponent>(e);case ComponentType::Terrain:return r.Has<TerrainComponent>(e);case ComponentType::SpotLight:return r.Has<SpotLightComponent>(e);case ComponentType::Transform: return 1;
@@ -298,6 +307,8 @@ static void InitNativeApi() {
         case ComponentType::SpriteBatch:if(!r.Has<SpriteBatchComponent>(e))r.Add<SpriteBatchComponent>(e);break;
         case ComponentType::ParticleSystem:if(!r.Has<ParticleSystemComponent>(e))r.Add<ParticleSystemComponent>(e);break;
         case ComponentType::Rigidbody2D:if(!r.Has<Rigidbody2DComponent>(e))r.Add<Rigidbody2DComponent>(e);RebuildBody(e);break;
+        case ComponentType::VehicleController:if(!r.Has<VehicleControllerComponent>(e))r.Add<VehicleControllerComponent>(e);RebuildBody(e);break;
+        case ComponentType::WheelCollider:if(!r.Has<WheelColliderComponent>(e))r.Add<WheelColliderComponent>(e);RebuildVehicleOf(e);break;
         case ComponentType::BoxCollider2D:if(!r.Has<BoxCollider2DComponent>(e))r.Add<BoxCollider2DComponent>(e);RebuildBody(e);break;
         case ComponentType::CircleCollider2D:if(!r.Has<CircleCollider2DComponent>(e))r.Add<CircleCollider2DComponent>(e);RebuildBody(e);break;
         case ComponentType::CapsuleCollider2D:if(!r.Has<CapsuleCollider2DComponent>(e))r.Add<CapsuleCollider2DComponent>(e);RebuildBody(e);break;
@@ -339,6 +350,8 @@ static void InitNativeApi() {
         case ComponentType::Environment:r.Remove<EnvironmentComponent>(e);break;
         case ComponentType::Terrain:r.Remove<TerrainComponent>(e);RebuildBody(e);break;
         case ComponentType::SpotLight:r.Remove<SpotLightComponent>(e);break;
+        case ComponentType::VehicleController:r.Remove<VehicleControllerComponent>(e);RebuildBody(e);break;
+        case ComponentType::WheelCollider:r.Remove<WheelColliderComponent>(e);RebuildVehicleOf(e);break;
         case ComponentType::VideoPlayer:VideoPlayerSystem::Remove(*S(),e);r.Remove<VideoPlayerComponent>(e);break;
         case ComponentType::MeshRenderer: r.Remove<MeshRendererComponent>(e); break;
         case ComponentType::Rigidbody: r.Remove<RigidbodyComponent>(e); RebuildBody(e); break;
@@ -555,6 +568,10 @@ static void InitNativeApi() {
         if(type==101)data={{"layers",Project::Config().layers}};
         if(type==100){data["connected"]=Input::GamepadConnected((int)id);data["axes"]=j::array();data["buttons"]=j::array();data["pressed"]=j::array();for(int i=0;i<6;++i)data["axes"].push_back(Input::GamepadAxis((int)id,i));for(int i=0;i<15;++i){data["buttons"].push_back(Input::GamepadButton((int)id,i));data["pressed"].push_back(Input::GamepadButton((int)id,i,true));}}
         if(e){auto& r=S()->Reg();
+            if(type==33)if(auto* c=r.TryGet<VehicleControllerComponent>(e))data={{"engineTorque",c->engineTorque},{"minRPM",c->minRPM},{"maxRPM",c->maxRPM},{"shiftUpRPM",c->shiftUpRPM},{"shiftDownRPM",c->shiftDownRPM},{"centerOfMassOffset",c->centerOfMassOffset},{"maxPitchRoll",c->maxPitchRoll},{"antiRollBars",c->antiRollBars},{"limitedSlipRatio",c->limitedSlipRatio},
+                {"throttle",c->throttle},{"steer",c->steer},{"brake",c->brake},{"handbrake",c->handbrake},{"speed",c->speed},{"rpm",c->rpm},{"gear",c->gear}};
+            if(type==34)if(auto* c=r.TryGet<WheelColliderComponent>(e))data={{"radius",c->radius},{"width",c->width},{"suspensionDistance",c->suspensionDistance},{"springFrequency",c->springFrequency},{"springDamping",c->springDamping},{"maxSteerAngle",c->maxSteerAngle},{"motor",c->motor},{"handbrake",c->handbrake},
+                {"brakeTorque",c->brakeTorque},{"handbrakeTorque",c->handbrakeTorque},{"forwardFriction",c->forwardFriction},{"sidewaysFriction",c->sidewaysFriction},{"steerAngle",c->steerAngle},{"rotationAngle",c->rotationAngle},{"suspensionLength",c->suspensionLength},{"compression",c->compression},{"isGrounded",c->grounded}};
             if(type==32)if(auto* c=r.TryGet<ParticleSystemComponent>(e)){ParticleSystems::ToJson(*c,data);data["isPlaying"]=c->playing&&!c->paused;data["isPaused"]=c->paused;data["isEmitting"]=c->emitting;data["particleCount"]=c->particles.size();data["time"]=c->time;}
             // Quads are not in here (they can be megabytes): QueryJson "spriteBatchQuads" reads them
             if(type==27)if(auto* c=r.TryGet<SpriteBatchComponent>(e)){u64 v=c->version;for(u64 chunk:c->chunkVersions)v=v*1099511628211ull^chunk;data={{"textures",c->textures},{"count",c->quads.size()},{"material",c->material},{"color",vec4(c->color)},{"sortingOrder",c->sortingOrder},{"version",std::to_string(v)},{"animations",c->animations.size()}};}
@@ -602,6 +619,18 @@ static void InitNativeApi() {
             auto v3=[&](const char* name,glm::vec3& v){if(data.contains(name)&&data[name].is_array()&&data[name].size()==3)v={data[name][0].get<float>(),data[name][1].get<float>(),data[name][2].get<float>()};};
             auto collider=[&](auto* c){if(c){c->material.isTrigger=data.value("isTrigger",c->material.isTrigger);c->material.friction=std::max(0.f,data.value("friction",c->material.friction));c->material.restitution=std::clamp(data.value("restitution",c->material.restitution),0.f,1.f);}};
             if(type==3)if(auto* c=r.TryGet<BoxColliderComponent>(e)){collider(c);v3("size",c->size);v3("center",c->center);RebuildBody(e);}
+            if(type==33)if(auto* c=r.TryGet<VehicleControllerComponent>(e)){
+                // Driver inputs are read by the physics step; changing a setting rebuilds the vehicle
+                c->throttle=data.value("throttle",c->throttle);c->steer=data.value("steer",c->steer);c->brake=data.value("brake",c->brake);c->handbrake=data.value("handbrake",c->handbrake);
+                bool rebuild=false;auto f=[&](const char* k,float& v){if(data.contains(k)){v=data[k].get<float>();rebuild=true;}};
+                f("engineTorque",c->engineTorque);f("minRPM",c->minRPM);f("maxRPM",c->maxRPM);f("shiftUpRPM",c->shiftUpRPM);f("shiftDownRPM",c->shiftDownRPM);f("centerOfMassOffset",c->centerOfMassOffset);f("maxPitchRoll",c->maxPitchRoll);f("limitedSlipRatio",c->limitedSlipRatio);
+                if(data.contains("antiRollBars")){c->antiRollBars=data["antiRollBars"].get<bool>();rebuild=true;}
+                if(rebuild)RebuildBody(e);}
+            if(type==34)if(auto* c=r.TryGet<WheelColliderComponent>(e)){
+                auto f=[&](const char* k,float& v){if(data.contains(k))v=data[k].get<float>();};
+                f("radius",c->radius);f("width",c->width);f("suspensionDistance",c->suspensionDistance);f("springFrequency",c->springFrequency);f("springDamping",c->springDamping);f("maxSteerAngle",c->maxSteerAngle);
+                f("brakeTorque",c->brakeTorque);f("handbrakeTorque",c->handbrakeTorque);f("forwardFriction",c->forwardFriction);f("sidewaysFriction",c->sidewaysFriction);
+                c->motor=data.value("motor",c->motor);c->handbrake=data.value("handbrake",c->handbrake);RebuildVehicleOf(e);}
             if(type==28)if(auto* c=r.TryGet<Rigidbody2DComponent>(e)){c->type=(BodyType)std::clamp(data.value("bodyType",(int)c->type),0,2);c->mass=std::max(.001f,data.value("mass",c->mass));c->linearDamping=std::max(0.f,data.value("linearDamping",c->linearDamping));c->angularDamping=std::max(0.f,data.value("angularDamping",c->angularDamping));c->gravityScale=data.value("gravityScale",c->gravityScale);c->freezeRotation=data.value("freezeRotation",c->freezeRotation);RebuildBody(e);}
             if(type==29)if(auto* c=r.TryGet<BoxCollider2DComponent>(e)){collider(c);v2("size",c->size);v2("offset",c->offset);RebuildBody(e);}
             if(type==30)if(auto* c=r.TryGet<CircleCollider2DComponent>(e)){collider(c);c->radius=std::max(.001f,data.value("radius",c->radius));v2("offset",c->offset);RebuildBody(e);}

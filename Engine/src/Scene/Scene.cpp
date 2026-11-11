@@ -1,6 +1,7 @@
 #include <map>
 #include <chrono>
 #include "Scene/Scene.h"
+#include "Core/Profiler.h"
 #include "Assets/TextureImport.h"
 #include "Scene/ComponentState.h"
 #include "Core/FileSystem.h"
@@ -107,6 +108,8 @@ void Scene::CopyComponents(EntityID src, EntityID dst) {
     if (auto* c = m_Registry.TryGet<CircleCollider2DComponent>(src)) m_Registry.Add<CircleCollider2DComponent>(dst, *c);
     if (auto* c = m_Registry.TryGet<CapsuleCollider2DComponent>(src)) m_Registry.Add<CapsuleCollider2DComponent>(dst, *c);
     if (auto* c = m_Registry.TryGet<SphereColliderComponent>(src)) m_Registry.Add<SphereColliderComponent>(dst, *c);
+    if (auto* c = m_Registry.TryGet<VehicleControllerComponent>(src)) m_Registry.Add<VehicleControllerComponent>(dst, *c);
+    if (auto* c = m_Registry.TryGet<WheelColliderComponent>(src)) m_Registry.Add<WheelColliderComponent>(dst, *c);
     if (auto* c = m_Registry.TryGet<CapsuleColliderComponent>(src)) m_Registry.Add<CapsuleColliderComponent>(dst, *c);
     if (auto* c = m_Registry.TryGet<MeshColliderComponent>(src)) m_Registry.Add<MeshColliderComponent>(dst, *c);
     if (auto* c = m_Registry.TryGet<ScriptComponent>(src)) m_Registry.Add<ScriptComponent>(dst, *c);
@@ -342,21 +345,23 @@ void Scene::OnRuntimeStop() {
 void Scene::OnUpdate(float dt) {
     if (!m_Running) return;
     dt *= std::max(timeScale, 0.0f);
-    VideoPlayerSystem::Update(*this,dt);
-    AnimatorSystem::Update(*this, dt);
-    ParticleSystems::Update(*this, dt);
+    { SD_PROFILE("Video"); VideoPlayerSystem::Update(*this,dt); }
+    { SD_PROFILE("Animation"); AnimatorSystem::Update(*this, dt); }
+    { SD_PROFILE("Particles"); ParticleSystems::Update(*this, dt); }
     const float fixedDt = 1.0f / 60.0f;
     m_FixedAccumulator = std::min(m_FixedAccumulator + dt, fixedDt * 5.0f);
     while (m_FixedAccumulator >= fixedDt) {
-        ScriptEngine::FixedUpdate(fixedDt);
+        { SD_PROFILE("Scripts (FixedUpdate)"); ScriptEngine::FixedUpdate(fixedDt); }
         if (m_Physics) {
-            m_Physics->Step(fixedDt);
+            { SD_PROFILE("Physics"); m_Physics->Step(fixedDt); }
+            SD_PROFILE("Scripts (contacts)");
             for (auto& c : m_Physics->TakeCollisionEvents())
                 if (m_Registry.Valid(c.a) && m_Registry.Valid(c.b)) ScriptEngine::OnContact(c.a, c.b, (int)c.kind);
         }
         m_FixedAccumulator -= fixedDt;
     }
-    ScriptEngine::Update(dt);
+    { SD_PROFILE("Scripts (Update)"); ScriptEngine::Update(dt); }
+    SD_PROFILE("Scene upkeep");
 
     // Entities created by scripts this frame get their bodies / instances; destroyed ones are removed
     auto pending = std::move(m_PendingDestroy);

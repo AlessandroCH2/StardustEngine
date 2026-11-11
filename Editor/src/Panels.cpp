@@ -1,5 +1,6 @@
 #include "Assets/AssetMeta.h"
 #include "EditorApp.h"
+#include "Core/Profiler.h"
 #include <set>
 #include <map>
 #include <functional>
@@ -689,6 +690,35 @@ void EditorApp::DrawInspector() {
         if (!c.convex) ImGui::TextDisabled("Non-convex mesh colliders are static only.");
         physMat(c.material);
     });
+    ComponentSection<VehicleControllerComponent>(inspectScene, e, "Vehicle Controller", true, [&](VehicleControllerComponent& c) {
+        FloatProp("Engine Torque (Nm)", c.engineTorque, 5.0f, 10.0f, 5000.0f);
+        FloatProp("Min RPM", c.minRPM, 10.0f, 100.0f, 5000.0f);
+        FloatProp("Max RPM", c.maxRPM, 10.0f, 1000.0f, 20000.0f);
+        FloatProp("Shift Up RPM", c.shiftUpRPM, 10.0f, 500.0f, 20000.0f);
+        FloatProp("Shift Down RPM", c.shiftDownRPM, 10.0f, 100.0f, 20000.0f);
+        FloatProp("Centre of Mass Offset", c.centerOfMassOffset, 0.01f, -3.0f, 3.0f);
+        FloatProp("Max Pitch / Roll", c.maxPitchRoll, 0.5f, 1.0f, 180.0f);
+        FloatProp("Limited Slip Ratio", c.limitedSlipRatio, 0.01f, 1.0f, 10.0f);
+        BoolProp("Anti-Roll Bars", c.antiRollBars);
+        if (!reg.Has<RigidbodyComponent>(e)) ImGui::TextDisabled("Needs a dynamic Rigidbody and a collider.");
+        ImGui::TextDisabled("Wheels: the Wheel Colliders on child objects.");
+        if (m_State != PlayState::Edit) ImGui::Text("Speed %.1f km/h   RPM %.0f   Gear %d", c.speed * 3.6f, c.rpm, c.gear);
+    });
+    ComponentSection<WheelColliderComponent>(inspectScene, e, "Wheel Collider", true, [&](WheelColliderComponent& c) {
+        FloatProp("Radius", c.radius, 0.005f, 0.05f, 3.0f);
+        FloatProp("Width", c.width, 0.005f, 0.02f, 2.0f);
+        FloatProp("Suspension Distance", c.suspensionDistance, 0.005f, 0.02f, 2.0f);
+        FloatProp("Spring Frequency (Hz)", c.springFrequency, 0.01f, 0.1f, 20.0f);
+        FloatProp("Spring Damping", c.springDamping, 0.01f, 0.0f, 1.0f);
+        FloatProp("Max Steer Angle", c.maxSteerAngle, 0.5f, 0.0f, 89.0f);
+        BoolProp("Motor (driven)", c.motor);
+        BoolProp("Handbrake", c.handbrake);
+        FloatProp("Brake Torque", c.brakeTorque, 10.0f, 0.0f, 20000.0f);
+        FloatProp("Handbrake Torque", c.handbrakeTorque, 10.0f, 0.0f, 20000.0f);
+        FloatProp("Forward Friction", c.forwardFriction, 0.01f, 0.0f, 5.0f);
+        FloatProp("Sideways Friction", c.sidewaysFriction, 0.01f, 0.0f, 5.0f);
+        if (m_State != PlayState::Edit) ImGui::Text("Grounded %s   Compression %.2f   Steer %.1f", c.grounded ? "yes" : "no", c.compression, c.steerAngle);
+    });
     ComponentSection<CanvasComponent>(inspectScene,e,"Canvas",true,[&](auto& c) {
         Insp::Combo("Render Mode",&c.renderMode,"Screen Space Overlay\0World Space\0Screen Space Camera\0");
         Insp::DragFloat2("Reference Resolution",glm::value_ptr(c.referenceResolution),1,1,8192); BoolProp("Scale with screen",c.scaleWithScreen); Insp::InputInt("Sorting Order",&c.sortingOrder); FloatProp("Pixels Per Unit",c.pixelsPerUnit,1,1,1000);if(c.renderMode==2)FloatProp("Plane Distance",c.planeDistance,.1f,.1f,1000);
@@ -780,6 +810,8 @@ void EditorApp::DrawInspector() {
         if (!reg.Has<SphereColliderComponent>(e) && item("Sphere Collider")) reg.Add<SphereColliderComponent>(e);
         if (!reg.Has<CapsuleColliderComponent>(e) && item("Capsule Collider")) reg.Add<CapsuleColliderComponent>(e);
         if (!reg.Has<MeshColliderComponent>(e) && item("Mesh Collider")) reg.Add<MeshColliderComponent>(e);
+        if (!reg.Has<VehicleControllerComponent>(e) && item("Vehicle Controller")) reg.Add<VehicleControllerComponent>(e);
+        if (!reg.Has<WheelColliderComponent>(e) && item("Wheel Collider")) reg.Add<WheelColliderComponent>(e);
         section("UI / Animation");
         if(!reg.Has<UILayoutGroupComponent>(e)&&item("Layout Group"))reg.Add<UILayoutGroupComponent>(e);
         if(!reg.Has<CanvasGroupComponent>(e)&&item("Canvas Group"))reg.Add<CanvasGroupComponent>(e);
@@ -846,6 +878,8 @@ static bool MatchesReference(Registry& reg, EntityID e, const std::string& type)
     if (c == "SphereCollider") return reg.Has<SphereColliderComponent>(e);
     if (c == "CapsuleCollider") return reg.Has<CapsuleColliderComponent>(e);
     if (c == "MeshCollider") return reg.Has<MeshColliderComponent>(e);
+    if (c == "VehicleController") return reg.Has<VehicleControllerComponent>(e);
+    if (c == "WheelCollider") return reg.Has<WheelColliderComponent>(e);
     if (c == "DirectionalLight") return reg.Has<DirectionalLightComponent>(e);
     if (c == "Light") return reg.Has<DirectionalLightComponent>(e) || reg.Has<PointLightComponent>(e) || reg.Has<SpotLightComponent>(e);
     if (c == "AudioSource") return reg.Has<AudioSourceComponent>(e);
@@ -1777,6 +1811,14 @@ void EditorApp::DrawStats() {
     ImGui::Separator();
     auto& s = m_SceneRenderer->Stats();
     ImGui::Text("Scene view: %u draws, %llu tris, %ux%u", s.drawCalls, (unsigned long long)s.triangles, m_SceneRenderer->Width(), m_SceneRenderer->Height());
+    ImGui::SeparatorText("CPU systems (average)");
+    if (ImGui::BeginTable("##cpu", 2, ImGuiTableFlags_RowBg)) {
+        for (auto& s : Profiler::Sections()) {
+            ImGui::TableNextColumn(); ImGui::TextUnformatted(s.name.c_str());
+            ImGui::TableNextColumn(); ImGui::Text("%.3f ms", s.average);
+        }
+        ImGui::EndTable();
+    }
     ImGui::SeparatorText("GPU passes");
     if (ImGui::BeginTable("##gpu", 2, ImGuiTableFlags_RowBg)) {
         for (auto& t : GetDevice().GpuTimings()) {

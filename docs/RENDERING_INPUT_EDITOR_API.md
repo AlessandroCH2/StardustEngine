@@ -149,3 +149,7 @@ Transform, RectTransform, prefab metadata, imported rig/bone metadata and entity
 ## Locked mouse in the editor
 
 A locked Game cursor retains gameplay capture even when GLFW's virtual cursor coordinates leave the visible viewport. Escape releases capture; click in Game again to recapture it. Losing application focus also releases the lock. Mode changes discard the synthetic cursor-position jump, and repeated requests for the same mode do not reset tracking. `Input.cursorLocked` reads the current gameplay lock state. Gameplay cursor requests do not override Scene navigation while the game does not own mouse input.
+
+## CPU profiler
+
+The Stats window lists **CPU systems (average)**: the time each part of a frame takes on the main thread, averaged over about half a second: Animation, Particles, Scripts (FixedUpdate / contacts / Update), Physics, Scene upkeep, and per view the render submission ("submit") and command recording ("record"). Engine code can add sections with `SD_PROFILE("Name")` (Core/Profiler.h); sections with the same name add up within a frame.
