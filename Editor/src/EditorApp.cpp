@@ -506,7 +506,9 @@ void EditorApp::DrawMenuBar() {
         const ImRect bar = ImGui::GetCurrentWindow()->MenuBarRect();
         const float size = std::round(bar.GetHeight() - 12 * UiScale());
         ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 4 * UiScale());
-        const ImVec2 at(ImGui::GetCursorScreenPos().x, std::round(bar.GetCenter().y - size * 0.5f));
+        // Centered on the menu labels' line, which sits lower than the bar's middle (MenuBarOffset)
+        const float textCenter = ImGui::GetCursorScreenPos().y + ImGui::GetCurrentWindow()->DC.CurrLineTextBaseOffset + ImGui::GetFontSize() * 0.5f;
+        const ImVec2 at(ImGui::GetCursorScreenPos().x, std::round(textCenter - size * 0.5f));
         ImGui::Dummy({ size, 1 });
         ImGui::GetWindowDrawList()->AddImage((ImTextureID)icon, at, { at.x + size, at.y + size });
         ImGui::SameLine(0, 4 * UiScale());

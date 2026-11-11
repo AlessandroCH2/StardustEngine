@@ -17,11 +17,17 @@
 #include "Core/FileSystem.h"
 #include "Core/Process.h"
 #include "Core/Log.h"
+#include "Version.h"
+#include <chrono>
+#include <format>
 #include <imgui.h>
+#include <imgui_internal.h>
 #include <nlohmann/json.hpp>
 #include <imgui_stdlib.h>
 #include <thread>
 #include <fstream>
+#include <map>
+#include <set>
 
 namespace Stardust {
 
@@ -29,67 +35,426 @@ namespace fs = std::filesystem;
 
 // ------------------------------------------------------------------------------------------------ project hub
 
+namespace {
+// "5 minutes ago", "3 days ago"... for the project list
+std::string AgeText(const fs::path& file) {
+    std::error_code ec;
+    const auto written = fs::last_write_time(file, ec);
+    if (ec) return "";
+    const auto seconds = std::chrono::duration_cast<std::chrono::seconds>(fs::file_time_type::clock::now() - written).count();
+    auto plural = [](long long n, const char* unit) { return std::format("{} {}{} ago", n, unit, n == 1 ? "" : "s"); };
+    if (seconds < 60) return "Just now";
+    if (seconds < 3600) return plural(seconds / 60, "minute");
+    if (seconds < 86400) return plural(seconds / 3600, "hour");
+    if (seconds < 86400 * 30) return plural(seconds / 86400, "day");
+    if (seconds < 86400 * 365) return plural(seconds / (86400 * 30), "month");
+    return plural(seconds / (86400 * 365), "year");
+}
+// Rounded tile with the project's initial, its color picked from the name
+void ProjectTile(ImDrawList* d, ImVec2 min, float size, const std::string& name) {
+    static const ImU32 colors[] = { IM_COL32(47, 128, 237, 255), IM_COL32(52, 168, 120, 255), IM_COL32(200, 120, 60, 255),
+                                    IM_COL32(150, 95, 210, 255), IM_COL32(200, 80, 110, 255), IM_COL32(60, 160, 185, 255) };
+    const ImU32 color = colors[std::hash<std::string>{}(name) % std::size(colors)];
+    d->AddRectFilled(min, { min.x + size, min.y + size }, color, size * 0.22f);
+    const char initial[2] = { name.empty() ? '?' : (char)std::toupper((unsigned char)name[0]), 0 };
+    ImFont* bold = Application::BoldFont();
+    ImFont* font = bold ? bold : ImGui::GetFont();
+    const float fontSize = ImGui::GetFontSize() * 1.15f;
+    const ImVec2 t = font->CalcTextSizeA(fontSize, FLT_MAX, 0, initial);
+    d->AddText(font, fontSize, { min.x + (size - t.x) * 0.5f, min.y + (size - t.y) * 0.5f }, IM_COL32(255, 255, 255, 255), initial);
+}
+}
+
+namespace {
+// What the Hub shows about a project, read from its .sdproject and refreshed when the file changes
+struct HubProjectInfo { bool exists = false; fs::file_time_type modified{}; std::string engineVersion, platform; };
+const HubProjectInfo& ProjectInfo(const fs::path& file) {
+    static std::map<fs::path, HubProjectInfo> cache;
+    HubProjectInfo& info = cache[file];
+    std::error_code ec;
+    const auto time = fs::last_write_time(file, ec);
+    if (ec) { info = {}; return info; }
+    if (info.exists && info.modified == time) return info;
+    info.exists = true; info.modified = time;
+    const auto j = nlohmann::json::parse(FileSystem::ReadText(file), nullptr, false);
+    info.engineVersion = j.is_object() ? j.value("engineVersion", std::string()) : std::string();
+    info.platform = "Windows";
+    if (j.is_object() && j.contains("player") && j["player"].is_object()) info.platform = j["player"].value("target", info.platform);
+    return info;
+}
+// -1, 0 or 1 comparing "0.6.2"-style versions number by number; empty counts as oldest
+int CompareVersions(const std::string& a, const std::string& b) {
+    auto parts = [](const std::string& v) { std::vector<int> out; int n = 0; bool any = false; for (char c : v) { if (std::isdigit((unsigned char)c)) { n = n * 10 + (c - '0'); any = true; } else if (c == '.') { out.push_back(n); n = 0; } else break; } if (any || !out.empty()) out.push_back(n); return out; };
+    const auto x = parts(a), y = parts(b);
+    for (size_t i = 0; i < std::max(x.size(), y.size()); ++i) {
+        const int u = i < x.size() ? x[i] : 0, v = i < y.size() ? y[i] : 0;
+        if (u != v) return u < v ? -1 : 1;
+    }
+    return x.empty() == y.empty() ? 0 : x.empty() ? -1 : 1;
+}
+// Favorite projects, kept in %APPDATA%/Stardust/hub.json next to the recent list
+fs::path HubFile() { const char* appdata = std::getenv("APPDATA"); return fs::path(appdata ? appdata : ".") / "Stardust" / "hub.json"; }
+std::set<std::string>& HubFavoritesStorage() {
+    static std::set<std::string> favorites;
+    static bool loaded = false;
+    if (!loaded) {
+        loaded = true;
+        const auto j = nlohmann::json::parse(FileSystem::ReadText(HubFile()), nullptr, false);
+        if (j.is_object()) for (auto& f : j.value("favorites", nlohmann::json::array())) if (f.is_string()) favorites.insert(f.get<std::string>());
+    }
+    return favorites;
+}
+const std::set<std::string>& HubFavorites() { return HubFavoritesStorage(); }
+void SetHubFavorite(const fs::path& project, bool favorite) {
+    auto& favorites = HubFavoritesStorage();
+    const std::string key = FileSystem::Utf8(project);
+    if (favorite ? !favorites.insert(key).second : !favorites.erase(key)) return;
+    FileSystem::WriteText(HubFile(), nlohmann::json({ { "favorites", favorites } }).dump(2));
+}
+void DrawStar(ImDrawList* d, ImVec2 c, float r, bool filled, ImU32 color) {
+    ImVec2 points[10];
+    for (int i = 0; i < 10; ++i) {
+        const float a = -1.5707963f + i * 0.6283185f, radius = i % 2 ? r * 0.45f : r;
+        points[i] = { c.x + std::cos(a) * radius, c.y + std::sin(a) * radius };
+    }
+    if (filled) { for (int i = 0; i < 10; i += 2) d->AddTriangleFilled(c, points[i], points[(i + 1) % 10], color), d->AddTriangleFilled(c, points[i], points[(i + 9) % 10], color); }
+    else d->AddPolyline(points, 10, color, ImDrawFlags_Closed, 1.4f);
+}
+void DrawWarning(ImDrawList* d, ImVec2 c, float r, ImU32 color) {
+    d->AddTriangleFilled({ c.x, c.y - r }, { c.x + r * 1.1f, c.y + r * .85f }, { c.x - r * 1.1f, c.y + r * .85f }, color);
+    d->AddLine({ c.x, c.y - r * .35f }, { c.x, c.y + r * .3f }, IM_COL32(25, 26, 29, 255), std::max(1.5f, r * .2f));
+    d->AddCircleFilled({ c.x, c.y + r * .58f }, std::max(1.f, r * .13f), IM_COL32(25, 26, 29, 255));
+}
+}
+
+// Project Hub in the editor's style: a sidebar, a Projects page with a searchable list, and a New Project dialog
 void EditorApp::DrawProjectHub() {
     const ImGuiViewport* vp = ImGui::GetMainViewport();
+    const float ui = UiScale();
+    ImFont* bold = Application::BoldFont();
     ImGui::SetNextWindowPos(vp->WorkPos);
     ImGui::SetNextWindowSize(vp->WorkSize);
-    ImGui::Begin("##hub", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0);
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(35, 37, 41, 255));
+    ImGui::Begin("##hub", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBringToFrontOnFocus);
+    ImGui::PopStyleColor();
+    ImGui::PopStyleVar(2);
 
-    ImGui::SetWindowFontScale(1.6f);
-    ImGui::TextUnformatted("Stardust Hub");
-    ImGui::SetWindowFontScale(1.0f);
-    ImGui::TextDisabled("Choose a project to open, or create a new one.");
-    ImGui::Separator();
+    // Sidebar
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, IM_COL32(24, 25, 29, 255));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14 * ui, 16 * ui));
+    ImGui::BeginChild("##hubSidebar", ImVec2(230 * ui, 0), ImGuiChildFlags_AlwaysUseWindowPadding);
+    {
+        auto* d = ImGui::GetWindowDrawList();
+        const ImVec2 p = ImGui::GetCursorScreenPos();
+        const float iconSize = 30 * ui;
+        if (void* icon = EngineIconTexture()) d->AddImage((ImTextureID)icon, p, { p.x + iconSize, p.y + iconSize });
+        d->AddText(bold ? bold : ImGui::GetFont(), ImGui::GetFontSize() * 1.2f, { p.x + iconSize + 10 * ui, p.y + (iconSize - ImGui::GetFontSize() * 1.2f) * 0.5f },
+                   IM_COL32(232, 234, 238, 255), "Stardust Hub");
+        ImGui::Dummy({ 1, iconSize + 22 * ui });
+        // Navigation (only Projects for now)
+        const ImVec2 a = ImGui::GetCursorScreenPos(), b(a.x + ImGui::GetContentRegionAvail().x, a.y + 34 * ui);
+        d->AddRectFilled(a, b, IM_COL32(44, 72, 115, 255), 4);
+        d->AddRectFilled(a, { a.x + 3 * ui, b.y }, IM_COL32(47, 128, 237, 255), 2);
+        // Small cube icon
+        const ImVec2 c(a.x + 20 * ui, (a.y + b.y) * 0.5f);
+        const float s = 6.5f * ui;
+        ImVec2 top[] = { { c.x, c.y - s }, { c.x + s, c.y - s * .5f }, { c.x, c.y }, { c.x - s, c.y - s * .5f } };
+        d->AddConvexPolyFilled(top, 4, IM_COL32(220, 225, 232, 255));
+        ImVec2 left[] = { { c.x - s, c.y - s * .35f }, { c.x - s * .08f, c.y + s * .12f }, { c.x - s * .08f, c.y + s }, { c.x - s, c.y + s * .5f } };
+        d->AddConvexPolyFilled(left, 4, IM_COL32(160, 168, 180, 255));
+        ImVec2 right[] = { { c.x + s * .08f, c.y + s * .12f }, { c.x + s, c.y - s * .35f }, { c.x + s, c.y + s * .5f }, { c.x + s * .08f, c.y + s } };
+        d->AddConvexPolyFilled(right, 4, IM_COL32(120, 128, 140, 255));
+        d->AddText({ a.x + 36 * ui, (a.y + b.y - ImGui::GetFontSize()) * 0.5f }, IM_COL32(235, 237, 241, 255), "Projects");
+        ImGui::Dummy({ 1, b.y - a.y });
+        // Version at the bottom
+        const float bottom = ImGui::GetWindowPos().y + ImGui::GetWindowHeight() - 16 * ui - ImGui::GetFontSize();
+        d->AddText({ a.x, bottom }, IM_COL32(110, 114, 122, 255), "Stardust " STARDUST_VERSION_FULL);
+    }
+    ImGui::EndChild();
+    ImGui::PopStyleVar();
+    ImGui::PopStyleColor();
+    ImGui::SameLine(0, 0);
 
-    float w = ImGui::GetContentRegionAvail().x;
-    ImGui::BeginChild("##recent", ImVec2(w * 0.62f, 0), ImGuiChildFlags_Borders);
-    ImGui::SeparatorText("Recent Projects");
-    auto recent = Project::RecentProjects();
-    if (recent.empty()) ImGui::TextDisabled("No recent projects.");
-    for (auto& p : recent) {
-        ImGui::PushID(p.string().c_str());
-        if (ImGui::Selectable(std::format("{}\n{}", p.stem().string(), p.parent_path().string()).c_str(), false,
-                              ImGuiSelectableFlags_AllowDoubleClick, ImVec2(0, 42*UiScale()))) {
-            if (ImGui::IsMouseDoubleClicked(0)) OpenProject(p);
+    // Projects page
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(28 * ui, 22 * ui));
+    ImGui::BeginChild("##hubMain", ImVec2(0, 0), ImGuiChildFlags_AlwaysUseWindowPadding);
+    ImGui::PopStyleVar();
+    static std::string search;
+    static fs::path selected, pendingOpen;
+    static int sortColumn = 2; // 0 name, 1 engine version, 2 modified
+    static bool sortAscending = false;
+    fs::path openNow;          // opened after the Hub window ends
+    bool askVersion = false;
+    const auto& favorites = HubFavorites();
+    // Opens a project, asking first when it was last saved by another engine version
+    auto requestOpen = [&](const fs::path& project) {
+        const HubProjectInfo& info = ProjectInfo(project);
+        if (!info.engineVersion.empty() && info.engineVersion != STARDUST_VERSION) { pendingOpen = project; askVersion = true; }
+        else openNow = project;
+    };
+    {
+        if (bold) ImGui::PushFont(bold);
+        ImGui::SetWindowFontScale(1.45f);
+        ImGui::TextUnformatted("Projects");
+        ImGui::SetWindowFontScale(1);
+        if (bold) ImGui::PopFont();
+        // Search, Add and New project on the right of the heading, like Unity Hub
+        const float buttonHeight = 32 * ui, addWidth = 80 * ui, newWidth = 130 * ui, searchWidth = std::min(300 * ui, ImGui::GetWindowWidth() * 0.3f);
+        ImGui::SameLine(ImGui::GetWindowWidth() - ImGui::GetStyle().WindowPadding.x - searchWidth - addWidth - newWidth - 16 * ui);
+        const float rowY = ImGui::GetCursorPosY() - 4 * ui;
+        ImGui::SetCursorPosY(rowY);
+        {
+            const ImVec2 p = ImGui::GetCursorScreenPos();
+            ImGui::SetNextItemWidth(searchWidth);
+            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(26 * ui, (buttonHeight - ImGui::GetFontSize()) * 0.5f));
+            ImGui::InputTextWithHint("##hubSearch", "Search", &search);
+            ImGui::PopStyleVar();
+            auto* d = ImGui::GetWindowDrawList();
+            const ImVec2 c(p.x + 13 * ui, p.y + buttonHeight * 0.5f - 1);
+            d->AddCircle(c, 4.5f * ui, IM_COL32(150, 154, 162, 255), 12, 1.5f);
+            d->AddLine({ c.x + 3.2f * ui, c.y + 3.2f * ui }, { c.x + 6.5f * ui, c.y + 6.5f * ui }, IM_COL32(150, 154, 162, 255), 1.8f);
         }
-        if (ImGui::BeginPopupContextItem()) {
-            if (ImGui::MenuItem("Open")) OpenProject(p);
-            if (ImGui::MenuItem("Show in Explorer")) ShellExecuteFile(p.parent_path());
-            if (ImGui::MenuItem("Remove from list")) Project::RemoveRecent(p);
+        ImGui::SameLine(0, 8 * ui);
+        ImGui::SetCursorPosY(rowY);
+        {
+            const ImVec2 p = ImGui::GetCursorScreenPos();
+            if (ImGui::Button("Add      ##hubAdd", { addWidth, buttonHeight })) ImGui::OpenPopup("HubAdd");
+            const float cx = p.x + addWidth - 18 * ui, cy = p.y + buttonHeight * 0.5f;
+            ImGui::GetWindowDrawList()->AddTriangleFilled({ cx - 4 * ui, cy - 2 * ui }, { cx + 4 * ui, cy - 2 * ui }, { cx, cy + 3 * ui }, IM_COL32(210, 214, 220, 255));
+            ImGui::SetNextWindowPos({ p.x, p.y + buttonHeight + 4 * ui });
+            if (ImGui::BeginPopup("HubAdd")) {
+                if (ImGui::MenuItem("Add project from disk"))
+                    if (auto file = FileDialogs::OpenFile(GetWindow().NativeHandle(), L"Stardust Project (*.sdproject)\0*.sdproject\0", {})) { Project::AddRecent(*file); selected = fs::absolute(*file); }
+                if (ImGui::MenuItem("Open project from disk"))
+                    if (auto file = FileDialogs::OpenFile(GetWindow().NativeHandle(), L"Stardust Project (*.sdproject)\0*.sdproject\0", {})) requestOpen(*file);
+                ImGui::EndPopup();
+            }
+        }
+        ImGui::SameLine(0, 8 * ui);
+        ImGui::SetCursorPosY(rowY);
+        ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(47, 128, 237, 255));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(82, 150, 245, 255));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, IM_COL32(36, 108, 210, 255));
+        ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(255, 255, 255, 255));
+        if (ImGui::Button("+  New project", { newWidth, buttonHeight })) ImGui::OpenPopup("New Project");
+        ImGui::PopStyleColor(4);
+    }
+    ImGui::Dummy({ 1, 10 * ui });
+
+    // Projects matching the search; favorites first, then the chosen sort
+    auto recent = Project::RecentProjects();
+    auto lower = [](std::string text) { std::transform(text.begin(), text.end(), text.begin(), [](unsigned char c) { return (char)std::tolower(c); }); return text; };
+    const std::string needle = lower(search);
+    std::erase_if(recent, [&](const fs::path& p) { return !needle.empty() && lower(FileSystem::Utf8(p)).find(needle) == std::string::npos; });
+    std::stable_sort(recent.begin(), recent.end(), [&](const fs::path& x, const fs::path& y) {
+        const bool fx = favorites.count(FileSystem::Utf8(x)) > 0, fy = favorites.count(FileSystem::Utf8(y)) > 0;
+        if (fx != fy) return fx;
+        int order = 0;
+        if (sortColumn == 0) order = lower(FileSystem::Utf8(x.stem())).compare(lower(FileSystem::Utf8(y.stem())));
+        else if (sortColumn == 1) order = CompareVersions(ProjectInfo(x).engineVersion, ProjectInfo(y).engineVersion);
+        else { const auto tx = ProjectInfo(x).modified, ty = ProjectInfo(y).modified; order = tx < ty ? -1 : tx > ty ? 1 : 0; }
+        return sortAscending ? order < 0 : order > 0;
+    });
+
+    // Column layout shared by the header and the rows
+    const float width = ImGui::GetContentRegionAvail().x;
+    const float nameX = 92 * ui, platformX = std::max(330 * ui, width * 0.5f), versionX = platformX + 150 * ui, modifiedX = width - 190 * ui;
+    {
+        auto* d = ImGui::GetWindowDrawList();
+        const ImVec2 p = ImGui::GetCursorScreenPos();
+        const float h = 30 * ui, ty = p.y + (h - ImGui::GetFontSize()) * 0.5f;
+        d->AddRectFilled(p, { p.x + width, p.y + h }, IM_COL32(29, 31, 35, 255), 5, ImDrawFlags_RoundCornersTop);
+        d->AddLine({ p.x, p.y + h }, { p.x + width, p.y + h }, IM_COL32(52, 55, 61, 255));
+        const ImU32 dim = IM_COL32(150, 154, 162, 255);
+        DrawStar(d, { p.x + 22 * ui, p.y + h * 0.5f }, 6.5f * ui, false, dim);
+        // Sortable headers: click to sort, again to reverse
+        auto header = [&](const char* label, float x, int column) {
+            const ImVec2 size = ImGui::CalcTextSize(label);
+            ImGui::SetCursorScreenPos({ p.x + x - 4 * ui, p.y });
+            ImGui::PushID(column);
+            if (ImGui::InvisibleButton("##sort", { size.x + 26 * ui, h })) { if (sortColumn == column) sortAscending = !sortAscending; else { sortColumn = column; sortAscending = column == 0; } }
+            const bool hovered = ImGui::IsItemHovered();
+            ImGui::PopID();
+            d->AddText({ p.x + x, ty }, hovered || sortColumn == column ? IM_COL32(225, 228, 233, 255) : dim, label);
+            if (sortColumn == column) {
+                const float ax = p.x + x + size.x + 10 * ui, ay = p.y + h * 0.5f, r = 3.5f * ui;
+                if (sortAscending) d->AddTriangleFilled({ ax - r, ay + r * .6f }, { ax + r, ay + r * .6f }, { ax, ay - r * .7f }, IM_COL32(225, 228, 233, 255));
+                else d->AddTriangleFilled({ ax - r, ay - r * .6f }, { ax + r, ay - r * .6f }, { ax, ay + r * .7f }, IM_COL32(225, 228, 233, 255));
+            }
+        };
+        header("Name", nameX, 0);
+        d->AddText({ p.x + platformX, ty }, dim, "Platform");
+        header("Engine version", versionX, 1);
+        header("Modified", modifiedX, 2);
+        ImGui::SetCursorScreenPos({ p.x, p.y + h + 4 * ui });
+        ImGui::Dummy({ width, 0 });
+    }
+
+    ImGui::BeginChild("##hubList", ImVec2(0, 0));
+    if (recent.empty()) {
+        const char* empty = search.empty() ? "No projects yet. Create one with New project." : "No project matches the search.";
+        ImGui::Dummy({ 1, 30 * ui });
+        ImGui::SetCursorPosX(std::max(0.0f, (ImGui::GetContentRegionAvail().x - ImGui::CalcTextSize(empty).x) * 0.5f));
+        ImGui::TextDisabled("%s", empty);
+    }
+    const float rowHeight = 58 * ui, tile = 36 * ui, lineH = ImGui::GetFontSize();
+    for (const fs::path& p : recent) {
+        ImGui::PushID(FileSystem::Utf8(p).c_str());
+        const HubProjectInfo& info = ProjectInfo(p);
+        const bool exists = info.exists, favorite = favorites.count(FileSystem::Utf8(p)) > 0;
+        const std::string name = FileSystem::Utf8(p.stem()), folder = FileSystem::Utf8(p.parent_path());
+        const ImVec2 a = ImGui::GetCursorScreenPos(), b(a.x + ImGui::GetContentRegionAvail().x, a.y + rowHeight);
+        const bool clicked = ImGui::InvisibleButton("##project", { b.x - a.x, rowHeight }, ImGuiButtonFlags_PressedOnClick);
+        const bool hovered = ImGui::IsItemHovered(), isSelected = selected == p;
+        const ImVec2 star(a.x + 22 * ui, (a.y + b.y) * 0.5f), dots(b.x - 18 * ui, (a.y + b.y) * 0.5f);
+        const bool overStar = hovered && ImGui::IsMouseHoveringRect({ star.x - 12 * ui, a.y }, { star.x + 12 * ui, b.y });
+        const bool overDots = hovered && ImGui::IsMouseHoveringRect({ dots.x - 12 * ui, a.y }, { dots.x + 12 * ui, b.y });
+        if (clicked) {
+            selected = p;
+            if (overStar) SetHubFavorite(p, !favorite);
+            else if (overDots) ImGui::OpenPopup("ProjectMenu");
+        }
+        if (hovered && !overStar && !overDots && ImGui::IsMouseDoubleClicked(0) && exists) requestOpen(p);
+        if (ImGui::IsItemClicked(1)) { selected = p; ImGui::OpenPopup("ProjectMenu"); }
+
+        auto* d = ImGui::GetWindowDrawList();
+        if (isSelected || hovered) d->AddRectFilled(a, b, isSelected ? IM_COL32(44, 72, 115, 255) : IM_COL32(43, 46, 51, 255), 5);
+        else d->AddLine({ a.x + 8 * ui, b.y }, { b.x - 8 * ui, b.y }, IM_COL32(42, 44, 49, 255));
+        // Favorite star
+        if (favorite || hovered) DrawStar(d, star, 7 * ui, favorite, favorite ? IM_COL32(245, 196, 70, 255) : overStar ? IM_COL32(230, 232, 236, 255) : IM_COL32(130, 134, 142, 255));
+        // Tile, name and path
+        if (exists) ProjectTile(d, { a.x + 44 * ui, a.y + (rowHeight - tile) * 0.5f }, tile, name);
+        else DrawWarning(d, { a.x + 44 * ui + tile * 0.5f, (a.y + b.y) * 0.5f }, 11 * ui, IM_COL32(240, 190, 60, 255));
+        const ImVec4 nameClip(a.x, a.y, a.x + platformX - 16 * ui, b.y);
+        const float nameY = a.y + rowHeight * 0.5f - lineH - 1;
+        ImFont* nameFont = bold ? bold : ImGui::GetFont();
+        d->AddText(nameFont, lineH, { a.x + nameX, nameY }, exists ? IM_COL32(235, 237, 241, 255) : IM_COL32(170, 174, 182, 255), name.c_str(), nullptr, 0, &nameClip);
+        if (!exists) { // "Project not found" pill after the name
+            const float x = a.x + nameX + nameFont->CalcTextSizeA(lineH, FLT_MAX, 0, name.c_str()).x + 8 * ui;
+            const char* badge = "Project not found";
+            const ImVec2 t = ImGui::CalcTextSize(badge);
+            d->AddRectFilled({ x, nameY - 1 }, { x + t.x + 14 * ui, nameY + lineH + 1 }, IM_COL32(64, 67, 74, 255), lineH);
+            d->AddText({ x + 7 * ui, nameY }, IM_COL32(225, 228, 233, 255), badge);
+        }
+        d->AddText(nullptr, 0, { a.x + nameX, a.y + rowHeight * 0.5f + 2 }, IM_COL32(135, 139, 147, 255), folder.c_str(), nullptr, 0, &nameClip);
+        // Platform, engine version (warning when it is not this editor's), modified
+        const float midY = a.y + (rowHeight - lineH) * 0.5f;
+        d->AddText({ a.x + platformX, midY }, exists ? IM_COL32(200, 204, 211, 255) : IM_COL32(120, 124, 132, 255), exists ? info.platform.c_str() : "-");
+        if (!exists || info.engineVersion.empty()) {
+            d->AddText({ a.x + versionX, midY }, IM_COL32(120, 124, 132, 255), exists ? "Unknown" : "-");
+            if (exists && ImGui::IsMouseHoveringRect({ a.x + versionX, a.y }, { a.x + modifiedX - 10 * ui, b.y }))
+                ImGui::SetTooltip("Saved before engine versions were recorded.\nIt is stamped the next time the project opens.");
+        } else {
+            const int compare = CompareVersions(info.engineVersion, STARDUST_VERSION);
+            float x = a.x + versionX;
+            if (compare != 0) {
+                DrawWarning(d, { x + 7 * ui, midY + lineH * 0.5f }, 7 * ui, compare > 0 ? IM_COL32(235, 85, 75, 255) : IM_COL32(240, 190, 60, 255));
+                x += 20 * ui;
+                if (ImGui::IsMouseHoveringRect({ a.x + versionX, a.y }, { a.x + modifiedX - 10 * ui, b.y }))
+                    ImGui::SetTooltip(compare > 0 ? "Last saved with a newer engine (%s).\nThis editor is %s: some data may not load." : "Last saved with an older engine (%s).\nOpening it in %s upgrades the project.",
+                                      info.engineVersion.c_str(), STARDUST_VERSION);
+            }
+            d->AddText({ x, midY }, IM_COL32(200, 204, 211, 255), info.engineVersion.c_str());
+        }
+        d->AddText({ a.x + modifiedX, midY }, IM_COL32(150, 154, 162, 255), exists ? AgeText(p).c_str() : "-");
+        // ⋮ menu
+        if (hovered || isSelected) {
+            if (overDots) d->AddRectFilled({ dots.x - 11 * ui, dots.y - 13 * ui }, { dots.x + 11 * ui, dots.y + 13 * ui }, IM_COL32(64, 68, 76, 255), 4);
+            for (int i = -1; i <= 1; ++i) d->AddCircleFilled({ dots.x, dots.y + i * 5 * ui }, 1.8f * ui, IM_COL32(200, 204, 211, 255));
+        }
+        if (overStar) ImGui::SetTooltip("%s", favorite ? "Remove from favorites" : "Add to favorites");
+        else if (hovered && !overDots && !ImGui::IsMouseHoveringRect({ a.x + versionX, a.y }, { a.x + modifiedX - 10 * ui, b.y })) ImGui::SetTooltip("%s", exists ? "Double-click to open" : "The project file was moved or deleted");
+        if (ImGui::BeginPopup("ProjectMenu")) {
+            if (ImGui::MenuItem("Open", nullptr, false, exists)) requestOpen(p);
+            if (ImGui::MenuItem("Show in Explorer", nullptr, false, exists)) ShellExecuteFile(p.parent_path());
+            if (ImGui::MenuItem("Copy path")) ImGui::SetClipboardText(folder.c_str());
+            if (ImGui::MenuItem(favorite ? "Remove from favorites" : "Add to favorites")) SetHubFavorite(p, !favorite);
+            ImGui::Separator();
+            if (ImGui::MenuItem("Remove from list")) { Project::RemoveRecent(p); SetHubFavorite(p, false); }
             ImGui::EndPopup();
         }
         ImGui::PopID();
     }
-    ImGui::TextDisabled("Double-click to open, right-click for options.");
     ImGui::EndChild();
 
-    ImGui::SameLine();
-    ImGui::BeginChild("##new", ImVec2(0, 0), ImGuiChildFlags_Borders);
-    ImGui::SeparatorText("New Project");
-    static std::string name = "My Game";
-    static std::string location;
-    if (location.empty()) location = (fs::path(std::getenv("USERPROFILE") ? std::getenv("USERPROFILE") : "C:/") / "Documents" / "Stardust Projects").string();
-    ImGui::TextUnformatted("Name");
-    ImGui::SetNextItemWidth(-1);
-    ImGui::InputText("##name", &name);
-    ImGui::TextUnformatted("Location");
-    ImGui::SetNextItemWidth(-70);
-    ImGui::InputText("##loc", &location);
-    ImGui::SameLine();
-    if (ImGui::Button("Browse")) if (auto f = FileDialogs::PickFolder(GetWindow().NativeHandle(), location)) location = f->string();
-    ImGui::TextDisabled("Folder: %s", (fs::path(location) / name).string().c_str());
-    ImGui::Spacing();
-    if (ImGui::Button("Create Project", ImVec2(-1, 34*UiScale())) && !name.empty()) {
-        fs::path dir = fs::path(location) / name;
-        if (Project::Create(dir, name)) OpenProject(Project::File(), true);
+    // Opening a project saved by another engine version asks first, like Unity Hub
+    if (askVersion) ImGui::OpenPopup("Change engine version?");
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, { 0.5f, 0.5f });
+    ImGui::SetNextWindowSize({ 480 * ui, 0 });
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(20 * ui, 18 * ui));
+    if (ImGui::BeginPopupModal("Change engine version?", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoSavedSettings)) {
+        const std::string version = ProjectInfo(pendingOpen).engineVersion;
+        const bool newer = CompareVersions(version, STARDUST_VERSION) > 0;
+        if (bold) ImGui::PushFont(bold);
+        ImGui::TextUnformatted(FileSystem::Utf8(pendingOpen.stem()).c_str());
+        if (bold) ImGui::PopFont();
+        ImGui::Spacing();
+        ImGui::PushTextWrapPos(0);
+        ImGui::Text("This project was last saved with Stardust %s. It will open in Stardust %s.", version.c_str(), STARDUST_VERSION);
+        if (newer) ImGui::TextColored({ 1, .5f, .45f, 1 }, "That version is newer than this editor: data it added may be lost when the project is saved.");
+        else ImGui::TextDisabled("Files are upgraded when saved and may not open in the older version again. Back up the project if needed.");
+        ImGui::PopTextWrapPos();
+        ImGui::Dummy({ 1, 6 * ui }); ImGui::Separator(); ImGui::Dummy({ 1, 6 * ui });
+        const float buttonWidth = 130 * ui;
+        ImGui::SetCursorPosX(ImGui::GetWindowWidth() - ImGui::GetStyle().WindowPadding.x - buttonWidth * 2 - 8 * ui);
+        if (ImGui::Button("Cancel", { buttonWidth, 30 * ui }) || ImGui::IsKeyPressed(ImGuiKey_Escape)) { pendingOpen.clear(); ImGui::CloseCurrentPopup(); }
+        ImGui::SameLine(0, 8 * ui);
+        ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(47, 128, 237, 255));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(82, 150, 245, 255));
+        if (ImGui::Button("Open anyway", { buttonWidth, 30 * ui })) { openNow = pendingOpen; pendingOpen.clear(); ImGui::CloseCurrentPopup(); }
+        ImGui::PopStyleColor(2);
+        ImGui::EndPopup();
     }
-    ImGui::Spacing();
-    ImGui::SeparatorText("Existing Project");
-    if (ImGui::Button("Open Project...", ImVec2(-1, 34*UiScale())))
-        if (auto p = FileDialogs::OpenFile(GetWindow().NativeHandle(), L"Stardust Project (*.sdproject)\0*.sdproject\0", location))
-            OpenProject(*p);
+    ImGui::PopStyleVar();
+
+    // New Project dialog
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, { 0.5f, 0.5f });
+    ImGui::SetNextWindowSize({ 520 * ui, 0 });
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(20 * ui, 18 * ui));
+    if (ImGui::BeginPopupModal("New Project", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoSavedSettings)) {
+        static std::string name = "My Game";
+        static std::string location;
+        if (location.empty()) location = (fs::path(std::getenv("USERPROFILE") ? std::getenv("USERPROFILE") : std::getenv("HOME") ? std::getenv("HOME") : "/") / "Documents" / "Stardust Projects").string();
+        ImGui::TextDisabled("Name");
+        ImGui::SetNextItemWidth(-1);
+        if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+        ImGui::InputText("##name", &name);
+        ImGui::Spacing();
+        ImGui::TextDisabled("Location");
+        ImGui::SetNextItemWidth(-80 * ui);
+        ImGui::InputText("##loc", &location);
+        ImGui::SameLine();
+        if (ImGui::Button("Browse", { -1, 0 })) if (auto f = FileDialogs::PickFolder(GetWindow().NativeHandle(), location)) location = f->string();
+        const fs::path dir = fs::path(location) / name;
+        const bool taken = !name.empty() && fs::exists(dir);
+        ImGui::Spacing();
+        if (taken) ImGui::TextColored({ 1, .55f, .45f, 1 }, "A folder with this name already exists.");
+        else ImGui::TextDisabled("Folder: %s", dir.string().c_str());
+        ImGui::Dummy({ 1, 6 * ui }); ImGui::Separator(); ImGui::Dummy({ 1, 6 * ui });
+        const float buttonWidth = 110 * ui;
+        ImGui::SetCursorPosX(ImGui::GetWindowWidth() - ImGui::GetStyle().WindowPadding.x - buttonWidth * 2 - 8 * ui);
+        if (ImGui::Button("Cancel", { buttonWidth, 30 * ui }) || ImGui::IsKeyPressed(ImGuiKey_Escape)) ImGui::CloseCurrentPopup();
+        ImGui::SameLine(0, 8 * ui);
+        ImGui::BeginDisabled(name.empty() || taken);
+        ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(47, 128, 237, 255));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(82, 150, 245, 255));
+        const bool create = ImGui::Button("Create", { buttonWidth, 30 * ui });
+        ImGui::PopStyleColor(2);
+        ImGui::EndDisabled();
+        if (create && Project::Create(dir, name)) {
+            ImGui::CloseCurrentPopup();
+            ImGui::EndPopup(); ImGui::PopStyleVar(); ImGui::EndChild(); ImGui::End();
+            OpenProject(Project::File(), true);
+            return;
+        }
+        ImGui::EndPopup();
+    }
+    ImGui::PopStyleVar();
     ImGui::EndChild();
     ImGui::End();
+    if (!openNow.empty()) OpenProject(openNow);
 }
 
 void EditorApp::OpenProject(const fs::path& file, bool isNew) {
@@ -98,6 +463,7 @@ void EditorApp::OpenProject(const fs::path& file, bool isNew) {
     if (m_State != PlayState::Edit) Stop();
     if (Project::IsLoaded() && m_EditorScene) SaveProjectState();
     if (!Project::Load(file)) return;
+    Project::Save(); // stamps the engine version the Hub shows
     Pak::SetPassphrase(Project::Config().pakKey);
     AssetMeta::MigrateFolder(Project::AssetsDir());
     PackageManager::EnsureDefault();

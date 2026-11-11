@@ -18,6 +18,6 @@ as the editor's export flow does. Existing builds must be rebuilt to pick up
 changes. Windows Explorer may cache old icons for an executable path.
 
 Stardust Editor and the default player embed `Engine/Resources/EngineIcon.ico`,
-converted from the supplied root `engineIcon.png`. The icon is available without
+generated with the root `engineIcon.png` from `Engine/Resources/EngineIcon.svg` by `python Tools/MakeEngineIcon.py`. The icon is available without
 loose branding files beside the executable. To replace the engine branding,
-regenerate that multi-resolution ICO and rebuild editor/player.
+edit the SVG and the matching shapes in the script, run it, and rebuild editor/player.

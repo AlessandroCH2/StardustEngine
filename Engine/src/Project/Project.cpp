@@ -7,6 +7,7 @@
 #include <charconv>
 #include <fstream>
 #include "Assets/Pak.h"
+#include "Version.h"
 
 namespace Stardust {
 
@@ -64,6 +65,7 @@ bool Project::Save() {
     if (!s_Loaded) return false;
     json j;
     j["name"] = s_Config.name;
+    j["engineVersion"] = STARDUST_VERSION; // the Project Hub shows which engine last saved the project
     j["company"] = s_Config.company;
     j["version"] = s_Config.version;
     j["assemblyName"] = s_Config.assemblyName;
@@ -246,7 +248,7 @@ std::vector<fs::path> Project::RecentProjects() {
     std::vector<fs::path> out;
     json j = json::parse(FileSystem::ReadText(RecentFile()), nullptr, false);
     if (j.is_array())
-        for (auto& p : j) if (p.is_string() && fs::exists(fs::path(p.get<std::string>()))) out.push_back(p.get<std::string>());
+        for (auto& p : j) if (p.is_string()) out.push_back(fs::u8path(p.get<std::string>())); // missing projects stay listed: the Hub marks them
     return out;
 }
 
@@ -254,9 +256,9 @@ void Project::AddRecent(const fs::path& file) {
     auto list = RecentProjects();
     std::erase(list, fs::absolute(file));
     list.insert(list.begin(), fs::absolute(file));
-    if (list.size() > 12) list.resize(12);
+    if (list.size() > 50) list.resize(50);
     json j = json::array();
-    for (auto& p : list) j.push_back(p.string());
+    for (auto& p : list) j.push_back(FileSystem::Utf8(p));
     FileSystem::WriteText(RecentFile(), j.dump(2));
 }
 
@@ -264,7 +266,7 @@ void Project::RemoveRecent(const fs::path& file) {
     auto list = RecentProjects();
     std::erase(list, fs::absolute(file));
     json j = json::array();
-    for (auto& p : list) j.push_back(p.string());
+    for (auto& p : list) j.push_back(FileSystem::Utf8(p));
     FileSystem::WriteText(RecentFile(), j.dump(2));
 }
 
