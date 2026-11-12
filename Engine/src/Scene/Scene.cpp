@@ -1,4 +1,5 @@
 #include <map>
+#include <optional>
 #include <chrono>
 #include "Scene/Scene.h"
 #include "Core/Profiler.h"
@@ -516,7 +517,7 @@ int Scene::SelectLOD(EntityID group, const RenderCamera& camera) {
 }
 
 void Scene::SubmitToRenderer(SceneRenderer& renderer, RHI::Device& device,bool animationPreview) {
-    ComputeWorldMatrices();
+    { SD_PROFILE("Submit: world matrices"); ComputeWorldMatrices(); }
     renderer.SyncQuality();
     // LOD Groups: the levels not chosen for this camera are left out, children included
     std::unordered_set<EntityID> lodHidden;
@@ -528,11 +529,13 @@ void Scene::SubmitToRenderer(SceneRenderer& renderer, RHI::Device& device,bool a
         for (int i = 0; i < (int)g.levels.size(); ++i) if (i != level) for (u64 id : g.levels[i].renderers) if (EntityID r = FindByUUID(id)) mark(r, true);
         if (level >= 0) for (u64 id : g.levels[level].renderers) if (EntityID r = FindByUUID(id)) mark(r, false); // also listed by another level
     });
+    std::optional<ProfileScope> section; section.emplace("Submit: terrain");
     m_Registry.Each<TerrainComponent>([&](EntityID e, TerrainComponent& t) {
         if (!IsActiveInHierarchy(e)||!(renderer.Camera().cullingMask&(1u<<std::clamp(m_Registry.Get<NameComponent>(e).layer,0,31)))) return;
         u64 uuid = m_Registry.Get<IDComponent>(e).uuid;
         renderer.SetTerrain(AcquireTerrain(*this,e,t,device), glm::vec3(m_WorldCache[e][3]), e);
     });
+    section.reset(); section.emplace("Submit: meshes");
     m_Registry.Each<MeshRendererComponent>([&](EntityID e, MeshRendererComponent& mr) {
         if (lodHidden.count(e)||!IsActiveInHierarchy(e)||!(renderer.Camera().cullingMask&(1u<<std::clamp(m_Registry.Get<NameComponent>(e).layer,0,31)))) return;
         const Material* mat = &mr.material;
@@ -544,10 +547,12 @@ void Scene::SubmitToRenderer(SceneRenderer& renderer, RHI::Device& device,bool a
         if(auto* player=m_Registry.TryGetEnabled<VideoPlayerComponent>(e);player&&player->renderMode==1)video=VideoPlayerSystem::Output(*this,e);
         auto tinted=[&](const Material& source)->const Material&{if(mr.tint==glm::vec4(1)&&!video)return source;tintedCopy=source;tintedCopy.color*=mr.tint;if(video)tintedCopy.runtimeAlbedo=video;return tintedCopy;};
         auto* animator = m_Registry.TryGet<AnimatorComponent>(e);
+        std::optional<ProfileScope> skinned; if (m_Registry.Has<FbxRigComponent>(e)) skinned.emplace("Submit: skinned meshes");
         auto mesh = m_Registry.Has<FbxRigComponent>(e)?AssetManager::GetPosedFbx(mr.mesh,m_Registry.Get<IDComponent>(e).uuid^((u64)(uintptr_t)this*0x9E3779B97F4A7C15ull),ModelSkeleton::Pose(*this,e)):animator && (m_Running||animationPreview) ? AssetManager::GetAnimatedFbx(mr.mesh,animator->time,animator->state) : AssetManager::GetMesh(mr.mesh);
         if(mesh&&!mesh->SubMeshes().empty()){for(auto& part:mesh->SubMeshes()){auto material=part.materialSlot<mr.materials.size()?AssetManager::GetMaterial(mr.materials[part.materialSlot]):nullptr;renderer.Submit(mesh,m_WorldCache[e],tinted(material?*material:*mat),e,mr.castShadows,part.firstIndex,part.indexCount,mr.receiveShadows);}}
         else {auto material=!mr.materials.empty()?AssetManager::GetMaterial(mr.materials[0]):nullptr;renderer.Submit(mesh,m_WorldCache[e],tinted(material?*material:*mat),e,mr.castShadows,0,0,mr.receiveShadows);}
     });
+    section.reset(); section.emplace("Submit: sprites, particles, lights");
     std::vector<EntityID> sprites;
     m_Registry.Each<SpriteRendererComponent>([&](EntityID e,SpriteRendererComponent&){sprites.push_back(e);});
     std::stable_sort(sprites.begin(),sprites.end(),[&](auto a,auto b){return m_Registry.Get<SpriteRendererComponent>(a).sortingOrder<m_Registry.Get<SpriteRendererComponent>(b).sortingOrder;});

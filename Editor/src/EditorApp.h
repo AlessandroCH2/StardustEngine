@@ -246,6 +246,7 @@ private:
     int m_UndoRebase = 0;
     bool m_UndoWasBusy = false;
     bool m_UndoPending = false;   // keys typed since the last undo check
+    std::string m_PrefabSignature; // prefab files used by the scene and their time stamps
     EntityID m_UndoSelected = 0;
     void RefreshAnimationPreview();
     bool m_SceneDirty = false;

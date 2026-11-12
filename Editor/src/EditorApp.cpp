@@ -412,6 +412,7 @@ void EditorApp::OnImGui() {
     struct FadeScope { bool active; FadeScope(float alpha) : active(alpha < 1) { if (active) ImGui::PushStyleVar(ImGuiStyleVar_Alpha, alpha); } ~FadeScope() { if (active) ImGui::PopStyleVar(); } };
     if (m_LayoutFade < 1) m_LayoutFade = std::min(1.0f, m_LayoutFade + ImGui::GetIO().DeltaTime / 0.18f);
     FadeScope fade(m_LayoutFade * m_LayoutFade * (3 - 2 * m_LayoutFade));
+    SD_PROFILE("Editor UI");
     DrawDockspace();
     DrawBuildSettings();
     DrawProjectSettings();
@@ -853,6 +854,7 @@ void EditorApp::UpdateScripts() {
     if (m_ScriptPollTimer > 1.0f) {
         m_ScriptPollTimer = 0.0f;
         // Saving a .cs file recompiles automatically (like Unity); the reload follows when the build succeeds
+        SD_PROFILE("Script file check");
         if (ScriptEngine::IsReady() && ScriptEngine::CheckForSourceChange()) {
             if (ScriptEngine::IsBuilding()) m_BuildPending = true;
             else { SD_INFO("Script change detected, compiling..."); ScriptEngine::BuildAsync(); }

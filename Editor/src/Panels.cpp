@@ -1811,11 +1811,15 @@ void EditorApp::DrawStats() {
     ImGui::Separator();
     auto& s = m_SceneRenderer->Stats();
     ImGui::Text("Scene view: %u draws, %llu tris, %ux%u", s.drawCalls, (unsigned long long)s.triangles, m_SceneRenderer->Width(), m_SceneRenderer->Height());
-    ImGui::SeparatorText("CPU systems (average)");
-    if (ImGui::BeginTable("##cpu", 2, ImGuiTableFlags_RowBg)) {
+    ImGui::SeparatorText("CPU systems");
+    if (ImGui::BeginTable("##cpu", 3, ImGuiTableFlags_RowBg)) {
+        ImGui::TableSetupColumn("System"); ImGui::TableSetupColumn("Average"); ImGui::TableSetupColumn("Peak (1 s)");
+        ImGui::TableHeadersRow();
         for (auto& s : Profiler::Sections()) {
             ImGui::TableNextColumn(); ImGui::TextUnformatted(s.name.c_str());
             ImGui::TableNextColumn(); ImGui::Text("%.3f ms", s.average);
+            ImGui::TableNextColumn();
+            if (s.peak > 4.0) ImGui::TextColored(ImVec4(1, 0.55f, 0.35f, 1), "%.3f ms", s.peak); else ImGui::Text("%.3f ms", s.peak);
         }
         ImGui::EndTable();
     }

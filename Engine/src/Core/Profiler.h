@@ -9,10 +9,10 @@ namespace Stardust {
 // Sections with the same name add up within a frame; EndFrame() publishes a smoothed average.
 class Profiler {
 public:
-    struct Section { std::string name; double ms = 0.0; double average = 0.0; };
+    struct Section { std::string name; double ms = 0.0; double average = 0.0; double peak = 0.0; double windowPeak = 0.0; };
     static void Add(const char* name, double ms);
     static void EndFrame();
-    static const std::vector<Section>& Sections();   // in first-seen order, averaged over ~0.5 s
+    static const std::vector<Section>& Sections();   // in first-seen order: average over ~0.5 s, peak = slowest frame of the last second
 };
 
 struct ProfileScope {

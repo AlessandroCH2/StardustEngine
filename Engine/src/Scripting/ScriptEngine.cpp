@@ -868,7 +868,36 @@ bool ScriptEngine::ReloadGameAssembly() {
 std::string ScriptEngine::DrawEditorUI(const std::string& request){if(!s_Ready||!s_EditorMode)return "{}";auto* response=s_Managed.DrawEditorUI(request.c_str());std::string result=response?response:"{}";if(response)s_Managed.FreeString(response);return result;}
 void ScriptEngine::RunEditorCommand(const std::string& path) { if (s_EditorMode && s_Ready) s_Managed.InvokeEditorCommand(path.c_str()); }
 
+// Windows: the folders are watched, and the (recursive) scan only runs after something in them changed
+#ifdef _WIN32
+static bool SourcesMayHaveChanged() {
+    struct Watch { std::string root; HANDLE handle = INVALID_HANDLE_VALUE; };
+    static std::vector<Watch> watches;
+    if (!Project::IsLoaded()) return true;
+    std::vector<fs::path> roots{ Project::AssetsDir(), Project::Dir() / "Packages" };
+    bool changed = false;
+    for (size_t i = 0; i < roots.size(); ++i) {
+        std::string root = FileSystem::Utf8(roots[i]);
+        if (watches.size() <= i) watches.resize(i + 1);
+        auto& w = watches[i];
+        if (w.root != root) {   // project switched (or first call): watch the new folder
+            if (w.handle != INVALID_HANDLE_VALUE) FindCloseChangeNotification(w.handle);
+            w.root = root;
+            w.handle = FindFirstChangeNotificationW(roots[i].wstring().c_str(), TRUE, FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_DIR_NAME | FILE_NOTIFY_CHANGE_LAST_WRITE);
+            changed = true;
+            continue;
+        }
+        if (w.handle == INVALID_HANDLE_VALUE) { changed = true; continue; }
+        if (WaitForSingleObject(w.handle, 0) == WAIT_OBJECT_0) { changed = true; FindNextChangeNotification(w.handle); }
+    }
+    return changed;
+}
+#else
+static bool SourcesMayHaveChanged() { return true; }
+#endif
+
 bool ScriptEngine::CheckForSourceChange() {
+    if (!SourcesMayHaveChanged()) return false;
     fs::file_time_type newest;
     size_t count;
     ScanSources(newest, count);

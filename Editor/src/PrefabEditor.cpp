@@ -1,3 +1,5 @@
+#include "Core/Profiler.h"
+#include <set>
 #include "EditorApp.h"
 #include "Scene/PrefabSystem.h"
 #include "Assets/AssetManager.h"
@@ -32,6 +34,18 @@ void EditorApp::UpdatePrefabs(){
         if(action==4){m_EditorScene->Reg().Remove<PrefabInstanceComponent>(e);m_EditorScene->Reg().Get<NameComponent>(e).prefab.clear();}
     }}
     if(!m_PrefabAsset.empty())return;m_PrefabPoll+=DeltaTime();if(m_PrefabPoll<.5f)return;m_PrefabPoll=0;
+    SD_PROFILE("Prefab check");
+    // Re-resolving prefab instances serializes the whole scene: only do it when an instance asks to be
+    // reverted or one of the prefab files the scene uses has changed
+    {
+        std::set<std::string> assets;bool revert=false;
+        m_EditorScene->Reg().Each<PrefabInstanceComponent>([&](EntityID,PrefabInstanceComponent& link){assets.insert(link.asset);revert|=link.revert;});
+        std::string signature;
+        for(auto& asset:assets){std::error_code ec;auto stamp=std::filesystem::last_write_time(AssetManager::ToAbsolute(asset),ec);signature+=asset+'|'+std::to_string(ec?0:(long long)stamp.time_since_epoch().count())+';';}
+        if(!revert&&signature==m_PrefabSignature)return;
+        m_PrefabSignature=signature;
+        if(assets.empty())return;
+    }
     u64 selected=m_EditorScene->Reg().Valid(m_Selected)?m_EditorScene->Reg().Get<IDComponent>(m_Selected).uuid:0;
     if(PrefabSystem::Refresh(m_EditorScene)){m_ActiveScene=m_EditorScene;m_Selected=m_EditorScene->FindByUUID(selected);m_SceneDirty=true;}
 }
