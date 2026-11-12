@@ -86,6 +86,12 @@ void AssetManager::Invalidate(const std::string& path) {
 }
 
 std::string AssetManager::ToRelative(const fs::path& absolute) {
+    // Paths built from the assets folder are made relative by text alone: std::filesystem::relative
+    // resolves both paths on disk, which is slow enough to show up when the editor draws file lists
+    if (absolute.is_absolute() && !s_Root.empty()) {
+        fs::path lexical = absolute.lexically_normal().lexically_relative(s_Root.lexically_normal());
+        if (!lexical.empty() && !lexical.generic_string().starts_with("..")) return FileSystem::Utf8(lexical);
+    }
     std::error_code ec;
     fs::path rel = fs::relative(absolute, s_Root, ec);
     if (ec || rel.empty() || rel.generic_string().starts_with("..")) return FileSystem::Utf8(absolute);

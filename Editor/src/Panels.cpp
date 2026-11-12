@@ -1453,6 +1453,7 @@ void EditorApp::DrawProjectFolderTree(const std::filesystem::path& dir, const st
 }
 
 void EditorApp::DrawProject() {
+    SD_PROFILE("Project window");
     if (!ImGui::Begin("Project", &m_ShowProject)) { ImGui::End(); return; }
     m_AnimationDockId=ImGui::GetWindowDockID();
     namespace fs = std::filesystem;
