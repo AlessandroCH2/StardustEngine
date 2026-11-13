@@ -32,6 +32,15 @@
       },
       "camera": {
         "cullingMask": 4294967295,
+        "clearFlags": 0,
+        "background": [
+          0.1899999976158142,
+          0.30000001192092896,
+          0.4699999988079071,
+          1.0
+        ],
+        "renderShadows": true,
+        "postProcessing": true,
         "targetTexture": "",
         "targetWidth": 512,
         "targetHeight": 512,
@@ -73,6 +82,15 @@
       },
       "camera": {
         "cullingMask": 1,
+        "clearFlags": 0,
+        "background": [
+          0.1899999976158142,
+          0.30000001192092896,
+          0.4699999988079071,
+          1.0
+        ],
+        "renderShadows": true,
+        "postProcessing": true,
         "targetTexture": "Textures/Minimap.rendertexture",
         "targetWidth": 256,
         "targetHeight": 192,
@@ -263,6 +281,7 @@
             0.0,
             0.0
           ],
+          "properties": {},
           "rimStrength": 0.3499999940395355,
           "roughness": 0.699999988079071,
           "shader": "Stardust/Standard",
@@ -281,9 +300,9 @@
       "active": true,
       "transform": {
         "position": [
-          0.0,
-          1.5,
-          0.0
+          0.11980241537094116,
+          1.4287619590759277,
+          0.01810454949736595
         ],
         "rotation": [
           1.0,
@@ -298,7 +317,7 @@
         ],
         "euler": [
           0.0,
-          0.0,
+          -0.0,
           0.0
         ]
       },
@@ -335,6 +354,7 @@
             0.0,
             0.0
           ],
+          "properties": {},
           "rimStrength": 0.3499999940395355,
           "roughness": 0.699999988079071,
           "shader": "Stardust/Standard",
@@ -407,6 +427,7 @@
             0.0,
             0.0
           ],
+          "properties": {},
           "rimStrength": 0.3499999940395355,
           "roughness": 0.699999988079071,
           "shader": "Stardust/Standard",
@@ -522,6 +543,7 @@
             0.0,
             0.0
           ],
+          "properties": {},
           "rimStrength": 0.3499999940395355,
           "roughness": 0.5,
           "shader": "Stardust/Standard",
@@ -872,10 +894,13 @@
       },
       "videoPlayer": {
         "clip": "Video/Test.mpg",
+        "renderMode": 0,
         "targetTexture": "",
         "playOnStart": true,
         "loop": true,
-        "speed": 1.0
+        "speed": 1.0,
+        "audio": true,
+        "volume": 1.0
       },
       "rectTransform": {
         "anchorMin": [
@@ -1261,6 +1286,7 @@
       "scripts": [
         {
           "class": "FeatureLabController",
+          "enabled": true,
           "fields": {
             "Actor": "0000000000000006",
             "Camera": "0000000000000001",
@@ -1334,6 +1360,7 @@
             0.0,
             0.0
           ],
+          "properties": {},
           "rimStrength": 0.3499999940395355,
           "roughness": 0.5,
           "shader": "Stardust/Standard",
@@ -1406,6 +1433,7 @@
             0.0,
             0.0
           ],
+          "properties": {},
           "rimStrength": 0.3499999940395355,
           "roughness": 0.5,
           "shader": "Stardust/Standard",

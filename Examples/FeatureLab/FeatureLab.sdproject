@@ -1,5 +1,6 @@
 {
   "name": "Stardust Feature Lab",
+  "engineVersion": "0.6.4",
   "company": "Stardust",
   "version": "1.0",
   "assemblyName": "FeatureLab",
@@ -59,6 +60,7 @@
     "height": 900,
     "fullscreen": false,
     "vsync": true,
+    "quality": 2,
     "icon": "",
     "target": "Windows"
   }

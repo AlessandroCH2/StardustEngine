@@ -1,9 +1,28 @@
 {
   "name": "Stardust Water",
   "shader": "Stardust/Water",
-  "color": [0.025, 0.25, 0.32, 0.75],
+  "color": [
+    0.025,
+    0.25,
+    0.32,
+    0.75
+  ],
   "roughness": 0.12,
   "normalStrength": 0.12,
-  "tiling": [0.3, 0.8],
-  "doubleSided": true
+  "tiling": [
+    0.3,
+    0.8
+  ],
+  "doubleSided": true,
+  "properties": {
+    "WaveSpeed": 1,
+    "WindDirection": [
+      1,
+      0.3
+    ],
+    "WaveHeight": 0.16,
+    "WaveScale": 1,
+    "DirectionalSpread": 0.75,
+    "FoamAmount": 0.6
+  }
 }

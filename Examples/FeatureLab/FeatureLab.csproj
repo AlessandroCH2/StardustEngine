@@ -1,15 +1,28 @@
 <Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- C# scripts of this Stardust project. The editor compiles them automatically when a .cs file is saved. -->
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
     <AssemblyName>FeatureLab</AssemblyName>
-    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <RootNamespace>FeatureLab</RootNamespace>
     <Nullable>disable</Nullable>
-    <NuGetAudit>false</NuGetAudit>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
-    <StardustBin Condition="'$(StardustBin)' == ''">$(MSBuildThisFileDirectory)..\..\build\bin\Release</StardustBin>
+    <GenerateRuntimeConfigurationFiles>false</GenerateRuntimeConfigurationFiles>
+    <AssemblySearchPaths>{HintPathFromItem};$(AssemblySearchPaths)</AssemblySearchPaths>
+    <DefaultItemExcludes>$(DefaultItemExcludes);Build/**</DefaultItemExcludes>
+    <StardustBin Condition="'$(StardustBin)' == ''">F:/ProjektArkStardust/GameEngineCustom/build/bin/Release</StardustBin>
   </PropertyGroup>
+
   <ItemGroup>
-    <Compile Include="Assets/**/*.cs;Packages/**/*.cs" Exclude="Assets/**/Editor/**/*.cs" />
-    <Reference Include="Stardust.ScriptCore"><HintPath>$(StardustBin)\Stardust.ScriptCore.dll</HintPath><Private>false</Private></Reference>
+    <Compile Include="Assets/**/*.cs;Packages/**/*.cs" Exclude="Assets/**/Editor/**/*.cs;Packages/**/Editor/**/*.cs" />
   </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="Stardust.ScriptCore">
+      <HintPath>$(StardustBin)/Stardust.ScriptCore.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
 </Project>

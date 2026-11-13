@@ -33,8 +33,16 @@ struct MeshPush {
     uint drawIndex;
     uint vertexBuffer;
     uint cascade;
+    uint materialBuffer;
+    uint materialOffset;
+    uint materialCount;
 };
 PUSH_CONSTANTS(MeshPush, g_Push);
+// Slots follow the order in <shader>.spv.properties.json. Missing slots use fallback.
+float4 MaterialProperty(uint slot,float4 fallback){if(slot>=g_Push.materialCount)return fallback;return GetBuffer(g_Push.materialBuffer).Load<float4>((g_Push.materialOffset+slot)*16);}
+float MaterialFloat(uint slot,float fallback){return MaterialProperty(slot,float4(fallback,0,0,0)).x;}
+float4 MaterialTexture(uint slot,float2 uv){float4 p=MaterialProperty(slot,0);return GetTex2D((uint)p.x).Sample(GetSampler((uint)p.y),uv);}
+
 
 struct MeshVSOut {
     float4 position : SV_Position;
