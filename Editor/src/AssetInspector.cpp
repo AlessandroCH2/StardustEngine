@@ -14,6 +14,11 @@
 #include "UI/CanvasRenderer.h"
 #include <format>
 #include <imgui_stdlib.h>
+#include "ShaderAssets.h"
+#include "ShaderGraphEditor.h"
+#include "ScriptEditor.h"
+#include "Renderer/Material.h"
+#include <nlohmann/json.hpp>
 namespace Stardust {
 void EditorApp::DrawAssetInspector() {
     namespace fs = std::filesystem;
@@ -24,6 +29,34 @@ void EditorApp::DrawAssetInspector() {
     if (ImGui::Button("Open")) ShellExecuteFile(path);
     ImGui::SameLine(); if (ImGui::Button("Show Folder")) ShellExecuteFile(path.parent_path());
     ImGui::SameLine();if(ImGui::Button("Delete Asset"))RequestDeleteAsset(m_SelectedAsset);
+    if (ShaderAssets::IsShaderAsset(path)) {
+        const bool graph = path.extension() == ".shadergraph";
+        ImGui::SeparatorText(graph ? "Shader Graph" : "Shader");
+        auto schema = nlohmann::json::parse(FileSystem::ReadText(fs::path(FileSystem::Utf8(path) + ".spv.properties.json")), nullptr, false);
+        const std::string error = ShaderAssets::LastError(path);
+        if (ShaderAssets::IsCompiling()) ImGui::TextColored({ 1, 0.85f, 0.3f, 1 }, "Compiling...");
+        else if (!error.empty()) { ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 0.45f, 0.4f, 1)); ImGui::TextWrapped("%s", error.c_str()); ImGui::PopStyleColor(); }
+        else if (!fs::exists(fs::path(FileSystem::Utf8(path) + ".spv"))) ImGui::TextDisabled("Not compiled yet");
+        if (schema.is_object()) {
+            ImGui::Text("%s", schema.value("name", std::string()).c_str());
+            const auto state = schema.value("renderState", nlohmann::json::object());
+            ImGui::TextDisabled("Queue %s, blend %s%s", state.value("queue", std::string("geometry")).c_str(), state.value("blend", std::string("opaque")).c_str(), state.contains("cull") ? (", cull " + state.value("cull", std::string())).c_str() : "");
+            for (auto& p : schema.value("properties", nlohmann::json::array())) ImGui::BulletText("%s  (%s)  %s", p.value("label", std::string()).c_str(), p.value("type", std::string()).c_str(), p.value("name", std::string()).c_str());
+        }
+        if (ImGui::Button(graph ? "Open Shader Graph" : "Edit Shader")) { if (graph) ShaderGraphEditor::Open(m_SelectedAsset); else ScriptEditor::Open(path); }
+        ImGui::SameLine(); if (ImGui::Button("Compile")) ShaderAssets::CompileAsync(path);
+        ImGui::SameLine();
+        if (ImGui::Button("Create Material")) {
+            Material material; material.name = path.stem().string(); material.customPixelShader = m_SelectedAsset;
+            auto output = path.parent_path() / (path.stem().string() + ".mat");
+            for (int n = 1; fs::exists(output); ++n) output = path.parent_path() / std::format("{} {}.mat", path.stem().string(), n);
+            nlohmann::json j; material.ToJson(j);
+            FileSystem::WriteText(output, j.dump(2));
+            m_SelectedAsset = AssetManager::ToRelative(output); m_InspectAsset = true;
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("A material using this shader, next to it");
+        return;
+    }
     if (fs::is_directory(path)) {
         ImGui::TextDisabled("Folder");
         if (ImGui::Button("Build Content Pak")) {

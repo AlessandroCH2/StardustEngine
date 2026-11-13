@@ -1,5 +1,6 @@
 #pragma once
 #include "Core/Base.h"
+#include "Renderer/Quality.h"
 #include <filesystem>
 
 namespace Stardust {
@@ -20,7 +21,8 @@ struct ProjectConfig {
     u32 windowWidth = 1600, windowHeight = 900;
     bool fullscreen = false;
     bool vsync = true;
-    int quality = 2; // 0 Low, 1 Medium, 2 High (see Renderer/Quality.h)
+    int quality = 2; // 0 Low, 1 Medium, 2 High, 3 Custom (see Renderer/Quality.h)
+    GraphicsQuality customQuality; // the values of the Custom level
     std::string buildTarget="Windows";
     std::string icon; // Asset-relative PNG/JPEG/TGA/BMP; empty uses the engine icon.
     std::string lastBuildFolder;

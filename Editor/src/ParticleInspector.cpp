@@ -1,4 +1,4 @@
-// Particle System inspector: Unity-style modules (a foldout with an enable box each), colour gradient and size curve
+// Particle System inspector: modules (a foldout with an enable box each), colour gradient and size curve
 // editors, burst list, and the playback controls of the preview that runs in the Scene view outside Play mode.
 #include "InspectorWidgets.h"
 #include "AssetUI.h"

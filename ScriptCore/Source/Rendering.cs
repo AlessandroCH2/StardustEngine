@@ -150,6 +150,34 @@ public sealed class VideoPlayer : Component {
     public void Pause()=>isPlaying=false;
     public void Stop(){isPlaying=false;time=0;}
 }
+/// <summary>Graphics quality at run time, for in-game settings menus. Starts from the project's Graphics Quality
+/// (Project Settings). Setting any value other than <see cref="level"/> switches to Custom. Not saved: store the
+/// player's choice yourself (PlayerPrefs, a file) and apply it at start.</summary>
+public static unsafe class QualitySettings {
+    static JsonObject Get()=>JsonNode.Parse(Native.FromUtf8(Native.Api.GetComponentJson(0,106))).AsObject();
+    static void Set(JsonObject value){fixed(byte* p=Native.Utf8(value.ToJsonString()))Native.Api.SetComponentJson(0,106,p);}
+    static T Value<T>(string name,T fallback){var v=Get()[name];return v==null?fallback:v.GetValue<T>();}
+    static void Property(string name,JsonNode value)=>Set(new JsonObject{[name]=value});
+    public static readonly string[] names={"Low","Medium","High","Custom"};
+    /// <summary>0 Low, 1 Medium, 2 High (presets), 3 Custom.</summary>
+    public static int level {get=>Value("level",2);set=>Property("level",JsonValue.Create(value));}
+    public static void SetQualityLevel(int index)=>level=index;
+    /// <summary>3D resolution relative to the window (0.25 to 2). Screen-space UI always stays at full resolution.</summary>
+    public static float renderScale {get=>Value("renderScale",1f);set=>Property("renderScale",JsonValue.Create(value));}
+    public static bool shadows {get=>Value("shadows",true);set=>Property("shadows",JsonValue.Create(value));}
+    /// <summary>Shadow map size in pixels (power of two, 256 to 8192).</summary>
+    public static int shadowResolution {get=>Value("shadowMapSize",2048);set=>Property("shadowMapSize",JsonValue.Create(value));}
+    /// <summary>Multiplies the Directional Light's shadow distance.</summary>
+    public static float shadowDistance {get=>Value("shadowDistance",1f);set=>Property("shadowDistance",JsonValue.Create(value));}
+    /// <summary>Clouds render at 1/N of the resolution (1 to 8).</summary>
+    public static int cloudDownscale {get=>Value("cloudDownscale",2);set=>Property("cloudDownscale",JsonValue.Create(value));}
+    public static float grassDensity {get=>Value("grassDensity",1f);set=>Property("grassDensity",JsonValue.Create(value));}
+    public static float grassDistance {get=>Value("grassDistance",1f);set=>Property("grassDistance",JsonValue.Create(value));}
+    public static float lodBias {get=>Value("lodBias",2f);set=>Property("lodBias",JsonValue.Create(value));}
+    public static bool bloom {get=>Value("bloom",true);set=>Property("bloom",JsonValue.Create(value));}
+    public static bool antiAliasing {get=>Value("fxaa",true);set=>Property("fxaa",JsonValue.Create(value));}
+    public static bool vSync {get=>Value("vSync",true);set=>Property("vSync",JsonValue.Create(value));}
+}
 public static unsafe class LayerMask {
     public static int NameToLayer(string name){var data=JsonNode.Parse(Stardust.Interop.Native.FromUtf8(Stardust.Interop.Native.Api.GetComponentJson(0,101)));var layers=data?["layers"]?.AsArray();if(layers==null)return -1;for(int i=0;i<layers.Count;i++)if(layers[i]?.GetValue<string>()==name)return i;return -1;}
     public static uint GetMask(params string[] names){uint mask=0;foreach(var name in names){int layer=NameToLayer(name);if(layer>=0)mask|=1u<<layer;}return mask;}

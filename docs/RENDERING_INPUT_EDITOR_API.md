@@ -1,6 +1,6 @@
 # Stardust 0.6: rendering, input and editor APIs
 
-This supplements [C# scripting](CSHARP_SCRIPTING.md). Names below are Stardust APIs, not Unity assemblies. Use engine APIs on the main thread. Asset paths are relative to Assets, or begin with Packages/ for package assets. Files in mounted paks use the same namespace.
+This supplements [C# scripting](CSHARP_SCRIPTING.md). Names below are Stardust APIs. Use engine APIs on the main thread. Asset paths are relative to Assets, or begin with Packages/ for package assets. Files in mounted paks use the same namespace.
 
 ## Cameras, render textures and layers
 
@@ -26,7 +26,7 @@ public class MinimapSetup : ScriptBehaviour {
 
 `SpriteRenderer` exposes `Sprite sprite`, `string material`, `Color color`, `float pixelsPerUnit`, `bool flipX`, `bool flipY`, `int sortingOrder`. Set pixelsPerUnit to zero to use the sprite asset value. Sprites support atlas rectangles and pivots. The default sprite shader is unlit and alpha blended; custom `.mat` materials can replace it.
 
-Select an image in Project to edit import type (Default, Normal or Sprite), sRGB, maximum size, mipmaps, wrap and filtering. Settings are saved alongside the image as `.import.json` and included by the build cooker. The importer currently resizes with nearest-neighbor sampling; it does not expose Unity's complete platform compression/cubemap importer. Sprite mode offers Create Sprite and the sprite editing window.
+Select an image in Project to edit import type (Default, Normal or Sprite), sRGB, maximum size, mipmaps, wrap and filtering. Settings are saved alongside the image as `.import.json` and included by the build cooker. The importer currently resizes with nearest-neighbor sampling; platform compression and cubemap import are not available. Sprite mode offers Create Sprite and the sprite editing window.
 
 ## Meshes and materials
 
@@ -123,7 +123,7 @@ public class MyTools : EditorWindow {
 }
 ```
 
-MyMover is a project script with a serializable float Speed field. Available controls: LabelField, HelpBox, FloatField, IntField, TextField, Toggle, Vector3Field, ColorField, Space, GUILayout.Button/Label. Windows can Close/Repaint. Controls use stable draw order to match events. Custom inspectors persist supported scalar/value fields; retain DrawDefaultInspector for entity/asset references and collections. This is a small supported editor GUI API, not the complete UnityEditor/SerializedObject/UI Toolkit API.
+MyMover is a project script with a serializable float Speed field. Available controls: LabelField, HelpBox, FloatField, IntField, TextField, Toggle, Vector3Field, ColorField, Space, GUILayout.Button/Label. Windows can Close/Repaint. Controls use stable draw order to match events. Custom inspectors persist supported scalar/value fields; retain DrawDefaultInspector for entity/asset references and collections. This is a small editor GUI API: only the controls listed here are available.
 
 See [Editor 0.6 workflows](EDITOR_06.md), [Linux export](LINUX_PLAYER.md), and `Examples/FeatureLab` for working project scripts.
 

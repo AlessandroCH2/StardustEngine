@@ -44,6 +44,8 @@ namespace Stardust
             if(t==typeof(ParticleSystem))return 32;
             if(t==typeof(VehicleController))return 33;
             if(t==typeof(WheelCollider))return 34;
+            if(t==typeof(UI.ScrollView))return 35;
+            if(t==typeof(UI.Dropdown))return 36;
             if(t==typeof(Rigidbody2D))return 28;
             if(t==typeof(BoxCollider2D))return 29;
             if(t==typeof(CircleCollider2D))return 30;
@@ -56,7 +58,7 @@ namespace Stardust
 
     public enum Space { World, Self }
 
-    // Unity semantics: position / eulerAngles are world space, localPosition / localEulerAngles are relative to the parent.
+    // position / eulerAngles are world space, localPosition / localEulerAngles are relative to the parent.
     public unsafe class Transform : Component
     {
         public Transform() { }

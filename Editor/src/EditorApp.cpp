@@ -22,6 +22,9 @@
 #include "Audio/AudioEngine.h"
 #include "Scene/SceneManager.h"
 #include "UI/CanvasRenderer.h"
+#include "ShaderAssets.h"
+#include "ShaderGraphEditor.h"
+#include "ScriptEditor.h"
 #ifdef _WIN32
 #include <windows.h>
 #include <shellapi.h>
@@ -253,6 +256,8 @@ void EditorApp::Stop() {
     m_State = PlayState::Edit;ImGui::GetIO().ConfigFlags&=~ImGuiConfigFlags_NoMouse;
     Input::SetCursorMode(CursorMode::Normal);
     if (m_ReloadAfterStop) { m_ReloadAfterStop = false; ScriptEngine::ReloadGameAssembly(); }
+    // Scripts may have changed the quality in Play mode (QualitySettings): back to the project's
+    GraphicsQuality::Apply(Project::Config().quality, &Project::Config().customQuality);
     if (!m_ActiveScene->Reg().Valid(m_Selected)) m_Selected = kNullEntity;
     ImGui::SetWindowFocus("Scene");
     SD_INFO("Edit mode");
@@ -349,7 +354,7 @@ void EditorApp::OnRender(RHI::CommandList& cmd) {
         m_SceneRenderer->drawGrid=grid;
     }
     if (m_GameView.visible) {
-        { float scale = GraphicsQuality::Current().renderScale; m_GameRenderer->Resize((u32)(m_GameRenderSize.x * scale), (u32)(m_GameRenderSize.y * scale)); }
+        { float scale = GraphicsQuality::Current().renderScale; m_GameRenderer->Resize((u32)(m_GameRenderSize.x * scale), (u32)(m_GameRenderSize.y * scale)); m_GameRenderer->SetDisplaySize((u32)m_GameRenderSize.x, (u32)m_GameRenderSize.y); }
         float aspect = m_GameRenderSize.x / std::max(1.0f, m_GameRenderSize.y);
         RenderCamera cam;
         if (!scene.GetPrimaryCamera(cam, aspect)) cam = m_Camera.GetRenderCamera(aspect);
@@ -426,7 +431,9 @@ void EditorApp::OnImGui() {
     DrawGameView();
     DrawSceneView();
     DrawManagedWindows();
-    if (m_ShowDemo) ImGui::ShowDemoWindow(&m_ShowDemo);
+    ShaderGraphEditor::Draw();
+    ScriptEditor::Draw();
+    ShaderAssets::Update(); // recompiles .shader / .shadergraph files changed on disk
     DecorateDockTabs(); // last: every tab bar of this frame has been submitted
     DrawWindowShadows();
 }
@@ -579,9 +586,9 @@ void EditorApp::DrawMenuBar() {
         if (ImGui::MenuItem("Lighting", nullptr, m_ShowLighting)) { m_ShowLighting = !m_ShowLighting; m_LightingFocusRequest = m_ShowLighting; }
         if(ImGui::MenuItem("Animation",nullptr,m_ShowAnimationEditor)){m_ShowAnimationEditor=!m_ShowAnimationEditor;m_AnimationFocusRequest=m_ShowAnimationEditor;}
         if(ImGui::MenuItem("Animator",nullptr,m_ShowAnimatorEditor)){m_ShowAnimatorEditor=!m_ShowAnimatorEditor;m_AnimatorFocusRequest=m_ShowAnimatorEditor;}
+        if (ImGui::MenuItem("Script Editor", nullptr, ScriptEditor::IsOpen())) ScriptEditor::Open({}, 0);
         ImGui::Separator();
         DrawLayoutMenu();
-        ImGui::MenuItem("ImGui Demo", nullptr, &m_ShowDemo);
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Help")) {
@@ -592,7 +599,7 @@ void EditorApp::DrawMenuBar() {
 
     // Project and scene in the middle, transport controls on the right
     {
-        // "Project - Scene - Stardust 0.6.4" with a chevron like Unity's title; it opens the project info
+        // "Project - Scene - Stardust 0.6.4" with a chevron; it opens the project info
         std::string title = (Project::IsLoaded() ? Project::Config().name + " - " : std::string()) + ActiveScene().Name() + (m_SceneDirty ? "*" : "") + " - Stardust " STARDUST_VERSION;
         float windowWidth = ImGui::GetWindowWidth(), buttonSize = ImGui::GetFrameHeight();
         const float menusEnd = ImGui::GetCursorScreenPos().x + 8, transportX = windowWidth - 46 * 3 - 28 - (buttonSize + 6) * 3;
@@ -664,7 +671,7 @@ void EditorApp::DrawMenuBar() {
 }
 
 void EditorApp::DrawToolbar() {
-    // Unity-style toolbar: transform tools on the left, play controls centered
+    // Toolbar: transform tools on the left, play controls centered
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(6*UiScale(), 4*UiScale()));
     ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(19 / 255.0f, 20 / 255.0f, 23 / 255.0f, 1));
     ImGui::BeginChild("##Toolbar", ImVec2(0, ImGui::GetFrameHeight()+10*UiScale()), ImGuiChildFlags_AlwaysUseWindowPadding, ImGuiWindowFlags_NoScrollbar);
@@ -853,7 +860,7 @@ void EditorApp::UpdateScripts() {
     m_ScriptPollTimer += DeltaTime();
     if (m_ScriptPollTimer > 1.0f) {
         m_ScriptPollTimer = 0.0f;
-        // Saving a .cs file recompiles automatically (like Unity); the reload follows when the build succeeds
+        // Saving a .cs file recompiles automatically; the reload follows when the build succeeds
         SD_PROFILE("Script file check");
         if (ScriptEngine::IsReady() && ScriptEngine::CheckForSourceChange()) {
             if (ScriptEngine::IsBuilding()) m_BuildPending = true;
@@ -865,9 +872,9 @@ void EditorApp::UpdateScripts() {
     }
 }
 
-// Wireframe colliders of the selected entity (green, like Unity)
+// Wireframe colliders of the selected entity (green)
 // Each camera shows where it looks: a short frustum for every camera, a longer one with the near plane and a
-// direction arrow for the selected one. A triangle above the frustum marks the camera's up side, as in Unity.
+// direction arrow for the selected one. A triangle above the frustum marks the camera's up side.
 void EditorApp::DrawCameraGizmos() {
     Scene& scene = ActiveScene();
     Registry& reg = scene.Reg();

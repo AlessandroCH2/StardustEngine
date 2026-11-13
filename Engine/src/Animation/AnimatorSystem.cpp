@@ -227,7 +227,7 @@ bool AnimatorSystem::AdvanceController(AnimatorComponent& animator,const json& c
  }return false;
 }
 // ---------------------------------------------------------------- blend trees
-// A state with "blendTree" mixes its child clips by one parameter (1D) or two (2D), like Unity's Blend Trees
+// A state with "blendTree" mixes its child clips by one parameter (1D) or two (2D)
 glm::vec2 AnimatorSystem::BlendPoint(const json& tree,const std::unordered_map<std::string,float>& parameters){
     auto get=[&](const std::string& name){auto f=parameters.find(name);return f==parameters.end()?0.f:f->second;};
     return {get(tree.value("parameter",std::string())),get(tree.value("parameterY",std::string()))};

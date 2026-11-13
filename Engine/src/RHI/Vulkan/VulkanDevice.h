@@ -140,6 +140,7 @@ public:
     void EndFrame() override;
     void WaitIdle() override { vkDeviceWaitIdle(m_Device); }
     void SetVSync(bool v) override { if (v != m_VSync) { m_VSync = v; m_SwapchainDirty = true; } }
+    bool VSync() const override { return m_VSync; }
     u64 FrameNumber() const override { return m_FrameNumber; }
     u32 FrameIndex() const override { return m_FrameIndex; }
 

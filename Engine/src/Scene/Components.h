@@ -47,7 +47,7 @@ struct TransformComponent {
     void SetEuler(const glm::vec3& degrees) { eulerHint = degrees; rotation = glm::quat(glm::radians(degrees)); }
 };
 
-// Mesh + material (Unity's MeshFilter + MeshRenderer in one component)
+// Mesh + material in one component
 struct MeshRendererComponent {
     std::string mesh = "builtin:Cube";   // "builtin:<Primitive>" or an asset path (.obj/.gltf/.glb)
     std::vector<std::string> materials; // submesh material slots
@@ -121,7 +121,7 @@ struct Particle {
     float seed = 0;                           // random 0..1, fixed for the particle's life
 };
 enum class ParticleShape : int { Sphere, Hemisphere, Cone, Box, Circle, Edge, Point };
-// Unity-style particle emitter: modules for emission, shape and changes over the lifetime of each particle.
+// Particle emitter: modules for emission, shape and changes over the lifetime of each particle.
 // The emitter's up axis (+Y) is its forward: a cone opens upwards, a box and an edge emit upwards.
 struct ParticleSystemComponent {
     // Main
@@ -177,7 +177,7 @@ struct VideoPlayerComponent {
     float speed=1,time=0,duration=0;
 };
 
-// The sun. Its transform's forward axis is the light direction (like Unity's Directional Light).
+// The sun. Its transform's forward axis is the light direction.
 struct DirectionalLightComponent {
     glm::vec3 color{ 1.0f, 0.98f, 0.95f };
     float intensity = 10.0f;
@@ -214,7 +214,7 @@ struct TerrainComponent {
     bool collider = true;   // static heightfield collider in play mode
 };
 
-// Unity's LOD Group: each level lists objects (with their children) shown while the group covers at least
+// LOD Group: each level lists objects (with their children) shown while the group covers at least
 // screenHeight of the view's height. Below the last level the object is culled.
 struct LODLevel { float screenHeight = 0.5f; std::vector<u64> renderers; }; // renderers by UUID
 struct LODGroupComponent {
@@ -325,6 +325,48 @@ struct UIInputFieldComponent {
     int cursor=0,selectionStart=0,selectionEnd=0;float scrollX=0;
 };
 struct CanvasGroupComponent { float alpha = 1; bool interactable = true, blocksRaycasts = true; };
+// Scrolls its content (a child, usually "Content") inside its own rectangle, which clips it. Wheel, drag and scroll bars.
+// The content moves through its RectTransform's anchored position.
+struct UIScrollViewComponent {
+    u64 content = 0;                 // entity moved by scrolling; 0 = the first child
+    bool horizontal = false, vertical = true;
+    int movementType = 1;            // 0 Unrestricted, 1 Elastic, 2 Clamped
+    float elasticity = 0.1f;         // seconds to spring back (Elastic)
+    bool inertia = true; float decelerationRate = 0.135f; // share of the speed kept after one second
+    float scrollSensitivity = 40;    // canvas units per wheel step
+    bool dragToScroll = true, clipContent = true;
+    // Scroll bars (drawn inside the edges of the view when the content is larger)
+    int scrollbars = 1;              // 0 Hidden, 1 Visible when needed, 2 Always
+    float scrollbarWidth = 10, scrollbarPadding = 3, minHandleSize = 24;
+    glm::vec4 trackColor{ 0, 0, 0, 0.18f }, handleColor{ 0.55f, 0.58f, 0.65f, 0.9f }, handleHoverColor{ 0.75f, 0.78f, 0.85f, 1 };
+    std::string trackSprite, handleSprite; // optional (sliced sprites work best)
+    // Runtime
+    glm::vec2 velocity{ 0 }; bool dragging = false; int barDrag = -1; glm::vec2 lastNormalized{ -1 };
+    glm::vec2 requestedNormalized{ -1 }; // set by scripts, applied on the next frame (-1 = keep)
+};
+struct UIDropdownOption { std::string text, sprite; };
+// Picks one option from a list that opens over the canvas. The object's Image is the button; the caption, arrow and
+// list are drawn by the dropdown with the colours and sprites below.
+struct UIDropdownComponent {
+    std::vector<UIDropdownOption> options{ { "Option A", "" }, { "Option B", "" }, { "Option C", "" } };
+    int value = 0;
+    bool interactable = true;
+    // Caption
+    std::string font; float fontSize = 22; glm::vec4 textColor{ 0.12f, 0.12f, 0.14f, 1 };
+    float textPadding = 12; std::string placeholder = "Select...";
+    glm::vec4 hoverTint{ 0.92f, 0.95f, 1, 1 }, pressedTint{ 0.8f, 0.85f, 0.95f, 1 }, disabledTint{ 0.6f, 0.6f, 0.6f, 0.6f };
+    // Arrow
+    glm::vec4 arrowColor{ 0.25f, 0.27f, 0.32f, 1 }; std::string arrowSprite; float arrowSize = 12;
+    // List
+    int direction = 0;               // 0 Auto, 1 Down, 2 Up
+    float itemHeight = 36, maxListHeight = 260, listOffset = 2, listPadding = 4;
+    glm::vec4 listColor{ 0.98f, 0.98f, 0.99f, 1 }; std::string listSprite;
+    glm::vec4 itemColor{ 0, 0, 0, 0 }, itemHoverColor{ 0.86f, 0.91f, 1, 1 }, itemSelectedColor{ 0.78f, 0.86f, 1, 1 }; std::string itemSprite;
+    glm::vec4 itemTextColor{ 0.12f, 0.12f, 0.14f, 1 };
+    bool showCheckmark = true; glm::vec4 checkmarkColor{ 0.18f, 0.5f, 0.93f, 1 };
+    // Runtime
+    bool open = false; float scroll = 0; int hoveredItem = -1;
+};
 struct RectMaskComponent {};
 // Clips children to this object's Image, following the image's alpha
 struct UIMaskComponent { bool showGraphic = true; };

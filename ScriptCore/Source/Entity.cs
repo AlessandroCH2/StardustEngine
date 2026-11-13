@@ -6,7 +6,7 @@ namespace Stardust
 {
     public enum PrimitiveType { Cube = 0, Sphere = 1, Plane = 2, Cylinder = 3 }
 
-    // A scene object (Unity's GameObject). Entities are referenced by their 64-bit UUID.
+    // A scene object. Entities are referenced by their 64-bit UUID.
     public unsafe class Entity
     {
         public ulong ID { get; internal set; }
@@ -142,7 +142,7 @@ namespace Stardust
         public override string ToString() => IsAsset?$"Prefab({AssetPath})":$"Entity({name})";
     }
 
-    // Base class for game scripts (Unity's MonoBehaviour). Optional methods, found by name:
+    // Base class for game scripts. Optional methods, found by name:
     //   void OnCreate()  void OnUpdate(float dt)  void OnFixedUpdate(float dt)
     //   void OnCollisionEnter(Entity other)  void OnDestroy()
     // Public fields of type float/int/bool/string/Vector2/Vector3/Color are editable in the Inspector.

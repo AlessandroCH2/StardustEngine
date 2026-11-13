@@ -73,7 +73,7 @@ Use constructors and field initializers only for ordinary managed data. The edit
 
 ## Inspector fields and references
 
-Public instance fields are exposed by default. `[SerializeField]` also exposes private fields; `[HideInInspector]` keeps a field saved with the scene but hides it from the Inspector, as in Unity. Properties, constants, readonly fields and static fields are not Inspector fields.
+Public instance fields are exposed by default. `[SerializeField]` also exposes private fields; `[HideInInspector]` keeps a field saved with the scene but hides it from the Inspector. Properties, constants, readonly fields and static fields are not Inspector fields.
 
 Supported field values:
 
@@ -187,7 +187,7 @@ The C# `Rigidbody.MovePosition` and `MoveRotation` methods currently set the ent
 | `Input.GetMouseButtonDown(MouseButton.Left)` | Mouse button pressed this frame. |
 | `Input.mousePosition`, `mouseDelta`, `mouseScroll` | Pointer position, movement and scroll. |
 | `Input.cursorLocked` | Request normal/locked cursor mode. |
-| `Input.GetAxis("Horizontal")` | D/right arrow minus A/left arrow, smoothed: moves toward the target at the axis Sensitivity and returns to zero at its Gravity, like Unity. |
+| `Input.GetAxis("Horizontal")` | D/right arrow minus A/left arrow, smoothed: moves toward the target at the axis Sensitivity and returns to zero at its Gravity. |
 | `Input.GetAxis("Vertical")` | W/up arrow minus S/down arrow, smoothed the same way. |
 | `Input.GetAxisRaw("Horizontal")` | The same axis without smoothing: exactly -1, 0 or 1 for keys (gamepad sticks keep their analog value). |
 
@@ -489,6 +489,8 @@ Add the relevant UI components and a Canvas hierarchy in the editor. Exposed pro
 | `Text` | `text`, `font`, `material`, `fontSize`, `color`, `outlineColor`, `outlineWidth`, `richText`, `wordWrap`, `autoSize`, `alignment` |
 | `Button` | `interactable`, `onClick` |
 | `InputField` | `text`, `placeholder`, `interactable`, `readOnly`, `password`, `multiline`, `characterLimit`, `onValueChanged`, `onEndEdit`, `SetTextWithoutNotify` |
+| `Dropdown` | `options` (`DropdownOption` text + icon sprite; a string converts), `AddOptions`, `ClearOptions`, `value`, `SetValueWithoutNotify`, `captionText`, `onValueChanged` (int), `Show()`, `Hide()`, `isOpen`, `interactable`, and the look: `font`, `fontSize`, `textColor`, `placeholder`, `hoverTint`, `pressedTint`, `arrowColor`, `arrowSprite`, `direction`, `itemHeight`, `maxListHeight`, `listColor`, `listSprite`, `itemColor`, `itemHoverColor`, `itemSelectedColor`, `itemSprite`, `itemTextColor`, `showCheckmark`, `checkmarkColor` |
+| `ScrollView` | `content`, `horizontal`, `vertical`, `movementType` (Unrestricted, Elastic, Clamped), `elasticity`, `inertia`, `decelerationRate`, `scrollSensitivity`, `dragToScroll`, `clipContent`, `normalizedPosition` / `horizontalNormalizedPosition` / `verticalNormalizedPosition` (1 = top), `ScrollToTop()`, `ScrollToBottom()`, `velocity`, `StopMovement()`, `onValueChanged` (Vector2), and the scroll bars: `scrollbars`, `scrollbarWidth`, `trackColor`, `handleColor`, `handleHoverColor`, `trackSprite`, `handleSprite` |
 | `CanvasGroup` | `alpha`, `interactable`, `blocksRaycasts` |
 | `RectMask2D` | Component presence; configure its hierarchy in the editor. |
 | `LayoutGroup` | `mode`, `fitContent`, `spacing` |
@@ -497,7 +499,9 @@ Add the relevant UI components and a Canvas hierarchy in the editor. Exposed pro
 
 Fonts are asset paths to TTF/OTF files. Rich text is enabled by `richText`; for example `<b>Bold</b>`, `<i>Italic</i>`, and `<color=#FFCC00>Gold</color>`. The font must contain the glyphs you need. The editor's system-font fallbacks do not automatically add fallback glyphs to a custom runtime UI font.
 
-`ButtonEvent` and `StringEvent` expose `AddListener`, `RemoveListener`, and `RemoveAllListeners`. Prefer removing only your own listener when sharing a component with other scripts. Setting `InputField.text` can notify listeners; use `SetTextWithoutNotify` when updating a value without an event.
+Create them with **GameObject > UI > Dropdown** and **GameObject > UI > Scroll View** (a view with a Content child that grows with a vertical Layout Group). A Scroll View clips its content and moves it through the content's RectTransform; mouse wheel, drag with inertia, and the scroll bars all work in Play mode. The Dropdown's list opens over the canvas and also works with the arrow keys and Enter.
+
+`ButtonEvent`, `StringEvent`, `IntEvent` and `Vector2Event` expose `AddListener`, `RemoveListener`, and `RemoveAllListeners`. Prefer removing only your own listener when sharing a component with other scripts. Setting `InputField.text` can notify listeners; use `SetTextWithoutNotify` when updating a value without an event.
 
 ```csharp
 using Stardust;
@@ -549,6 +553,7 @@ Persistent button actions are configured in the Inspector: assign a scene target
 | `Rigidbody2D`, `BoxCollider2D`, `CircleCollider2D`, `CapsuleCollider2D` | 2D physics on the XY plane: `velocity`, `AddForce(Vector2, ForceMode2D)`, `gravityScale`, `bodyType`...; `Physics2D.Raycast`. See [2D Tilemap package](TILEMAP.md#colliders-and-2d-physics) |
 | `SpriteBatch` | `SetQuads(textures, quads, count)`, `SetQuadRange(start, quads)` (rebuilds only the touched chunks), `Resize`, `GetQuads()`, `SetAnimations`, `Clear()`, `quadCount`, `version`, `textures`, `color`, `material`, `sortingOrder` |
 | `ParticleSystem` | `Play()`, `Pause()`, `Stop(clear)`, `Clear()`, `Restart()`, `Emit(count)`, `isPlaying`, `particleCount`, and every module setting (`rateOverTime`, `bursts`, `startSpeed`, `startColor`, `colorOverLifetime`, `shape`, `blendMode`...): see [Particle System](PARTICLES.md) |
+| `QualitySettings` (static) | In-game graphics menus: `level` / `SetQualityLevel(0..3)` (Low, Medium, High, Custom), `renderScale`, `shadows`, `shadowResolution`, `shadowDistance`, `cloudDownscale`, `grassDensity`, `grassDistance`, `lodBias`, `bloom`, `antiAliasing`, `vSync`. Setting a single value switches to Custom. Not saved: store the choice yourself. Screen-space UI stays at full resolution whatever the render scale |
 | `VideoPlayer` | `clip`, `Play()`, `Pause()`, `Stop()`, `isPlaying`, `loop`, `time`, `length`, `playbackSpeed`, `renderMode`, `targetTexture`, `audioEnabled`, `volume` |
 | `MeshRenderer` | `color` |
 | `Light` | `color`, `intensity`, `range` for supported local lights |
@@ -582,7 +587,7 @@ public class CharacterAnimationExample : ScriptBehaviour
 
 ## Editor-only scripts
 
-Scripts anywhere under a folder named `Editor` are compiled into the project's editor assembly and excluded from player scripts. Add `[Stardust.Editor.MenuItem("path")]` to a parameterless static method. Commands appear in the editor's **Scripts** menu. Only the editor API actually exposed by ScriptCore is available; there is no UnityEditor namespace and no selection API.
+Scripts anywhere under a folder named `Editor` are compiled into the project's editor assembly and excluded from player scripts. Add `[Stardust.Editor.MenuItem("path")]` to a parameterless static method. Commands appear in the editor's **Scripts** menu. Only the editor API actually exposed by ScriptCore is available; there is no selection API.
 
 **Custom inspectors and Scene view tools.** `[CustomEditor(typeof(MyScript))]` on a class deriving from `Stardust.Editor.Editor` replaces the script's Inspector (`OnInspectorGUI`) and can add a Scene view tool (`OnSceneGUI`, called every frame while the object is selected, in edit mode). `target` is a copy of the script with the saved field values; field changes are written back after each call. Editors are created again for every call, so keep tool state in static fields.
 

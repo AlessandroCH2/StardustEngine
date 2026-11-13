@@ -1,4 +1,4 @@
-// LOD Group inspector: Unity's coloured LOD bar with draggable transitions, the Scene camera marker,
+// LOD Group inspector: a coloured LOD bar with draggable transitions, the Scene camera marker,
 // and the renderers of the selected level
 #include "InspectorWidgets.h"
 #include "Scene/Scene.h"
@@ -16,7 +16,7 @@ namespace {
 const ImU32 kLevelColors[] = { IM_COL32(68, 120, 44, 255), IM_COL32(46, 96, 128, 255), IM_COL32(40, 112, 116, 255), IM_COL32(98, 72, 130, 255),
                                IM_COL32(130, 98, 40, 255), IM_COL32(120, 60, 70, 255), IM_COL32(70, 90, 140, 255), IM_COL32(100, 110, 60, 255) };
 
-// Heights like Unity's defaults: 60%, 30%, 10%, then halving
+// Default heights: 60%, 30%, 10%, then halving
 float DefaultHeight(int index) { static const float first[] = { 0.6f, 0.3f, 0.1f }; return index < 3 ? first[index] : 0.1f / float(1 << (index - 2)); }
 
 // "_LOD2" at the end of a name, any case: 2
@@ -43,7 +43,7 @@ void DrawLODGroupInspector(Scene& scene, EntityID e, LODGroupComponent& g, const
     ImGui::InvisibleButton("##lodBar", { width, height });
     const bool hovered = ImGui::IsItemHovered(), active = ImGui::IsItemActive();
     auto* draw = ImGui::GetWindowDrawList();
-    // Square-root scale, like Unity's bar: small percentages (the far levels) get room to be dragged
+    // Square-root scale: small percentages (the far levels) get room to be dragged
     auto x = [&](float h) { return origin.x + (1 - std::sqrt(std::clamp(h, 0.f, 1.f))) * width; };
     const ImVec2 mouse = ImGui::GetMousePos();
     const float along = 1 - std::clamp((mouse.x - origin.x) / width, 0.f, 1.f), mouseHeight = along * along;

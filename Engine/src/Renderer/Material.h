@@ -6,7 +6,7 @@
 
 namespace Stardust {
 
-// Shaders a material can use (Unity-style shader dropdown). Each maps to a pixel shader + pipeline state.
+// Shaders a material can use (the shader dropdown). Each maps to a pixel shader + pipeline state.
 enum class ShaderType : u8 { Standard, Unlit, Toon, Transparent, UI, Water, Count };
 const char* ShaderName(ShaderType t);          // e.g. "Stardust/Standard"
 ShaderType ShaderFromName(const std::string& name);
@@ -18,7 +18,9 @@ struct Material {
     const nlohmann::json& PropertyLayout() const;
     std::vector<glm::vec4> PropertyValues() const;
     std::vector<glm::vec4> ComputePropertyValues() const;   // uncached
-    std::string customPixelShader; // compiled asset-relative .spv, using MeshCommon.hlsli interface
+    std::string customPixelShader; // compiled asset-relative .spv (MeshCommon.hlsli interface), or a .shader / .shadergraph
+    // The compiled pixel shader: .shader and .shadergraph assets compile to <asset>.spv in the editor
+    std::string PixelShaderAsset() const { return customPixelShader.ends_with(".shader") || customPixelShader.ends_with(".shadergraph") ? customPixelShader + ".spv" : customPixelShader; }
     Ref<RHI::Texture> runtimeAlbedo; // dynamic UI/font atlases; never serialized
     Ref<RHI::Texture> runtimeMask;   // UI Mask image, read through the normal slot
 

@@ -66,7 +66,7 @@ public:
     void RecalculateLODBounds(EntityID group);
     void PrepareTerrains(RHI::Device& device); // make sure terrain data exists (physics heightfields need it before play)
 
-    // Deep copy (entering play mode works on a copy, like Unity)
+    // Deep copy (entering play mode works on a copy)
     static Ref<Scene> Copy(const Ref<Scene>& other);
 
     // Default content of a new scene: sun, environment, camera, ground, a few props

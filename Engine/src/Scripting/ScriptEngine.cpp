@@ -3,12 +3,14 @@
 #include "Scene/ComponentState.h"
 #include "Scene/Scene.h"
 #include "Scene/ParticleSystem.h"
+#include "UI/UIControls.h"
 #include "Physics/PhysicsWorld.h"
 #include "Assets/AssetManager.h"
 #include "Core/Log.h"
 #include "Core/Input.h"
 #include "Core/FileSystem.h"
 #include "Core/Application.h"
+#include "Renderer/Quality.h"
 #include "Project/Project.h"
 #include "Audio/AudioEngine.h"
 #include "UI/VideoPlayer.h"
@@ -20,6 +22,7 @@
 #include <unordered_map>
 #include <fstream>
 #include <thread>
+#include <mutex>
 #include <atomic>
 #ifdef _WIN32
 #include <windows.h>
@@ -42,7 +45,7 @@ struct RigidbodyNative { int type; float mass; float drag; float angularDrag; in
 
 enum class ComponentType : int {
     Transform = 0, MeshRenderer, Rigidbody, BoxCollider, SphereCollider, CapsuleCollider, Camera, Light, Script, MeshCollider,
-    AnyLight = 10, AudioSource = 11, Animator = 12, Canvas = 13, RectTransform = 14, UIImage = 15, UIText = 16, UIButton = 17, CanvasGroup = 18, RectMask = 19, UILayout = 20, UIInputField = 21, SpriteRenderer=22, Environment=23, Terrain=24, SpotLight=25, VideoPlayer=26, SpriteBatch=27, Rigidbody2D=28, BoxCollider2D=29, CircleCollider2D=30, CapsuleCollider2D=31, ParticleSystem=32, VehicleController=33, WheelCollider=34,
+    AnyLight = 10, AudioSource = 11, Animator = 12, Canvas = 13, RectTransform = 14, UIImage = 15, UIText = 16, UIButton = 17, CanvasGroup = 18, RectMask = 19, UILayout = 20, UIInputField = 21, SpriteRenderer=22, Environment=23, Terrain=24, SpotLight=25, VideoPlayer=26, SpriteBatch=27, Rigidbody2D=28, BoxCollider2D=29, CircleCollider2D=30, CapsuleCollider2D=31, ParticleSystem=32, VehicleController=33, WheelCollider=34, UIScrollView=35, UIDropdown=36,
 };
 
 struct NativeApi {
@@ -270,6 +273,8 @@ static void InitNativeApi() {
         switch ((ComponentType)t) {
         case ComponentType::SpriteBatch:return r.Has<SpriteBatchComponent>(e);
         case ComponentType::ParticleSystem:return r.Has<ParticleSystemComponent>(e);
+        case ComponentType::UIScrollView:return r.Has<UIScrollViewComponent>(e);
+        case ComponentType::UIDropdown:return r.Has<UIDropdownComponent>(e);
         case ComponentType::VehicleController:return r.Has<VehicleControllerComponent>(e);
         case ComponentType::WheelCollider:return r.Has<WheelColliderComponent>(e);
         case ComponentType::Rigidbody2D:return r.Has<Rigidbody2DComponent>(e);case ComponentType::BoxCollider2D:return r.Has<BoxCollider2DComponent>(e);
@@ -306,6 +311,8 @@ static void InitNativeApi() {
         switch ((ComponentType)t) {
         case ComponentType::SpriteBatch:if(!r.Has<SpriteBatchComponent>(e))r.Add<SpriteBatchComponent>(e);break;
         case ComponentType::ParticleSystem:if(!r.Has<ParticleSystemComponent>(e))r.Add<ParticleSystemComponent>(e);break;
+        case ComponentType::UIScrollView:if(!r.Has<UIScrollViewComponent>(e))r.Add<UIScrollViewComponent>(e);break;
+        case ComponentType::UIDropdown:if(!r.Has<UIDropdownComponent>(e))r.Add<UIDropdownComponent>(e);break;
         case ComponentType::Rigidbody2D:if(!r.Has<Rigidbody2DComponent>(e))r.Add<Rigidbody2DComponent>(e);RebuildBody(e);break;
         case ComponentType::VehicleController:if(!r.Has<VehicleControllerComponent>(e))r.Add<VehicleControllerComponent>(e);RebuildBody(e);break;
         case ComponentType::WheelCollider:if(!r.Has<WheelColliderComponent>(e))r.Add<WheelColliderComponent>(e);RebuildVehicleOf(e);break;
@@ -343,6 +350,8 @@ static void InitNativeApi() {
         case ComponentType::SpriteRenderer:r.Remove<SpriteRendererComponent>(e);break;
         case ComponentType::SpriteBatch:r.Remove<SpriteBatchComponent>(e);break;
         case ComponentType::ParticleSystem:r.Remove<ParticleSystemComponent>(e);break;
+        case ComponentType::UIScrollView:r.Remove<UIScrollViewComponent>(e);break;
+        case ComponentType::UIDropdown:r.Remove<UIDropdownComponent>(e);break;
         case ComponentType::Rigidbody2D:r.Remove<Rigidbody2DComponent>(e);RebuildBody(e);break;
         case ComponentType::BoxCollider2D:r.Remove<BoxCollider2DComponent>(e);RebuildBody(e);break;
         case ComponentType::CircleCollider2D:r.Remove<CircleCollider2DComponent>(e);RebuildBody(e);break;
@@ -565,6 +574,7 @@ static void InitNativeApi() {
         auto vec2=[](glm::vec2 v){return j::array({v.x,v.y});};auto vec4=[](glm::vec4 v){return j::array({v.x,v.y,v.z,v.w});};
         if(type==104)data={{"cursorLocked",Input::RuntimeMouse&&Input::GetCursorMode()==CursorMode::Locked}};
         if(type==105)data={{"runInBackground",Application::RunInBackground()}};
+        if(type==106){GraphicsQuality::Current().ToJson(data);data["level"]=GraphicsQuality::Current().level;data["vSync"]=Application::Get().GetDevice().VSync();}
         if(type==101)data={{"layers",Project::Config().layers}};
         if(type==100){data["connected"]=Input::GamepadConnected((int)id);data["axes"]=j::array();data["buttons"]=j::array();data["pressed"]=j::array();for(int i=0;i<6;++i)data["axes"].push_back(Input::GamepadAxis((int)id,i));for(int i=0;i<15;++i){data["buttons"].push_back(Input::GamepadButton((int)id,i));data["pressed"].push_back(Input::GamepadButton((int)id,i,true));}}
         if(e){auto& r=S()->Reg();
@@ -572,6 +582,8 @@ static void InitNativeApi() {
                 {"throttle",c->throttle},{"steer",c->steer},{"brake",c->brake},{"handbrake",c->handbrake},{"speed",c->speed},{"rpm",c->rpm},{"gear",c->gear}};
             if(type==34)if(auto* c=r.TryGet<WheelColliderComponent>(e))data={{"radius",c->radius},{"width",c->width},{"suspensionDistance",c->suspensionDistance},{"springFrequency",c->springFrequency},{"springDamping",c->springDamping},{"maxSteerAngle",c->maxSteerAngle},{"motor",c->motor},{"handbrake",c->handbrake},
                 {"brakeTorque",c->brakeTorque},{"handbrakeTorque",c->handbrakeTorque},{"forwardFriction",c->forwardFriction},{"sidewaysFriction",c->sidewaysFriction},{"steerAngle",c->steerAngle},{"rotationAngle",c->rotationAngle},{"suspensionLength",c->suspensionLength},{"compression",c->compression},{"isGrounded",c->grounded}};
+            if(type==35)if(auto* c=r.TryGet<UIScrollViewComponent>(e)){UIControls::ToJson(*c,data);data["normalized"]=j::array({std::max(0.f,c->lastNormalized.x),c->lastNormalized.y<0?1.f:c->lastNormalized.y});data["velocity"]=j::array({c->velocity.x,c->velocity.y});}
+            if(type==36)if(auto* c=r.TryGet<UIDropdownComponent>(e)){UIControls::ToJson(*c,data);data["open"]=c->open;}
             if(type==32)if(auto* c=r.TryGet<ParticleSystemComponent>(e)){ParticleSystems::ToJson(*c,data);data["isPlaying"]=c->playing&&!c->paused;data["isPaused"]=c->paused;data["isEmitting"]=c->emitting;data["particleCount"]=c->particles.size();data["time"]=c->time;}
             // Quads are not in here (they can be megabytes): QueryJson "spriteBatchQuads" reads them
             if(type==27)if(auto* c=r.TryGet<SpriteBatchComponent>(e)){u64 v=c->version;for(u64 chunk:c->chunkVersions)v=v*1099511628211ull^chunk;data={{"textures",c->textures},{"count",c->quads.size()},{"material",c->material},{"color",vec4(c->color)},{"sortingOrder",c->sortingOrder},{"version",std::to_string(v)},{"animations",c->animations.size()}};}
@@ -611,6 +623,17 @@ static void InitNativeApi() {
     };
     a.SetComponentJson=[](u64 id,int type,const char* value){
         if(type==105){auto settings=nlohmann::json::parse(value,nullptr,false);if(settings.is_object()&&settings.contains("runInBackground"))Application::SetRunInBackground(settings.value("runInBackground",false));return;}
+        if(type==106){
+            // QualitySettings: a preset level, then any value given (which makes it Custom)
+            auto settings=nlohmann::json::parse(value,nullptr,false);if(!settings.is_object())return;
+            GraphicsQuality q=GraphicsQuality::Current();
+            if(settings.contains("level")&&settings["level"].is_number_integer()){int level=std::clamp(settings["level"].get<int>(),0,3);if(level<GraphicsQuality::Custom)q=GraphicsQuality::Preset(level);else q.level=GraphicsQuality::Custom;}
+            nlohmann::json values=settings;values.erase("level");values.erase("vSync");
+            if(!values.empty()){q.FromJson(values);q.level=GraphicsQuality::Custom;}
+            GraphicsQuality::Apply(q.level,&q);
+            if(settings.contains("vSync")&&settings["vSync"].is_boolean())Application::Get().GetDevice().SetVSync(settings["vSync"].get<bool>());
+            return;
+        }
         auto e=E(id);if(!e)return;auto data=nlohmann::json::parse(value,nullptr,false);if(!data.is_object())return;
         auto v2=[&](const char* name,glm::vec2& v){if(data.contains(name)&&data[name].is_array()&&data[name].size()==2)v={data[name][0].get<float>(),data[name][1].get<float>()};};
         auto v4=[&](const char* name,glm::vec4& v){if(data.contains(name)&&data[name].is_array()&&data[name].size()==4)v={data[name][0].get<float>(),data[name][1].get<float>(),data[name][2].get<float>(),data[name][3].get<float>()};};
@@ -663,6 +686,12 @@ static void InitNativeApi() {
                     ComputeNormalsAndTangents(vertices,indices,true);c->mesh="runtime:mesh:"+std::to_string(id);AssetManager::SetRuntimeMesh(c->mesh,MakeRef<Mesh>(*AssetManager::Device(),vertices,indices,c->mesh));RebuildBody(e);
                 }
             }
+            if(type==35)if(auto* c=r.TryGet<UIScrollViewComponent>(e)){
+                UIControls::FromJson(data,*c);
+                if(data.contains("normalized")&&data["normalized"].is_array()&&data["normalized"].size()==2){c->requestedNormalized={data["normalized"][0].get<float>(),data["normalized"][1].get<float>()};}
+                if(data.contains("velocity")&&data["velocity"].is_array()&&data["velocity"].size()==2)c->velocity={data["velocity"][0].get<float>(),data["velocity"][1].get<float>()};
+            }
+            if(type==36)if(auto* c=r.TryGet<UIDropdownComponent>(e)){UIControls::FromJson(data,*c);if(data.contains("open")&&data["open"].is_boolean())c->open=data["open"].get<bool>()&&!c->options.empty();}
             if(type==32)if(auto* c=r.TryGet<ParticleSystemComponent>(e)){
                 ParticleSystems::FromJson(data,*c);
                 const std::string command=data.value("command",std::string());
@@ -931,6 +960,10 @@ const ScriptClassInfo* ScriptEngine::FindClass(const std::string& name) {
 
 // ------------------------------------------------------------------------------------------------ build
 
+namespace { std::mutex s_DiagnosticsMutex; std::vector<std::string> s_Diagnostics; std::atomic<u64> s_DiagnosticsGeneration{ 0 }; }
+std::vector<std::string> ScriptEngine::BuildDiagnostics() { std::lock_guard lock(s_DiagnosticsMutex); return s_Diagnostics; }
+u64 ScriptEngine::BuildDiagnosticsGeneration() { return s_DiagnosticsGeneration; }
+
 void ScriptEngine::BuildAsync() {
     if (s_Building) return;
     s_Building = true;
@@ -941,13 +974,18 @@ void ScriptEngine::BuildAsync() {
         std::wstring cmd = L"dotnet build \"" + proj.wstring() + L"\" -c Debug -o \"" + (ProjectDir() / "bin").wstring() +
                            L"\" -p:StardustBin=\"" + FileSystem::ExecutableDir().wstring() + L"\" --nologo -v:q -clp:NoSummary";
         SD_INFO("Building scripts...");
-        int code=RunProcess(cmd,ProjectDir(),[](const std::string& line){if(line.find(": error")!=std::string::npos)SD_ERROR("{}",line);else SD_INFO("{}",line);});
+        auto diagnostics = std::make_shared<std::vector<std::string>>();
+        auto collect = [diagnostics](const std::string& line) {
+            if ((line.find(": error ") != std::string::npos || line.find(": warning ") != std::string::npos) && std::find(diagnostics->begin(), diagnostics->end(), line) == diagnostics->end()) diagnostics->push_back(line);
+        };
+        int code=RunProcess(cmd,ProjectDir(),[collect](const std::string& line){collect(line);if(line.find(": error")!=std::string::npos)SD_ERROR("{}",line);else SD_INFO("{}",line);});
         if (code == 0 && s_EditorMode) {
             Project::WriteEditorScriptProject();
             auto editorProject = ProjectDir() / (Project::Config().assemblyName + ".Editor.csproj");
             std::wstring editorCmd = L"dotnet build \"" + editorProject.wstring() + L"\" -c Debug -o \"" + (ProjectDir()/"bin").wstring() + L"\" -p:StardustBin=\"" + FileSystem::ExecutableDir().wstring() + L"\" --nologo -v:q";
-            code = RunProcess(editorCmd, ProjectDir(), [](const std::string& line) { SD_INFO("{}",line); });
+            code = RunProcess(editorCmd, ProjectDir(), [collect](const std::string& line) { collect(line); SD_INFO("{}",line); });
         }
+        { std::lock_guard lock(s_DiagnosticsMutex); s_Diagnostics = *diagnostics; ++s_DiagnosticsGeneration; }
         if (code == 0) SD_INFO("Scripts built successfully"); else SD_ERROR("Script build failed (exit code {})", code);
         s_BuildResult = code == 0 ? 1 : 0;
         s_Building = false;
@@ -967,7 +1005,7 @@ void ScriptEngine::OnRuntimeStart(Scene* scene,bool resetTime) {
     s_Scene = scene;
     if(resetTime)s_ElapsedTime = 0.0f;
     if (!s_Ready) return;
-    // Like Unity's Awake/Start split: create every instance, then resolve references between them, then OnCreate
+    // Two phases: create every instance, then resolve references between them, then OnCreate
     std::vector<EntityID> ids;
     scene->Reg().Each<ScriptComponent>([&](EntityID e, ScriptComponent&) { ids.push_back(e); });
     std::vector<EntityID> created;

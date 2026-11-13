@@ -5,6 +5,7 @@
 #include <glm/gtx/component_wise.hpp>
 #include <span>
 #include "Assets/TextureImport.h"
+#include "Assets/AssetMeta.h"
 #include "Core/Log.h"
 #include "Core/FileSystem.h"
 #include "Assets/Pak.h"
@@ -120,7 +121,7 @@ std::vector<std::string> AssetManager::Find(const std::vector<std::string>& exte
     for (auto it = fs::recursive_directory_iterator(s_Root, ec); it != fs::recursive_directory_iterator(); it.increment(ec)) {
         if (ec || !it->is_regular_file()) continue;
         std::string e = Lower(it->path().extension().string());
-        if (std::find(extensions.begin(), extensions.end(), e) != extensions.end()) out.push_back(ToRelative(it->path()));
+        if (std::find(extensions.begin(), extensions.end(), e) != extensions.end() && !AssetMeta::IsSideFile(it->path())) out.push_back(ToRelative(it->path()));
     }
     std::sort(out.begin(), out.end());
     return out;

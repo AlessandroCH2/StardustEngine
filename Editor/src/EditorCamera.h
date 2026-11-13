@@ -4,7 +4,7 @@
 
 namespace Stardust {
 
-// Unity-style scene camera: hold right mouse to look around and fly with WASD/QE, scroll to dolly,
+// Scene camera: hold right mouse to look around and fly with WASD/QE, scroll to dolly,
 // middle mouse to pan, F to frame the selection.
 class EditorCamera {
 public:

@@ -123,6 +123,8 @@ void Scene::CopyComponents(EntityID src, EntityID dst) {
     if(auto* c=m_Registry.TryGet<CanvasGroupComponent>(src))m_Registry.Add<CanvasGroupComponent>(dst,*c);
     if(auto* c=m_Registry.TryGet<FbxRigComponent>(src))m_Registry.Add<FbxRigComponent>(dst,*c);if(auto* c=m_Registry.TryGet<BoneComponent>(src))m_Registry.Add<BoneComponent>(dst,*c);
     if(auto* c=m_Registry.TryGet<UIInputFieldComponent>(src))m_Registry.Add<UIInputFieldComponent>(dst,*c);
+    if(auto* c=m_Registry.TryGet<UIScrollViewComponent>(src)){auto& copy=m_Registry.Add<UIScrollViewComponent>(dst,*c);copy.velocity={0,0};copy.dragging=false;copy.barDrag=-1;}
+    if(auto* c=m_Registry.TryGet<UIDropdownComponent>(src)){auto& copy=m_Registry.Add<UIDropdownComponent>(dst,*c);copy.open=false;}
     if(auto* c=m_Registry.TryGet<UILayoutGroupComponent>(src))m_Registry.Add<UILayoutGroupComponent>(dst,*c);
     if(m_Registry.Has<RectMaskComponent>(src))m_Registry.Add<RectMaskComponent>(dst);
     if(auto* c=m_Registry.TryGet<UIMaskComponent>(src))m_Registry.Add<UIMaskComponent>(dst,*c);
@@ -342,7 +344,7 @@ void Scene::OnRuntimeStop() {
     m_Running = false;m_PersistentRoots.clear();
 }
 
-// Unity-like order: FixedUpdate + physics at 60 Hz, collision callbacks, then Update once per frame
+// Update order: FixedUpdate + physics at 60 Hz, collision callbacks, then Update once per frame
 void Scene::OnUpdate(float dt) {
     if (!m_Running) return;
     dt *= std::max(timeScale, 0.0f);

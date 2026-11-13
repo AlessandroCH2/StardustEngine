@@ -221,6 +221,7 @@ public:
     virtual void EndFrame() = 0; // submits and presents
     virtual void WaitIdle() = 0;
     virtual void SetVSync(bool vsync) = 0;
+    virtual bool VSync() const = 0;
     virtual u64 FrameNumber() const = 0;
     virtual u32 FrameIndex() const = 0; // 0..kFramesInFlight-1
 

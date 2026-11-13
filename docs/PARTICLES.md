@@ -1,8 +1,8 @@
 # Particle System
 
-The **Particle System** component emits, moves and draws particles. It is organised like Unity's: a **Main** section and
+The **Particle System** component emits, moves and draws particles. It is organised in a **Main** section and
 modules that each have an enable box. Particles are simulated on the CPU and drawn as one transparent draw per system,
-with the Unlit look of Unity's default particles.
+with an unlit look.
 
 Create one with **GameObject > Effects > Particle System** (Hierarchy context menu), or add the component to any object
 with **Add Component > Particle System**.

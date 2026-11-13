@@ -67,6 +67,13 @@ void Application::LoadUiFonts(float scale) {
     const char* boldFont = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf";
 #endif
     s_BoldFont = std::filesystem::exists(boldFont) ? io.Fonts->AddFontFromFileTTF(boldFont, 17.0f*scale) : nullptr;
+    // Monospaced face for code (Script Editor)
+#ifdef _WIN32
+    const char* codeFont = "C:/Windows/Fonts/consola.ttf";
+#else
+    const char* codeFont = "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf";
+#endif
+    s_CodeFont = std::filesystem::exists(codeFont) ? io.Fonts->AddFontFromFileTTF(codeFont, 16.0f*scale) : nullptr;
     io.FontDefault = io.Fonts->Fonts[0];
 }
 

@@ -99,6 +99,9 @@ public:
     ~SceneRenderer();
 
     void Resize(u32 width, u32 height);
+    // Size the image is shown at, when the 3D renders at a lower or higher resolution (render scale): the 3D image is
+    // scaled to it and screen-space UI is drawn on top at this size, so text stays sharp. 0 = the render size.
+    void SetDisplaySize(u32 width, u32 height);
     void SyncQuality(); // call outside a render pass, before submitting
     void BeginScene(const RenderCamera& camera, const EnvironmentSettings& env, float time);
     void Submit(const Ref<Mesh>& mesh, const glm::mat4& transform, const Material& material, u32 entityId, bool castShadows = true,u32 firstIndex=0,u32 indexCount=0,bool receiveShadows=true,int sortingOrder=0);
@@ -112,8 +115,8 @@ public:
     void SubmitLight(const LocalLight& light) { if (m_Lights.size() < kMaxLocalLights) m_Lights.push_back(light); }
     void Render(RHI::CommandList& cmd);
 
-    Ref<RHI::Texture> OutputRef() const { return m_Output; }
-    RHI::Texture* Output() const { return m_Output.get(); }        // tonemapped LDR, ShaderRead state
+    Ref<RHI::Texture> OutputRef() const { return m_Display ? m_Display : m_Output; }
+    RHI::Texture* Output() const { return m_Display ? m_Display.get() : m_Output.get(); } // tonemapped LDR with the UI, ShaderRead state
     RHI::Texture* EntityIdTarget() const { return m_EntityId.get(); }
     u32 Width() const { return m_Width; }
     u32 Height() const { return m_Height; }
@@ -121,7 +124,7 @@ public:
 
     bool grid2D=false;
     bool drawGrid = false; // editor ground grid, drawn over the tonemapped image with depth test
-    u32 selectedEntity = 0; // editor: draws a Unity-style orange outline around this entity id
+    u32 selectedEntity = 0; // editor: draws an orange outline around this entity id
 
     // Editor picking: read back the entity id under a pixel. The result arrives a couple of frames later.
     void RequestPick(u32 x, u32 y) { m_PickRequested = true; m_PickX = x; m_PickY = y; }
@@ -152,7 +155,9 @@ private:
     Ref<RHI::Texture> m_HDR, m_Depth, m_EntityId, m_Output,m_OpaqueColor,m_OpaqueDepth;
     Ref<RHI::Pipeline> m_MeshPipelines[(int)ShaderType::Count][2];
     Ref<RHI::Pipeline> m_SkyPipeline, m_ShadowPipeline, m_GridPipeline,m_Grid2DPipeline;
-    Ref<RHI::Pipeline> m_UIOverlayPipeline;
+    Ref<RHI::Pipeline> m_UIOverlayPipeline, m_DisplayBlitPipeline;
+    Ref<RHI::Texture> m_Display; // display-size image when it differs from the render size
+    u32 m_DisplayWidth = 0, m_DisplayHeight = 0;
     Ref<RHI::Pipeline> m_ParticlePipelines[2]; // alpha, additive
     std::array<Ref<RHI::Buffer>, RHI::kFramesInFlight> m_DrawBuffers;
     std::vector<DrawDataGPU> m_DrawData;

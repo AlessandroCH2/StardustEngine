@@ -19,13 +19,16 @@
 #include "Audio/AudioEngine.h"
 #include "Core/FileSystem.h"
 #include <nlohmann/json.hpp>
+#include "ShaderAssets.h"
+#include "ShaderGraphEditor.h"
+#include "ScriptEditor.h"
 #include <imgui.h>
 #include <imgui_internal.h>
 #include <imgui_stdlib.h>
 #include <glm/gtc/type_ptr.hpp>
 
 namespace Stardust {
-// Unity's layer mask dropdown: Nothing, Everything and a checkbox per named layer
+// Layer mask dropdown: Nothing, Everything and a checkbox per named layer
 static bool LayerMaskField(const char* label, u32& mask) {
     const auto& names = Project::Config().layers;
     u32 named = 0;
@@ -58,10 +61,14 @@ static bool LayerMaskField(const char* label, u32& mask) {
 void DrawTerrainVegetationInspector(Scene& scene, EntityID e, TerrainVegetationComponent& c);
 void DrawLODGroupInspector(Scene& scene, EntityID e, LODGroupComponent& g, const RenderCamera* sceneCamera);
 void DrawParticleSystemInspector(Scene& scene, EntityID e, ParticleSystemComponent& c);
+void DrawScrollViewInspector(Scene& scene, EntityID e, UIScrollViewComponent& c);
+void DrawDropdownInspector(UIDropdownComponent& c);
+EntityID CreateScrollView(Scene& scene, EntityID parent);
+EntityID CreateDropdown(Scene& scene, EntityID parent);
 
 // ------------------------------------------------------------------------------------------------ widgets
 
-// Unity-like labelled row: label column on the left, widget filling the rest
+// Labelled row: label column on the left, widget filling the rest
 static void BeginProperty(const char* label) {
     ImGui::PushID(label);
     float labelWidth = Insp::LabelWidth();
@@ -197,6 +204,12 @@ void EditorApp::DrawEntityContextItems() {
             if (std::string(kind) != "Image" && std::string(kind)!="InputField") scene.Reg().Add<UITextComponent>(m_Selected).text = kind;
             if(std::string(kind)=="InputField")scene.Reg().Add<UIInputFieldComponent>(m_Selected);
             if (std::string(kind) == "Button") scene.Reg().Add<UIButtonComponent>(m_Selected);
+        }
+        for (const char* kind : { "Dropdown", "Scroll View" }) if (ImGui::MenuItem(kind)) {
+            EntityID parent = m_Selected, canvas = parent;
+            while (canvas && !scene.Reg().Has<CanvasComponent>(canvas)) canvas = scene.GetParent(canvas);
+            if (!canvas) { canvas = scene.CreateEntity("Canvas"); scene.Reg().Add<CanvasComponent>(canvas); parent = canvas; }
+            m_Selected = std::string(kind) == "Dropdown" ? CreateDropdown(scene, parent) : CreateScrollView(scene, parent);
         }
         ImGui::EndMenu();
     }
@@ -360,7 +373,7 @@ void EditorApp::DrawHierarchy() {
     ImGui::InputTextWithHint("##search", "Search...", &filter);
     ImGui::Separator();
 
-    // Scene row like Unity's: darker band, scene icon, bold name with *, and a menu on the right
+    // Scene row: darker band, scene icon, bold name with *, and a menu on the right
     ImGuiTreeNodeFlags rootFlags = ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_Framed | ImGuiTreeNodeFlags_AllowOverlap;
     ImGui::PushStyleColor(ImGuiCol_Header, IM_COL32(28, 30, 34, 255));
     ImGui::PushStyleColor(ImGuiCol_HeaderHovered, IM_COL32(40, 43, 48, 255));
@@ -732,6 +745,8 @@ void EditorApp::DrawInspector() {
     ComponentSection<UITextComponent>(inspectScene,e,"Text  [SDF]",true,[&](auto& c){DrawTextInspector(e,c);});
     ComponentSection<UIInputFieldComponent>(inspectScene,e,"Input Field",true,[&](auto& c){Insp::InputText("Text",&c.text);Insp::InputText("Placeholder",&c.placeholder);AssetUI::AssetField("Font",c.font,{".ttf",".otf"},"System Default");FloatProp("Font Size",c.fontSize,1,1,256);Insp::ColorEdit4("Text Colour",glm::value_ptr(c.color));Insp::ColorEdit4("Placeholder Colour",glm::value_ptr(c.placeholderColor));BoolProp("Interactable",c.interactable);BoolProp("Read Only",c.readOnly);BoolProp("Password",c.password);BoolProp("Multiline",c.multiline);Insp::DragInt("Character Limit",&c.characterLimit,1,0,65536);});
     ComponentSection<UIButtonComponent>(inspectScene,e,"Button  [On Click]",true,[&](auto& c){DrawButtonInspector(e,c);});
+    ComponentSection<UIDropdownComponent>(inspectScene,e,"Dropdown",true,[&](auto& c){DrawDropdownInspector(c);});
+    ComponentSection<UIScrollViewComponent>(inspectScene,e,"Scroll View",true,[&](auto& c){DrawScrollViewInspector(inspectScene,e,c);});
     ComponentSection<CanvasGroupComponent>(inspectScene,e,"Canvas Group",true,[&](auto& c){Insp::SliderFloat("Alpha",&c.alpha,0,1);Insp::Checkbox("Interactable",&c.interactable);Insp::Checkbox("Blocks Raycasts",&c.blocksRaycasts);});
     ComponentSection<UILayoutGroupComponent>(inspectScene,e,"Layout Group",true,[&](auto& c){Insp::Combo("Layout",&c.mode,"Horizontal\0Vertical\0Grid\0");Insp::DragFloat2("Spacing",glm::value_ptr(c.spacing),1,0,100);Insp::DragFloat4("Padding L/B/R/T",glm::value_ptr(c.padding),1,0,1000);if(c.mode==2){Insp::DragInt("Columns",&c.columns,1,1,100);Insp::DragFloat2("Cell Size",glm::value_ptr(c.cellSize),1,1,1000);}Insp::Combo("Start Corner",&c.startCorner,"Upper Left\0Upper Right\0Lower Left\0Lower Right\0");if(c.mode==2)Insp::Combo("Start Axis",&c.startAxis,"Horizontal\0Vertical\0");Insp::Combo("Child Alignment",&c.childAlignment,"Upper Left\0Upper Center\0Upper Right\0Middle Left\0Middle Center\0Middle Right\0Lower Left\0Lower Center\0Lower Right\0");Insp::Checkbox("Fit Content",&c.fitContent);});
     ComponentSection<RectMaskComponent>(inspectScene,e,"Rect Mask 2D",true,[&](auto&){ImGui::TextDisabled("Clips child graphics to this rectangle");});
@@ -822,6 +837,8 @@ void EditorApp::DrawInspector() {
         if (!reg.Has<UIImageComponent>(e) && item("UI Image")) reg.Add<UIImageComponent>(e);
         if (!reg.Has<UITextComponent>(e) && item("UI Text")) reg.Add<UITextComponent>(e);
         if(!reg.Has<UIInputFieldComponent>(e)&&item("UI Input Field"))reg.Add<UIInputFieldComponent>(e);
+        if(!reg.Has<UIDropdownComponent>(e)&&item("UI Dropdown"))reg.Add<UIDropdownComponent>(e);
+        if(!reg.Has<UIScrollViewComponent>(e)&&item("UI Scroll View"))reg.Add<UIScrollViewComponent>(e);
         if (!reg.Has<UIButtonComponent>(e) && item("UI Button")) reg.Add<UIButtonComponent>(e);
         if (!reg.Has<AnimatorComponent>(e) && item("Animator")) reg.Add<AnimatorComponent>(e);
         auto addScript = [&](const std::string& name) {
@@ -926,7 +943,7 @@ static std::string EntityIconName(Registry& reg, EntityID e) {
     return "";
 }
 
-// Unity-style object slot: shows the referenced entity, accepts drag & drop from the Hierarchy, or pick from a list
+// Object slot: shows the referenced entity, accepts drag & drop from the Hierarchy, or pick from a list
 static bool ReferenceField(Scene& scene, const std::string& type, nlohmann::json& v,bool allowAssets) {
     Registry& reg = scene.Reg();
     u64 uuid = 0;
@@ -1088,8 +1105,11 @@ void EditorApp::DrawLightingWindow() {
     if (!ImGui::Begin("Lighting", &m_ShowLighting)) { ImGui::End(); return; }
     Scene& scene = ActiveScene();
     Registry& reg = scene.Reg();
-    if (ImGui::BeginTabBar("##lightingTabs")) {
-        if (ImGui::BeginTabItem("Environment")) {
+    {
+        static int lightingTab = 0;
+        const char* lightingTabs[] = { "Environment", "Lights" };
+        EditorIcons::SettingsTabs("##lightingTabs", lightingTab, lightingTabs, 2);
+        if (lightingTab == 0) {
             EnvironmentComponent* environment = nullptr;
             EntityID owner = 0;
             reg.Each<EnvironmentComponent>([&](EntityID e, EnvironmentComponent& env) { if (!environment) { environment = &env; owner = e; } });
@@ -1104,9 +1124,8 @@ void EditorApp::DrawLightingWindow() {
                 ImGui::TextDisabled("This scene has no Environment object.");
                 if (ImGui::Button("Create Environment")) { EntityID e = scene.CreateEntity("Environment"); reg.Add<EnvironmentComponent>(e); m_Selected = e; m_EntitySelection = { e }; }
             }
-            ImGui::EndTabItem();
         }
-        if (ImGui::BeginTabItem("Lights")) {
+        if (lightingTab == 1) {
             int total = 0;
             const ImGuiTableFlags flags = ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingStretchProp;
             if (ImGui::BeginTable("##lights", 6, flags)) {
@@ -1148,16 +1167,14 @@ void EditorApp::DrawLightingWindow() {
                 ImGui::EndTable();
             }
             if (!total) ImGui::TextDisabled("No lights in this scene.");
-            ImGui::EndTabItem();
         }
-        ImGui::EndTabBar();
     }
     ImGui::End();
 }
 
 void DrawLogLevelIcon(ImDrawList* draw, ImVec2 center, float radius, LogLevel level); // EditorChrome.cpp
 
-// Unity-like Console: level toggles with counts, search, one row per message; clicking a row shows it in full below
+// Console: level toggles with counts, search, one row per message; clicking a row shows it in full below
 void EditorApp::DrawConsole() {
     if (std::exchange(m_ConsoleFocusRequest, false)) ImGui::SetNextWindowFocus();
     if (!ImGui::Begin("Console", &m_ShowConsole)) { ImGui::End(); return; }
@@ -1337,7 +1354,17 @@ void EditorApp::DrawProjectCreateItems() {
         if (!fs::exists(path)) FileSystem::WriteText(path,"using Stardust;\nusing Stardust.Editor;\npublic static class EditorCommands {\n    [MenuItem(\"Tools/Hello\")]\n    static void Hello() { Debug.Log(\"Hello from Editor Only scripts\"); }\n}\n");
         Project::WriteEditorScriptProject();
     }
-    if (ImGui::MenuItem("Create Custom Shader")) {
+    if (ImGui::BeginMenu("Create Shader")) {
+        auto unique = [&](const std::string& stem, const std::string& ext) { auto p = m_ProjectCurrentDir / (stem + ext); for (int n = 1; fs::exists(p); ++n) p = m_ProjectCurrentDir / std::format("{} {}{}", stem, n, ext); return p; };
+        auto created = [&](const fs::path& p) { m_SelectedAsset = AssetManager::ToRelative(p); m_InspectAsset = true; ShaderAssets::CompileAsync(p); };
+        if (ImGui::MenuItem("Standard Surface Shader")) { auto p = unique("NewSurfaceShader", ".shader"); FileSystem::WriteText(p, ShaderAssets::SurfaceTemplate(p.stem().string())); created(p); ScriptEditor::Open(p); }
+        if (ImGui::MenuItem("Unlit Shader")) { auto p = unique("NewUnlitShader", ".shader"); FileSystem::WriteText(p, ShaderAssets::UnlitTemplate(p.stem().string())); created(p); ScriptEditor::Open(p); }
+        ImGui::Separator();
+        if (ImGui::MenuItem("Lit Shader Graph")) { auto p = unique("NewLitGraph", ".shadergraph"); FileSystem::WriteText(p, ShaderAssets::GraphTemplate(true).dump(2)); created(p); ShaderGraphEditor::Open(AssetManager::ToRelative(p)); }
+        if (ImGui::MenuItem("Unlit Shader Graph")) { auto p = unique("NewUnlitGraph", ".shadergraph"); FileSystem::WriteText(p, ShaderAssets::GraphTemplate(false).dump(2)); created(p); ShaderGraphEditor::Open(AssetManager::ToRelative(p)); }
+        ImGui::EndMenu();
+    }
+    if (ImGui::MenuItem("Create Custom HLSL Shader")) {
         auto path=m_ProjectCurrentDir/"Custom.ps.hlsl";
         for (int n=1;fs::exists(path);++n) path=m_ProjectCurrentDir/std::format("Custom{}.ps.hlsl",n);
         FileSystem::WriteText(path,R"(#include "MeshCommon.hlsli"
@@ -1745,7 +1772,8 @@ void EditorApp::DrawProject() {
                 else if (ext == ".prefab") OpenPrefab(de.path());
                 else if (ext == ".sprite" || AssetUI::IsSpriteTexture(relPath)) {m_SpriteEditorPath=relPath;m_SpriteEditorOpen=true;}
                 else if (ext == ".anim" || ext == ".controller") {m_AnimationAsset=relPath;m_ShowAnimationEditor=true;}
-                else if (ext == ".cs") ShellExecuteFile(de.path());
+                else if (ext == ".cs" || ext == ".shader" || ext == ".hlsl" || ext == ".hlsli" || ext == ".txt" || ext == ".md") ScriptEditor::Open(de.path());
+                else if (ext == ".shadergraph") ShaderGraphEditor::Open(relPath);
                 else if (ext == ".wav" || ext == ".mp3" || ext == ".ogg" || ext == ".flac") AudioEngine::PreviewClip(relPath);
             }
             if (ext == ".fbx" && !modelChildren.count(de.path())) {

@@ -4,6 +4,7 @@
 #include "Renderer/Quality.h"
 #include "EditorApp.h"
 #include "EditorIcons.h"
+#include "SettingsLayout.h"
 #include "Project/BuildCooker.h"
 #include "AssetUI.h"
 #include "FileDialogs.h"
@@ -201,7 +202,7 @@ void EditorApp::DrawProjectHub() {
         ImGui::TextUnformatted("Projects");
         ImGui::SetWindowFontScale(1);
         if (bold) ImGui::PopFont();
-        // Search, Add and New project on the right of the heading, like Unity Hub
+        // Search, Add and New project on the right of the heading
         const float buttonHeight = 32 * ui, addWidth = 80 * ui, newWidth = 130 * ui, searchWidth = std::min(300 * ui, ImGui::GetWindowWidth() * 0.3f);
         ImGui::SameLine(ImGui::GetWindowWidth() - ImGui::GetStyle().WindowPadding.x - searchWidth - addWidth - newWidth - 16 * ui);
         const float rowY = ImGui::GetCursorPosY() - 4 * ui;
@@ -380,7 +381,7 @@ void EditorApp::DrawProjectHub() {
     }
     ImGui::EndChild();
 
-    // Opening a project saved by another engine version asks first, like Unity Hub
+    // Opening a project saved by another engine version asks first
     if (askVersion) ImGui::OpenPopup("Change engine version?");
     ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, { 0.5f, 0.5f });
     ImGui::SetNextWindowSize({ 480 * ui, 0 });
@@ -508,18 +509,23 @@ void EditorApp::SaveProjectState() {
 
 // ------------------------------------------------------------------------------------------------ build settings
 
+// Project Settings page to show next time the window opens (Build Settings' "Player Settings..." sets it)
+static int s_ProjectSettingsPage = 0;
+
 void EditorApp::DrawBuildSettings() {
     if (!m_ShowBuildSettings) return;
-    ImGui::SetNextWindowSize(ImVec2(620*UiScale(), 560*UiScale()), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("Build Settings", &m_ShowBuildSettings,ImGuiWindowFlags_NoScrollbar|ImGuiWindowFlags_NoScrollWithMouse)) { ImGui::End(); return; }
+    const float ui = UiScale();
+    ImGui::SetNextWindowSize(ImVec2(760 * ui, 600 * ui), ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("Build Settings", &m_ShowBuildSettings, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) { ImGui::End(); return; }
     auto& cfg = Project::Config();
     cfg.scenesEnabled.resize(cfg.scenes.size(), true);
 
-    static int page=0;const char* pages[]={"Scenes","Content Paks","Player","Export"};EditorIcons::SettingsTabs("BuildTabs",page,pages,4);ImGui::BeginChild("BuildSettingsBody",{0,0});
-    if(page==0){
-    ImGui::SeparatorText("Scenes In Build");
-    ImGui::TextDisabled("Index 0 is loaded first. Drag .scene files here from the Project panel, drag rows to reorder.");
-    ImGui::BeginChild("##scenes", ImVec2(0, 200*UiScale()), ImGuiChildFlags_Borders);
+    // ---- Scenes In Build (top)
+    SettingsUI::Section("Scenes In Build");
+    const float listHeight = std::clamp(ImGui::GetContentRegionAvail().y * 0.36f, 110 * ui, 320 * ui);
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, IM_COL32(30, 32, 36, 255));
+    ImGui::BeginChild("##scenes", ImVec2(0, listHeight), ImGuiChildFlags_Borders);
+    ImGui::PopStyleColor();
     int moveFrom = -1, moveTo = -1, removeAt = -1;
     int index = 0;
     for (size_t i = 0; i < cfg.scenes.size(); ++i) {
@@ -527,8 +533,8 @@ void EditorApp::DrawBuildSettings() {
         bool en = cfg.scenesEnabled[i];
         if (ImGui::Checkbox("##en", &en)) { cfg.scenesEnabled[i] = en; Project::Save(); }
         ImGui::SameLine();
-        ImGui::Selectable(std::format("{}   {}", en ? std::to_string(index) : std::string(" "), cfg.scenes[i]).c_str(), false, 0, ImVec2(ImGui::GetContentRegionAvail().x - 30, 0));
-        if (en) ++index;
+        const float indexWidth = 30 * ui;
+        ImGui::Selectable(cfg.scenes[i].c_str(), false, 0, ImVec2(ImGui::GetContentRegionAvail().x - indexWidth - 26 * ui, 0));
         if (ImGui::BeginDragDropSource()) {
             int src = (int)i;
             ImGui::SetDragDropPayload("STARDUST_SCENE_ROW", &src, sizeof(int));
@@ -539,12 +545,17 @@ void EditorApp::DrawBuildSettings() {
             if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("STARDUST_SCENE_ROW")) { moveFrom = *(const int*)p->Data; moveTo = (int)i; }
             ImGui::EndDragDropTarget();
         }
+        // Build index on the right
         ImGui::SameLine();
+        if (en) ImGui::TextDisabled("%d", index); else ImGui::TextDisabled(" ");
+        if (en) ++index;
+        ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - 20 * ui);
         if (ImGui::SmallButton("x")) removeAt = (int)i;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Remove from the build");
         ImGui::PopID();
     }
+    if (cfg.scenes.empty()) ImGui::TextDisabled("Drag .scene files here from the Project panel.");
     ImGui::EndChild();
-    // dropping assets on the list
     if (ImGui::BeginDragDropTarget()) {
         if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload(AssetUI::kAssetPayload)) {
             std::string path((const char*)p->Data, p->DataSize - 1);
@@ -561,63 +572,87 @@ void EditorApp::DrawBuildSettings() {
         Project::Save();
     }
     if (removeAt >= 0) { cfg.scenes.erase(cfg.scenes.begin() + removeAt); cfg.scenesEnabled.erase(cfg.scenesEnabled.begin() + removeAt); Project::Save(); }
-    if (ImGui::Button("Add Open Scene") && !m_ScenePath.empty()) {
-        std::string rel = AssetManager::ToRelative(m_ScenePath);
-        if (std::find(cfg.scenes.begin(), cfg.scenes.end(), rel) == cfg.scenes.end()) { cfg.scenes.push_back(rel); cfg.scenesEnabled.push_back(true); Project::Save(); }
+    ImGui::TextDisabled("Index 0 loads first. Drag rows to reorder.");
+    {
+        const float w = ImGui::CalcTextSize("Add Open Scene").x + ImGui::GetStyle().FramePadding.x * 2;
+        ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - w);
+        ImGui::BeginDisabled(m_ScenePath.empty());
+        if (ImGui::Button("Add Open Scene")) {
+            std::string rel = AssetManager::ToRelative(m_ScenePath);
+            if (std::find(cfg.scenes.begin(), cfg.scenes.end(), rel) == cfg.scenes.end()) { cfg.scenes.push_back(rel); cfg.scenesEnabled.push_back(true); Project::Save(); }
+        }
+        ImGui::EndDisabled();
     }
 
-    }
-    if(page==1){
-    ImGui::SeparatorText("Optional Content Paks");ImGui::TextWrapped("Folders are relative to Assets. Scene dependencies always go in game.pak. Remaining assets and their dependencies go in Data/Optional and are mounted by script.");
-    int removePack=-1;for(int i=0;i<(int)cfg.contentPacks.size();++i){ImGui::PushID(i);bool change=ImGui::InputText("Pak name",&cfg.contentPacks[i].name);change|=ImGui::InputText("Asset folder",&cfg.contentPacks[i].folder);if(ImGui::SmallButton("Remove"))removePack=i;if(change)Project::Save();ImGui::PopID();}
-    if(removePack>=0){cfg.contentPacks.erase(cfg.contentPacks.begin()+removePack);Project::Save();}if(ImGui::Button("+ Add Optional Pak")){cfg.contentPacks.push_back({"content"+std::to_string(cfg.contentPacks.size()+1),"DLC"});Project::Save();}
-    }
-    if(page==2){
-    ImGui::SeparatorText("Player");
-    bool changed = false;
-    int platform=cfg.buildTarget=="Linux"?1:0;if(ImGui::Combo("Target Platform",&platform,"Windows x64\0Linux x64\0")){cfg.buildTarget=platform?"Linux":"Windows";cfg.lastBuildFolder=(Project::Dir()/"Build"/cfg.buildTarget).string();changed=true;}
-    changed |= ImGui::InputText("Product Name", &cfg.name);
-    changed |= ImGui::InputText("Company", &cfg.company);
-    changed |= ImGui::InputText("Version", &cfg.version);
-    changed |= AssetUI::AssetField("Game Icon",cfg.icon,{".png",".jpg",".jpeg",".bmp",".tga"},"Stardust (default)");
-    ImGui::TextDisabled("Used for the game window, taskbar and exported .exe. Transparent square PNG recommended.");
-    int res[2] = { (int)cfg.windowWidth, (int)cfg.windowHeight };
-    if (ImGui::InputInt2("Resolution", res)) { cfg.windowWidth = (u32)std::max(320, res[0]); cfg.windowHeight = (u32)std::max(240, res[1]); changed = true; }
-    changed |= ImGui::Checkbox("Fullscreen", &cfg.fullscreen);
-    ImGui::SameLine();
-    changed |= ImGui::Checkbox("VSync", &cfg.vsync);
-    ImGui::SetNextItemWidth(220);
-    if (ImGui::Combo("Graphics Quality", &cfg.quality, "Low (older GPUs)\0Medium\0High\0")) { GraphicsQuality::Apply(cfg.quality); changed = true; }
-    {   // Pak encryption: the key goes into the exported player, never into the paks
-        static bool showKey = false;
-        ImGui::SetNextItemWidth(260);
-        if (ImGui::InputTextWithHint("Pak Encryption Key", "empty = not encrypted", &cfg.pakKey, showKey ? 0 : ImGuiInputTextFlags_Password)) { Pak::SetPassphrase(cfg.pakKey); changed = true; }
-        ImGui::SameLine(); ImGui::Checkbox("Show##pakKey", &showKey);
-        ImGui::SameLine(); if (ImGui::SmallButton("Generate")) { std::random_device random; static const char* chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"; cfg.pakKey.clear(); for (int i = 0; i < 32; ++i) cfg.pakKey += chars[random() % 57]; Pak::SetPassphrase(cfg.pakKey); changed = true; }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Paks built from now on are encrypted with this key. Keep it: old builds need theirs.");
-    }
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Low and Medium render the Game view and the built player at a lower 3D resolution,\nwith smaller shadow maps, cheaper clouds and sparser grass.");
-    if (changed) Project::Save();
-
-    }
-    if(page==3){
-    ImGui::SeparatorText("Build");
-    ImGui::Text("Target: %s",cfg.buildTarget.c_str());
-    if (cfg.lastBuildFolder.empty()) cfg.lastBuildFolder = (Project::Dir() / "Build").string();
-    ImGui::SetNextItemWidth(-80);
-    ImGui::InputText("##out", &cfg.lastBuildFolder);
-    ImGui::SameLine();
-    if (ImGui::Button("Browse")) if (auto f = FileDialogs::PickFolder(GetWindow().NativeHandle(), cfg.lastBuildFolder)) { cfg.lastBuildFolder = f->string(); Project::Save(); }
-    ImGui::BeginDisabled(m_Building || m_State != PlayState::Edit || Project::EnabledScenes().empty());
-    if (ImGui::Button("Build", ImVec2(140*UiScale(), 30*UiScale()))) BuildPlayer(false);
-    ImGui::SameLine();
-    if (ImGui::Button("Build And Run", ImVec2(140*UiScale(), 30*UiScale()))) BuildPlayer(true);
-    ImGui::EndDisabled();
-    if (m_Building) { ImGui::SameLine(); ImGui::TextColored(ImVec4(1, 0.85f, 0.3f, 1), "Building... (see Console)"); }
-    if (Project::EnabledScenes().empty()) ImGui::TextColored(ImVec4(1, 0.5f, 0.3f, 1), "Add at least one scene to build.");
-    ImGui::TextDisabled("The build needs the .NET 8 runtime on the target PC (C# scripts).");
+    // ---- Platform list (left) and its settings (right)
+    SettingsUI::Section("Platform");
+    const float footer = ImGui::GetFrameHeight() + 34 * ui;
+    const float sidebar = std::clamp(ImGui::GetContentRegionAvail().x * 0.28f, 150 * ui, 230 * ui);
+    const float bodyHeight = std::max(60 * ui, ImGui::GetContentRegionAvail().y - footer);
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, IM_COL32(30, 32, 36, 255));
+    ImGui::BeginChild("##platforms", { sidebar, bodyHeight }, ImGuiChildFlags_Borders);
+    ImGui::PopStyleColor();
+    const char* platforms[] = { "Windows", "Linux" };
+    const char* platformLabels[] = { "Windows x64", "Linux x64" };
+    for (int i = 0; i < 2; ++i) {
+        const bool current = cfg.buildTarget == platforms[i];
+        if (SettingsUI::ListRow(platformLabels[i], current) && !current) {
+            cfg.buildTarget = platforms[i];
+            cfg.lastBuildFolder = (Project::Dir() / "Build" / cfg.buildTarget).string();
+            Project::Save();
+        }
     }
     ImGui::EndChild();
+    ImGui::SameLine(0, 8 * ui);
+    ImGui::BeginChild("##platformSettings", { 0, bodyHeight }, ImGuiChildFlags_None);
+    ImGui::SetWindowFontScale(1.25f);
+    ImGui::TextUnformatted(cfg.buildTarget == "Linux" ? "Linux x64" : "Windows x64");
+    ImGui::SetWindowFontScale(1.0f);
+    ImGui::Dummy({ 0, 4 * ui });
+    if (cfg.lastBuildFolder.empty()) cfg.lastBuildFolder = (Project::Dir() / "Build").string();
+    Insp::LabelCell("Output Folder");
+    ImGui::SetNextItemWidth(std::max(60.0f, ImGui::GetContentRegionAvail().x - 70 * ui));
+    if (ImGui::InputText("##out", &cfg.lastBuildFolder, ImGuiInputTextFlags_EnterReturnsTrue)) Project::Save();
+    ImGui::SameLine(0, 4 * ui);
+    if (ImGui::Button("Browse", { 66 * ui, 0 })) if (auto f = FileDialogs::PickFolder(GetWindow().NativeHandle(), cfg.lastBuildFolder)) { cfg.lastBuildFolder = f->string(); Project::Save(); }
+    SettingsUI::ValueRow("Product", cfg.name + "  " + cfg.version);
+    SettingsUI::ValueRow("Graphics Quality", GraphicsQuality::LevelName(cfg.quality));
+    if (cfg.buildTarget == "Linux") SettingsUI::Note("Needs the Linux runtime in build/bin/Release/Linux (Tools/BuildLinuxRuntime.sh). Run the build with Launch.sh.");
+    SettingsUI::Note("The build needs the .NET 8 runtime on the target PC (C# scripts).");
+
+    SettingsUI::Section("Optional Content Paks");
+    SettingsUI::Note("Scene dependencies always go in game.pak. Each folder below (relative to Assets) becomes a pak in Data/Optional, mounted by script.");
+    int removePack = -1;
+    for (int i = 0; i < (int)cfg.contentPacks.size(); ++i) {
+        ImGui::PushID(i);
+        bool change = Insp::InputText("Pak Name", &cfg.contentPacks[i].name);
+        Insp::LabelCell("Asset Folder");
+        ImGui::SetNextItemWidth(std::max(60.0f, ImGui::GetContentRegionAvail().x - 70 * ui));
+        change |= ImGui::InputText("##folder", &cfg.contentPacks[i].folder);
+        ImGui::SameLine(0, 4 * ui);
+        if (ImGui::Button("Remove", { 66 * ui, 0 })) removePack = i;
+        if (change) Project::Save();
+        ImGui::Dummy({ 0, 4 * ui });
+        ImGui::PopID();
+    }
+    if (removePack >= 0) { cfg.contentPacks.erase(cfg.contentPacks.begin() + removePack); Project::Save(); }
+    if (ImGui::Button("Add Optional Pak")) { cfg.contentPacks.push_back({ "content" + std::to_string(cfg.contentPacks.size() + 1), "DLC" }); Project::Save(); }
+    ImGui::EndChild();
+
+    // ---- Footer: Player Settings on the left, Build buttons on the right
+    ImGui::Dummy({ 0, 6 * ui });
+    if (ImGui::Button("Player Settings...", { 150 * ui, 28 * ui })) { s_ProjectSettingsPage = 0; m_ShowProjectSettings = true; ImGui::SetWindowFocus("Project Settings"); }
+    if (m_Building) { ImGui::SameLine(); ImGui::AlignTextToFramePadding(); ImGui::TextColored(ImVec4(1, 0.85f, 0.3f, 1), "Building... (see Console)"); }
+    else if (Project::EnabledScenes().empty()) { ImGui::SameLine(); ImGui::AlignTextToFramePadding(); ImGui::TextColored(ImVec4(1, 0.5f, 0.3f, 1), "Add at least one scene to build."); }
+    ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - (280 * ui + ImGui::GetStyle().ItemSpacing.x));
+    ImGui::BeginDisabled(m_Building || m_State != PlayState::Edit || Project::EnabledScenes().empty());
+    if (ImGui::Button("Build", ImVec2(140 * ui, 28 * ui))) BuildPlayer(false);
+    ImGui::SameLine();
+    ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(44, 93, 160, 255));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(56, 110, 185, 255));
+    if (ImGui::Button("Build And Run", ImVec2(140 * ui, 28 * ui))) BuildPlayer(true);
+    ImGui::PopStyleColor(2);
+    ImGui::EndDisabled();
     ImGui::End();
 }
 
@@ -715,66 +750,171 @@ exec ./Game.x86_64 "$@"
 
 void EditorApp::DrawProjectSettings() {
     if (!m_ShowProjectSettings) return;
-    ImGui::SetNextWindowSize(ImVec2(480*UiScale(), 420*UiScale()), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("Project Settings", &m_ShowProjectSettings,ImGuiWindowFlags_NoScrollbar|ImGuiWindowFlags_NoScrollWithMouse)) { ImGui::End(); return; }
+    const float ui = UiScale();
+    ImGui::SetNextWindowSize(ImVec2(760 * ui, 520 * ui), ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("Project Settings", &m_ShowProjectSettings, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) { ImGui::End(); return; }
     auto& cfg = Project::Config();
     bool changed = false;
-    static int section=0;const char* categories[]={"General","Packages","Input","Layers","Tags"};EditorIcons::SettingsTabs("ProjectTabs",section,categories,5);ImGui::BeginChild("ProjectSettingsBody",{0,0});
-    if(section==0){
-    ImGui::SeparatorText("Project");
-    changed |= ImGui::InputText("Name", &cfg.name);
-    changed |= ImGui::InputText("Company", &cfg.company);
-    changed |= ImGui::InputText("Version", &cfg.version);
-    ImGui::TextDisabled("Scripts assembly: %s", cfg.assemblyName.c_str());
-    ImGui::TextDisabled("Folder: %s", Project::Dir().string().c_str());
+    static std::string search;
+    const char* pages[] = { "Player", "Quality", "Input Manager", "Tags and Layers", "Package Manager" };
+    const char* keywords[] = {
+        "product name company version icon resolution fullscreen vsync scripts assembly folder publishing pak encryption key",
+        "graphics render scale shadows shadow resolution distance clouds grass density lod bias bloom fxaa anti aliasing custom low medium high",
+        "input axes actions keys keyboard gamepad controller deadzone sensitivity gravity snap invert",
+        "tags layers",
+        "packages install update remove git samples",
+    };
+    SettingsUI::Begin("ProjectSettings", s_ProjectSettingsPage, pages, keywords, 5, search);
+    const int page = s_ProjectSettingsPage;
+
+    if (page == 0) {
+        SettingsUI::Section("Identification");
+        changed |= Insp::InputText("Product Name", &cfg.name);
+        changed |= Insp::InputText("Company Name", &cfg.company);
+        changed |= Insp::InputText("Version", &cfg.version);
+        changed |= AssetUI::AssetField("Game Icon", cfg.icon, { ".png", ".jpg", ".jpeg", ".bmp", ".tga" }, "Stardust (default)");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Window, taskbar and exported .exe icon. A transparent square PNG works best.");
+
+        SettingsUI::Section("Resolution and Presentation");
+        int res[2] = { (int)cfg.windowWidth, (int)cfg.windowHeight };
+        if (Insp::DragInt2("Default Resolution", res, 1.0f, 320, 16384)) { cfg.windowWidth = (u32)std::max(320, res[0]); cfg.windowHeight = (u32)std::max(240, res[1]); changed = true; }
+        changed |= Insp::Checkbox("Fullscreen", &cfg.fullscreen);
+        changed |= Insp::Checkbox("VSync", &cfg.vsync);
+
+        SettingsUI::Section("Publishing");
+        {   // Pak encryption: the key goes into the exported player, never into the paks
+            static bool showKey = false;
+            Insp::LabelCell("Pak Encryption Key");
+            ImGui::SetNextItemWidth(std::max(60.0f, ImGui::GetContentRegionAvail().x - 150 * ui));
+            if (ImGui::InputTextWithHint("##pakKey", "empty = not encrypted", &cfg.pakKey, showKey ? 0 : ImGuiInputTextFlags_Password)) { Pak::SetPassphrase(cfg.pakKey); changed = true; }
+            ImGui::SameLine(0, 4 * ui); ImGui::Checkbox("Show", &showKey);
+            ImGui::SameLine(0, 4 * ui);
+            if (ImGui::Button("Generate")) { std::random_device random; static const char* chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"; cfg.pakKey.clear(); for (int i = 0; i < 32; ++i) cfg.pakKey += chars[random() % 57]; Pak::SetPassphrase(cfg.pakKey); changed = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Paks built from now on are encrypted with this key. Keep it: old builds need theirs.");
+        }
+
+        SettingsUI::Section("Scripting");
+        SettingsUI::ValueRow("Scripts Assembly", cfg.assemblyName);
+        SettingsUI::ValueRow("Project Folder", Project::Dir().string());
     }
-    if(section==1){
-    ImGui::TextWrapped("Install, update and remove packages, import their samples, or add packages from disk or from a git repository in the Package Manager.");
-    ImGui::Spacing();
-    if (ImGui::Button("Open Package Manager", { 220 * UiScale(), 30 * UiScale() })) m_ShowPackageManager = true;
-    ImGui::SeparatorText("Installed");
-    for (const auto& package : PackageManager::Installed())
-        ImGui::BulletText("%s  %s%s", package.displayName.c_str(), package.version.c_str(), package.engine ? "  (Engine)" : "");
-    }
-    if(section==2){
-    ImGui::SeparatorText("Input Manager");
-        auto file=Project::AssetsDir()/"Settings/Input.json";static std::string loadedInput;static nlohmann::json input;
-        if(loadedInput!=file.string()){loadedInput=file.string();input=nlohmann::json::parse(FileSystem::ReadText(file),nullptr,false);if(!input.is_object())input={{"Horizontal",{{"Positive",68},{"Negative",65},{"AlternatePositive",262},{"AlternateNegative",263},{"GamepadAxis",0}}},{"Vertical",{{"Positive",87},{"Negative",83},{"AlternatePositive",265},{"AlternateNegative",264},{"GamepadAxis",1}}},{"Jump",{{"Positive",32},{"GamepadButton",0}}},{"Submit",{{"Positive",257},{"GamepadButton",0}}},{"Cancel",{{"Positive",256},{"GamepadButton",1}}}};}
-        bool save=false;static std::string newAction;ImGui::InputText("Action Name",&newAction);ImGui::SameLine();if(ImGui::Button("Add Action")&&!newAction.empty()){input[newAction]={{"Positive",32},{"Negative",0},{"GamepadAxis",-1},{"GamepadButton",-1},{"Deadzone",.15f},{"Invert",false}};save=true;}
-        std::string removeInput,renameFrom,renameTo;for(auto& [name,action]:input.items())if(ImGui::TreeNode(name.c_str())){
-            auto renamed=name;if(ImGui::InputText("Name",&renamed,ImGuiInputTextFlags_EnterReturnsTrue)&&!renamed.empty()&&renamed!=name&&!input.contains(renamed)){renameFrom=name;renameTo=renamed;}
-            for(const char* key:{"Positive","Negative","AlternatePositive","AlternateNegative"}){int value=action.value(key,0);if(ImGui::InputInt(key,&value)){action[key]=std::clamp(value,0,348);save=true;}}
-            int controller=action.value("GamepadIndex",0);if(ImGui::SliderInt("Controller",&controller,0,15)){action["GamepadIndex"]=controller;save=true;}
-            int axis=action.value("GamepadAxis",-1)+1;if(ImGui::Combo("Gamepad Axis",&axis,"None\0Left X\0Left Y\0Right X\0Right Y\0Left Trigger\0Right Trigger\0")){action["GamepadAxis"]=axis-1;save=true;}
-            int button=action.value("GamepadButton",-1);if(ImGui::SliderInt("Gamepad Button",&button,-1,14)){action["GamepadButton"]=button;save=true;}
-            float deadzone=action.value("Deadzone",.15f);if(ImGui::SliderFloat("Deadzone",&deadzone,0,.95f)){action["Deadzone"]=deadzone;save=true;}bool invert=action.value("Invert",false);if(ImGui::Checkbox("Invert",&invert)){action["Invert"]=invert;save=true;}
-            float sensitivity=action.value("Sensitivity",3.f);if(ImGui::DragFloat("Sensitivity",&sensitivity,.05f,0,100)){action["Sensitivity"]=sensitivity;save=true;}if(ImGui::IsItemHovered())ImGui::SetTooltip("How fast the keyboard value reaches 1 (per second). 0 = instant");
-            float gravity=action.value("Gravity",3.f);if(ImGui::DragFloat("Gravity",&gravity,.05f,0,100)){action["Gravity"]=gravity;save=true;}if(ImGui::IsItemHovered())ImGui::SetTooltip("How fast it returns to 0 once released (per second). 0 = instant");
-            bool snap=action.value("Snap",true);if(ImGui::Checkbox("Snap",&snap)){action["Snap"]=snap;save=true;}if(ImGui::IsItemHovered())ImGui::SetTooltip("Pressing the opposite key jumps through 0");
-            ImGui::TextDisabled("Keyboard codes: Space 32, A-Z 65-90, Enter 257, arrows 262-265.");if(ImGui::Button("Remove Action"))removeInput=name;ImGui::TreePop();}
-        if(!renameFrom.empty()){input[renameTo]=input[renameFrom];input.erase(renameFrom);save=true;}
-        if(!removeInput.empty()){input.erase(removeInput);save=true;}if(save)FileSystem::WriteText(file,input.dump(2));
-    }
-    if(section==3){cfg.layers.resize(32);for(int i=0;i<32;++i){ImGui::PushID(i);if(ImGui::InputText(std::format("Layer {}",i).c_str(),&cfg.layers[i]))changed=true;ImGui::PopID();}}
-    if(section==4){
-    ImGui::SeparatorText("Tags");
-    int remove = -1;
-    for (size_t i = 0; i < cfg.tags.size(); ++i) {
-        ImGui::PushID((int)i);
-        ImGui::SetNextItemWidth(-40);
-        bool fixed = i == 0; // "Untagged"
-        ImGui::BeginDisabled(fixed);
-        changed |= ImGui::InputText("##tag", &cfg.tags[i]);
-        ImGui::SameLine();
-        if (ImGui::SmallButton("x")) remove = (int)i;
+
+    if (page == 1) {
+        SettingsUI::Note("Low and Medium render the Game view and the built player at a lower 3D resolution, with smaller shadow maps, cheaper clouds and sparser grass. Changing any value turns the level into Custom. Games can change these at run time with QualitySettings (C#).");
+        ImGui::Dummy({ 0, 4 * ui });
+        if (Insp::Combo("Quality Level", &cfg.quality, "Low (older GPUs)\0Medium\0High\0Custom\0")) {
+            if (cfg.quality == GraphicsQuality::Custom && cfg.customQuality.level != GraphicsQuality::Custom) { cfg.customQuality = GraphicsQuality::Current(); cfg.customQuality.level = GraphicsQuality::Custom; }
+            GraphicsQuality::Apply(cfg.quality, &cfg.customQuality); changed = true;
+        }
+        // Editing any value of a preset turns it into Custom with that value
+        GraphicsQuality q = GraphicsQuality::Current();
+        bool edited = false;
+        SettingsUI::Section("Rendering");
+        edited |= Insp::SliderFloat("Render Scale", &q.renderScale, 0.25f, 2.0f, "%.2fx");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("3D resolution of the Game view and the player. Screen-space UI always stays at full resolution.\nAbove 1 supersamples (sharper, slower).");
+        edited |= Insp::Checkbox("Bloom", &q.bloom);
+        edited |= Insp::Checkbox("Anti-aliasing (FXAA)", &q.fxaa);
+        SettingsUI::Section("Shadows");
+        edited |= Insp::Checkbox("Shadows", &q.shadows);
+        ImGui::BeginDisabled(!q.shadows);
+        {
+            static const u32 sizes[] = { 512, 1024, 2048, 4096, 8192 };
+            int index = 0; while (index < 4 && sizes[index] < q.shadowMapSize) ++index;
+            if (Insp::Combo("Shadow Resolution", &index, "512\0" "1024\0" "2048\0" "4096\0" "8192\0")) { q.shadowMapSize = sizes[index]; edited = true; }
+            edited |= Insp::SliderFloat("Shadow Distance", &q.shadowDistance, 0.1f, 4.0f, "x %.2f");
+        }
         ImGui::EndDisabled();
-        ImGui::PopID();
+        SettingsUI::Section("Environment and Detail");
+        {
+            int clouds = (int)std::clamp(q.cloudDownscale, 1u, 4u) - 1;
+            if (Insp::Combo("Cloud Resolution", &clouds, "Full\0Half\0Third\0Quarter\0")) { q.cloudDownscale = (u32)clouds + 1; edited = true; }
+        }
+        edited |= Insp::SliderFloat("Grass Density", &q.grassDensity, 0.0f, 2.0f, "x %.2f");
+        edited |= Insp::SliderFloat("Grass Distance", &q.grassDistance, 0.0f, 2.0f, "x %.2f");
+        edited |= Insp::SliderFloat("LOD Bias", &q.lodBias, 0.1f, 4.0f, "%.2f");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Higher keeps detailed LOD levels at a greater distance");
+        if (edited) {
+            q.Clamp(); q.level = GraphicsQuality::Custom;
+            cfg.quality = GraphicsQuality::Custom; cfg.customQuality = q;
+            GraphicsQuality::Apply(GraphicsQuality::Custom, &q);
+            changed = true;
+        }
     }
-    if (remove > 0) { cfg.tags.erase(cfg.tags.begin() + remove); changed = true; }
-    if (ImGui::Button("Add Tag")) { cfg.tags.push_back("NewTag"); changed = true; }
+
+    if (page == 2) {
+        auto file = Project::AssetsDir() / "Settings/Input.json"; static std::string loadedInput; static nlohmann::json input;
+        if (loadedInput != file.string()) { loadedInput = file.string(); input = nlohmann::json::parse(FileSystem::ReadText(file), nullptr, false); if (!input.is_object()) input = { {"Horizontal",{{"Positive",68},{"Negative",65},{"AlternatePositive",262},{"AlternateNegative",263},{"GamepadAxis",0}}},{"Vertical",{{"Positive",87},{"Negative",83},{"AlternatePositive",265},{"AlternateNegative",264},{"GamepadAxis",1}}},{"Jump",{{"Positive",32},{"GamepadButton",0}}},{"Submit",{{"Positive",257},{"GamepadButton",0}}},{"Cancel",{{"Positive",256},{"GamepadButton",1}}} }; }
+        SettingsUI::Note("Actions read with Input.GetAxis / GetButton. Keyboard codes: Space 32, A-Z 65-90, Enter 257, arrows 262-265.");
+        bool save = false;
+        static std::string newAction;
+        Insp::LabelCell("New Action");
+        ImGui::SetNextItemWidth(std::max(60.0f, ImGui::GetContentRegionAvail().x - 70 * ui));
+        ImGui::InputTextWithHint("##newAction", "Name", &newAction);
+        ImGui::SameLine(0, 4 * ui);
+        if (ImGui::Button("Add", { 66 * ui, 0 }) && !newAction.empty() && !input.contains(newAction)) { input[newAction] = { {"Positive",32},{"Negative",0},{"GamepadAxis",-1},{"GamepadButton",-1},{"Deadzone",.15f},{"Invert",false} }; newAction.clear(); save = true; }
+        SettingsUI::Section("Actions");
+        std::string removeInput, renameFrom, renameTo;
+        for (auto& [name, action] : input.items()) {
+            if (!ImGui::TreeNodeEx(name.c_str(), ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_FramePadding)) continue;
+            auto renamed = name;
+            if (Insp::InputText("Name", &renamed, ImGuiInputTextFlags_EnterReturnsTrue) && !renamed.empty() && renamed != name && !input.contains(renamed)) { renameFrom = name; renameTo = renamed; }
+            for (const char* key : { "Positive", "Negative", "AlternatePositive", "AlternateNegative" }) { int value = action.value(key, 0); if (Insp::InputInt(key, &value)) { action[key] = std::clamp(value, 0, 348); save = true; } }
+            int controller = action.value("GamepadIndex", 0); if (Insp::SliderInt("Controller", &controller, 0, 15)) { action["GamepadIndex"] = controller; save = true; }
+            int axis = action.value("GamepadAxis", -1) + 1; if (Insp::Combo("Gamepad Axis", &axis, "None\0Left X\0Left Y\0Right X\0Right Y\0Left Trigger\0Right Trigger\0")) { action["GamepadAxis"] = axis - 1; save = true; }
+            int button = action.value("GamepadButton", -1); if (Insp::SliderInt("Gamepad Button", &button, -1, 14)) { action["GamepadButton"] = button; save = true; }
+            float deadzone = action.value("Deadzone", .15f); if (Insp::SliderFloat("Deadzone", &deadzone, 0, .95f)) { action["Deadzone"] = deadzone; save = true; }
+            bool invert = action.value("Invert", false); if (Insp::Checkbox("Invert", &invert)) { action["Invert"] = invert; save = true; }
+            float sensitivity = action.value("Sensitivity", 3.f); if (Insp::DragFloat("Sensitivity", &sensitivity, .05f, 0, 100)) { action["Sensitivity"] = sensitivity; save = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How fast the keyboard value reaches 1 (per second). 0 = instant");
+            float gravity = action.value("Gravity", 3.f); if (Insp::DragFloat("Gravity", &gravity, .05f, 0, 100)) { action["Gravity"] = gravity; save = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How fast it returns to 0 once released (per second). 0 = instant");
+            bool snap = action.value("Snap", true); if (Insp::Checkbox("Snap", &snap)) { action["Snap"] = snap; save = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pressing the opposite key jumps through 0");
+            if (ImGui::Button("Remove Action")) removeInput = name;
+            ImGui::Dummy({ 0, 4 * ui });
+            ImGui::TreePop();
+        }
+        if (!renameFrom.empty()) { input[renameTo] = input[renameFrom]; input.erase(renameFrom); save = true; }
+        if (!removeInput.empty()) { input.erase(removeInput); save = true; }
+        if (save) FileSystem::WriteText(file, input.dump(2));
     }
+
+    if (page == 3) {
+        SettingsUI::Section("Tags");
+        int remove = -1;
+        for (size_t i = 0; i < cfg.tags.size(); ++i) {
+            ImGui::PushID((int)i);
+            const bool fixed = i == 0; // "Untagged"
+            Insp::LabelCell(std::format("Tag {}", i).c_str());
+            ImGui::SetNextItemWidth(std::max(60.0f, ImGui::GetContentRegionAvail().x - 30 * ui));
+            ImGui::BeginDisabled(fixed);
+            changed |= ImGui::InputText("##tag", &cfg.tags[i]);
+            ImGui::SameLine(0, 4 * ui);
+            if (ImGui::Button("-", { 26 * ui, 0 })) remove = (int)i;
+            ImGui::EndDisabled();
+            ImGui::PopID();
+        }
+        if (remove > 0) { cfg.tags.erase(cfg.tags.begin() + remove); changed = true; }
+        if (ImGui::Button("Add Tag")) { cfg.tags.push_back("NewTag"); changed = true; }
+        SettingsUI::Section("Layers");
+        cfg.layers.resize(32);
+        for (int i = 0; i < 32; ++i) {
+            ImGui::PushID(1000 + i);
+            changed |= Insp::InputText(std::format("{} Layer {}", i < 6 ? "Builtin" : "User", i).c_str(), &cfg.layers[i]);
+            ImGui::PopID();
+        }
+    }
+
+    if (page == 4) {
+        SettingsUI::Note("Install, update and remove packages, import their samples, or add packages from disk or from a git repository.");
+        ImGui::Dummy({ 0, 4 * ui });
+        if (ImGui::Button("Open Package Manager", { 200 * ui, 28 * ui })) m_ShowPackageManager = true;
+        SettingsUI::Section("Installed");
+        for (const auto& package : PackageManager::Installed())
+            SettingsUI::ValueRow(package.displayName.c_str(), package.version + (package.engine ? "  (Engine)" : ""));
+    }
+
     if (changed) Project::Save();
-    ImGui::EndChild();
+    SettingsUI::End();
     ImGui::End();
 }
 

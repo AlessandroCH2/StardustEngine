@@ -91,7 +91,7 @@ namespace Stardust.Interop
                     // Walk declared fields so private serialized fields inherited from a base script work too.
                     for (Type owner = t; owner != null && owner != typeof(ScriptBehaviour); owner = owner.BaseType)
                         foreach (var f in owner.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly))
-                            // [HideInInspector] fields are still saved, like Unity; only the inspector skips them
+                            // [HideInInspector] fields are still saved; only the inspector skips them
                             if (!f.IsInitOnly && !f.IsLiteral &&
                                 (f.IsPublic || f.IsDefined(typeof(SerializeField))) &&
                                 SupportedField(f.FieldType) &&
@@ -294,6 +294,7 @@ namespace Stardust.Interop
             try{
                 var q=JsonNode.Parse(Native.FromUtf8(request)).AsObject();var kind=q["kind"]?.GetValue<string>();
                 if(kind=="windows"){var windows=new JsonArray();foreach(var pair in Stardust.Editor.EditorWindow.Open)windows.Add(new JsonObject{["id"]=pair.Key,["title"]=pair.Value.title});response["windows"]=windows;}
+                else if(kind=="symbols")response["types"]=Symbols();
                 else {
                     Stardust.Editor.EditorGUI.Begin(q["events"] as JsonObject);
                     if(kind=="window") {if(Stardust.Editor.EditorWindow.Open.TryGetValue(q["id"].GetValue<string>(),out var window)){if(q["close"]?.GetValue<bool>()==true)window.Close();else window.OnGUI();}}
@@ -321,6 +322,41 @@ namespace Stardust.Interop
                 }
             }catch(Exception e){Native.Log(3,"Custom editor: "+e.GetBaseException().Message);response["error"]=e.GetBaseException().Message;}
             return Marshal.StringToCoTaskMemUTF8(response.ToJsonString());
+        }
+
+        // Script Editor autocompletion: the public API of the engine, the game scripts and a few common .NET types
+        static string ShortName(Type t){
+            if(t==null)return "";if(t==typeof(void))return "void";if(t==typeof(float))return "float";if(t==typeof(int))return "int";if(t==typeof(bool))return "bool";if(t==typeof(string))return "string";if(t==typeof(double))return "double";if(t==typeof(uint))return "uint";if(t==typeof(long))return "long";if(t==typeof(ulong))return "ulong";if(t==typeof(object))return "object";
+            if(t.IsArray)return ShortName(t.GetElementType())+"[]";
+            if(t.IsGenericType){var name=t.Name;var tick=name.IndexOf('`');if(tick>0)name=name.Substring(0,tick);return name+"<"+string.Join(", ",t.GetGenericArguments().Select(ShortName))+">";}
+            return t.Name.TrimEnd('&');
+        }
+        static JsonArray Symbols(){
+            var types=new JsonArray();
+            var list=new List<Type>();
+            foreach(var t in typeof(Native).Assembly.GetExportedTypes())if(!t.Namespace?.Contains("Interop")??true)list.Add(t);
+            foreach(var pair in s_Types)if(!list.Contains(pair.Value.Type))list.Add(pair.Value.Type);
+            list.AddRange(new[]{typeof(Math),typeof(MathF),typeof(string),typeof(List<int>).GetGenericTypeDefinition(),typeof(Dictionary<int,int>).GetGenericTypeDefinition(),typeof(Console),typeof(DateTime),typeof(TimeSpan),typeof(Random),typeof(Array),typeof(Enumerable)});
+            foreach(var t in list){
+                if(t.IsNested&&!t.IsNestedPublic)continue;
+                var statics=new JsonArray();var instance=new JsonArray();var seen=new HashSet<string>();
+                const BindingFlags flags=BindingFlags.Public|BindingFlags.Static|BindingFlags.Instance|BindingFlags.FlattenHierarchy;
+                foreach(var m in t.GetMembers(flags)){
+                    if(m is MethodInfo mi&&(mi.IsSpecialName||mi.DeclaringType==typeof(object)&&mi.Name!="ToString"))continue;
+                    if(m is ConstructorInfo||m is Type)continue;
+                    string kindName,signature,typeName;bool isStatic;
+                    if(m is MethodInfo method){kindName="m";typeName=ShortName(method.ReturnType);isStatic=method.IsStatic;signature=typeName+" "+method.Name+"("+string.Join(", ",method.GetParameters().Select(p=>ShortName(p.ParameterType)+" "+p.Name))+")";}
+                    else if(m is PropertyInfo property){kindName="p";typeName=ShortName(property.PropertyType);isStatic=(property.GetMethod??property.SetMethod)?.IsStatic??false;signature=typeName+" "+property.Name;}
+                    else if(m is FieldInfo field){kindName=t.IsEnum?"e":"f";typeName=ShortName(field.FieldType);isStatic=field.IsStatic;signature=typeName+" "+field.Name;}
+                    else if(m is EventInfo ev){kindName="v";typeName=ShortName(ev.EventHandlerType);isStatic=false;signature="event "+typeName+" "+ev.Name;}
+                    else continue;
+                    if(!seen.Add((isStatic?"s":"i")+m.Name+signature))continue;
+                    (isStatic?statics:instance).Add(new JsonObject{["n"]=m.Name,["k"]=kindName,["t"]=typeName,["s"]=signature});
+                }
+                var tn=t.Name;var tick=tn.IndexOf('`');if(tick>0)tn=tn.Substring(0,tick);
+                types.Add(new JsonObject{["name"]=tn,["ns"]=t.Namespace??"",["kind"]=t.IsEnum?"enum":t.IsInterface?"interface":t.IsValueType?"struct":"class",["base"]=t.BaseType!=null?ShortName(t.BaseType):"",["static"]=statics,["instance"]=instance});
+            }
+            return types;
         }
 
         static bool ListType(Type t)=>t.IsArray&&t.GetArrayRank()==1||t.IsGenericType&&t.GetGenericTypeDefinition()==typeof(List<>);

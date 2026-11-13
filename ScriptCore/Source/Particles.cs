@@ -27,7 +27,7 @@ public struct ParticleBurst {
 public struct GradientColorKey { public float time; public Color color; public GradientColorKey(float time, Color color) { this.time = time; this.color = color; } }
 public struct CurveKey { public float time, value; public CurveKey(float time, float value) { this.time = time; this.value = value; } }
 
-/// <summary>Unity-style particle emitter. Settings mirror the inspector modules; the emitter's up axis (+Y) is its forward.</summary>
+/// <summary>Particle emitter. Settings mirror the inspector modules; the emitter's up axis (+Y) is its forward.</summary>
 public sealed class ParticleSystem : Component {
     const int T = 32;
     JsonObject Data => P.Get(this, T);

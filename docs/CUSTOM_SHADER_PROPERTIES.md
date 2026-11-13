@@ -1,5 +1,7 @@
 # Custom material properties
 
+For most shaders, a `.shader` file or a Shader Graph is simpler: see [Shaders](SHADERS.md). This page describes raw HLSL pixel shaders.
+
 A custom pixel shader declares its editable properties in a sidecar named `<compiled shader>.properties.json`. For example, `Shaders/Pulse.ps.hlsl.spv` uses `Shaders/Pulse.ps.hlsl.spv.properties.json`. Create Custom Shader generates a source file and a sample schema. The source inspector includes an editable Shader Properties section and Save Shader Properties.
 
 ```json

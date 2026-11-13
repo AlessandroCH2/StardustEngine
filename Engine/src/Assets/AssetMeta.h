@@ -5,7 +5,7 @@
 
 namespace Stardust::AssetMeta {
 
-// Every asset can have a hidden "<file>.meta" beside it, like Unity: an id plus one section per importer
+// Every asset can have a hidden "<file>.meta" beside it: an id plus one section per importer
 // ("texture", "model"). It replaces the old "<file>.import.json" and "<file>.rig.json" side files.
 std::filesystem::path PathFor(const std::string& asset);
 

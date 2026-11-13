@@ -199,7 +199,7 @@ void DrawBlendTreeEditor(json& tree, json& parameters, AnimatorComponent* live, 
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("You can also drop .anim files on the Motion slots");
 }
 
-// Unity's transition graph: the source state, the destination and where they overlap
+// Transition graph: the source state, the destination and where they overlap
 void DrawTransitionTimeline(const json& t, const json& states, const std::unordered_map<std::string, float>& values) {
     auto from = t.value("from", std::string()), to = t.value("to", std::string());
     auto length = [&](const std::string& name) { return states.contains(name) ? std::max(.01f, AnimatorSystem::StateDuration(states[name], values)) : 1.f; };
@@ -255,8 +255,8 @@ void EditorApp::DrawControllerEditor(json& asset,bool& dirty){
  std::string* liveState=nullptr;float liveTime=0;if(live){if(layerIndex==0){liveState=&live->state;liveTime=live->time;}else if(layerIndex<=(int)live->layers.size()){liveState=&live->layers[layerIndex-1].state;liveTime=live->layers[layerIndex-1].time;}}
  float height=std::max(180.f,ImGui::GetContentRegionAvail().y);
  ImGui::BeginChild("ControllerSidebar",{210,height},ImGuiChildFlags_Borders);
- if(ImGui::BeginTabBar("ControllerTabs")){
-  if(ImGui::BeginTabItem("Layers")){
+ {static int controllerTab=0;const char* controllerTabs[]={"Layers","Parameters"};EditorIcons::SettingsTabs("ControllerTabs",controllerTab,controllerTabs,2);
+  if(controllerTab==0){
   if(ImGui::SmallButton("+ Add Layer"))pendingAdd=true;
   for(int i=0;i<=(int)asset["layers"].size();++i){ImGui::PushID(i);std::string name=layerName(i);
    if(renameLayer==i){ImGui::SetNextItemWidth(-1);if(focusRename){ImGui::SetKeyboardFocusHere();focusRename=false;}bool done=ImGui::InputText("##layerName",&renameText,ImGuiInputTextFlags_EnterReturnsTrue);bool cancel=ImGui::IsKeyPressed(ImGuiKey_Escape);if((done||(ImGui::IsItemDeactivated()&&!cancel))&&!renameText.empty()){if(i==0)asset["baseLayerName"]=renameText;else asset["layers"][i-1]["name"]=renameText;dirty=true;}if(done||cancel||ImGui::IsItemDeactivated())renameLayer=-2;}
@@ -274,8 +274,8 @@ void EditorApp::DrawControllerEditor(json& asset,bool& dirty){
    Scene& maskScene=ActiveScene();bool canAdd=m_AnimatorRoot&&maskScene.Reg().Valid(m_Selected)&&(m_Selected==m_AnimatorRoot||maskScene.IsDescendantOf(m_Selected,m_AnimatorRoot));
    ImGui::BeginDisabled(!canAdd);if(ImGui::SmallButton("Add Selected Bone")){std::string path;for(EntityID node=m_Selected;node&&node!=m_AnimatorRoot;node=maskScene.GetParent(node)){const auto& part=maskScene.Reg().Get<NameComponent>(node).name;path=path.empty()?part:part+"/"+path;}layer["mask"].push_back(path);dirty=true;}ImGui::EndDisabled();
    if(ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))ImGui::SetTooltip("The layer affects this object and its children only");}
-  ImGui::EndTabItem();}
- if(ImGui::BeginTabItem("Parameters")){
+  }
+ if(controllerTab==1){
   ImGui::SetNextItemWidth(-1);Insp::InputTextWithHint("##parameterName","Parameter name",&paramName);
   ImGui::SetNextItemWidth(115);Insp::Combo("##type",&paramType,"Float\0Int\0Bool\0Trigger\0Vector2\0");ImGui::SameLine();
   if(ImGui::Button("+")){bool unique=!paramName.empty();for(auto& p:parameters)if(p.value("name","")==paramName)unique=false;if(unique){parameters.push_back({{"name",paramName},{"type",kParameterTypes[std::clamp(paramType,0,4)]},{"default",paramType==4?json::array({0.f,0.f}):json(0.f)}});dirty=true;}}
@@ -292,8 +292,8 @@ void EditorApp::DrawControllerEditor(json& asset,bool& dirty){
    auto gone=[&](const std::string& v){return v==removed||v.starts_with(removed+".");};
    auto purge=[&](json& list){for(auto& t:list){if(gone(t.value("parameter",""))){t.erase("parameter");t.erase("threshold");}if(t.contains("conditions")&&t["conditions"].is_array()){auto& cs=t["conditions"];for(int c=(int)cs.size()-1;c>=0;--c)if(gone(cs[c].value("parameter","")))cs.erase(cs.begin()+c);}}};
    if(asset.contains("transitions"))purge(asset["transitions"]);for(auto& l:asset["layers"])if(l.contains("transitions"))purge(l["transitions"]);if(live){live->parameters.erase(removed);live->parameters.erase(removed+".x");live->parameters.erase(removed+".y");}if(renameParameter>=remove)renameParameter=-1;dirty=true;}
-  if(live)ImGui::TextDisabled("Live parameter values");ImGui::EndTabItem();
- }ImGui::EndTabBar();}
+  if(live)ImGui::TextDisabled("Live parameter values");
+ }}
  ImGui::EndChild();ImGui::SameLine();
  float graphWidth=std::max(180.f,ImGui::GetContentRegionAvail().x-275);
  ImGui::BeginChild("ControllerGraph",{graphWidth,height},ImGuiChildFlags_Borders,ImGuiWindowFlags_NoScrollbar|ImGuiWindowFlags_NoScrollWithMouse);

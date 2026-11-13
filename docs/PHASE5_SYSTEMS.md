@@ -67,7 +67,7 @@ Save/Discard proteggono le modifiche non salvate. L'Inspector texture offre anch
 I testi usano font TTF/OTF e atlanti SDF, colori, rich text, wrapping, auto size, allineamenti,
 spacing, outline e shadow. La toolbar dell'Inspector inserisce tag nella selezione del testo.
 Sono disponibili CanvasGroup, maschere rettangolari e layout orizzontale/verticale/griglia.
-Questa API non copre l'intero insieme di componenti Unity o tutti i comportamenti di TextMeshPro.
+Questa API copre i componenti elencati qui sopra, non altri sistemi di testo avanzati.
 
 ### Eventi Button e InputField
 
@@ -155,7 +155,7 @@ Dal menu contestuale del Project: **Create Custom Shader**. Il file HLSL viene a
 Nel materiale, scegliere il risultato nel campo **Custom Shader**. I nuovi shader usano l'interfaccia
 `MeshCommon.hlsli` del renderer (MeshVSOut, MeshPSOut, DrawData); il template conserva l'ID per il picking.
 Sono supportati pixel shader HLSL, con la stessa pipeline geometrica dei materiali built-in.
-Non è un editor Shader Graph né una compatibilità con ShaderLab di Unity.
+Per shader con proprietà, stato di rendering e grafi a nodi vedi [Shaders](SHADERS.md).
 
 ## Animator e modelli
 

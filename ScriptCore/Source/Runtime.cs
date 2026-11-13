@@ -30,7 +30,7 @@ namespace Stardust
             get => System.Text.Json.Nodes.JsonNode.Parse(Native.FromUtf8(Native.Api.GetComponentJson(0,104)))?["cursorLocked"]?.GetValue<bool>()??false;
             set { Native.Api.SetCursorLocked(value ? 1 : 0); }
         }
-        // WASD / arrows as a -1..1 axis, like Unity's "Horizontal" / "Vertical"
+        // WASD / arrows as a -1..1 axis ("Horizontal" / "Vertical")
         public static float GetAxis(string axis) => InputManager.GetAxis(axis);
         /// <summary>The axis without smoothing: -1, 0 or 1 for keys.</summary>
         public static float GetAxisRaw(string axis) => InputManager.GetAxisRaw(axis);

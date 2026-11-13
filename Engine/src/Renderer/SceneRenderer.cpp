@@ -1,4 +1,5 @@
 #include <chrono>
+#include <nlohmann/json.hpp>
 #include "Renderer/SceneRenderer.h"
 #include "Renderer/Quality.h"
 #include "Assets/TextureImport.h"
@@ -51,6 +52,10 @@ SceneRenderer::SceneRenderer(Device& device) : m_Device(device) {
     ui.name="UI Overlay"; ui.vs="UI.vs"; ui.ps="UI.ps"; ui.colorFormats={kOutputFormat};
     ui.depthTest=false; ui.depthWrite=false; ui.cull=CullMode::None; ui.blend=BlendMode::Alpha;
     m_UIOverlayPipeline=device.CreateGraphicsPipeline(ui);
+    GraphicsPipelineDesc blit;
+    blit.name = "Display Upscale"; blit.vs = "Fullscreen.vs"; blit.ps = "Blit.ps";
+    blit.colorFormats = { kOutputFormat }; blit.depthTest = false; blit.depthWrite = false; blit.cull = CullMode::None;
+    m_DisplayBlitPipeline = device.CreateGraphicsPipeline(blit);
 
     for (int additive = 0; additive < 2; ++additive) {
         GraphicsPipelineDesc particles;
@@ -156,6 +161,17 @@ void SceneRenderer::Resize(u32 width, u32 height) {
     m_Output = m_Device.CreateTexture(d);
     m_Sky->Resize(width, height);
     m_Post->Resize(width, height);
+    SetDisplaySize(m_DisplayWidth, m_DisplayHeight);
+}
+
+void SceneRenderer::SetDisplaySize(u32 width, u32 height) {
+    m_DisplayWidth = width; m_DisplayHeight = height;
+    if (width == 0 || height == 0 || (width == m_Width && height == m_Height)) { m_Display.reset(); return; }
+    if (m_Display && m_Display->Width() == width && m_Display->Height() == height) return;
+    TextureDesc d;
+    d.width = width; d.height = height; d.name = "SceneDisplay"; d.format = kOutputFormat;
+    d.usage = TextureUsage::RenderTarget | TextureUsage::Sampled | TextureUsage::CopySrc;
+    m_Display = m_Device.CreateTexture(d);
 }
 
 
@@ -163,6 +179,8 @@ void SceneRenderer::BeginScene(const RenderCamera& camera, const EnvironmentSett
     m_TextureSamplers.clear();
     m_Camera = camera;
     m_Env = env;
+    if (!GraphicsQuality::Current().shadows) m_Env.castShadows = false;
+    m_Env.shadowDistance *= GraphicsQuality::Current().shadowDistance;
     m_Time = time;
     m_Draws.clear();
     m_DrawData.clear();m_MaterialValues.clear();
@@ -197,28 +215,52 @@ void SceneRenderer::Submit(const Ref<Mesh>& sourceMesh, const glm::mat4& transfo
     m_Draws.back().sortingOrder=sortingOrder;m_Draws.back().firstIndex=firstIndex;m_Draws.back().indexCount=indexCount?indexCount:mesh->IndexCount();
     if (!m.customPixelShader.empty()) {
         // The shader file's version is looked up at most twice a second per shader, not for every draw
-        struct ShaderVersion { std::string version; bool valid = false; std::chrono::steady_clock::time_point checked; };
+        // Render state from the shader schema (.shader / Shader Graph: Queue, Blend, ZWrite, Cull); -1 = the material decides
+        struct ShaderVersion { std::string version; bool valid = false; std::chrono::steady_clock::time_point checked; int queue = -1, blend = -1, zwrite = -1, cull = -1; };
         static std::unordered_map<std::string, ShaderVersion> versions;
+        const std::string shaderAsset = m.PixelShaderAsset();
         auto now = std::chrono::steady_clock::now();
-        auto& sv = versions[m.customPixelShader];
+        auto& sv = versions[shaderAsset];
         if (sv.version.empty() || now - sv.checked > std::chrono::milliseconds(500)) {
             sv.checked = now;
-            auto path = AssetManager::ToAbsolute(m.customPixelShader);
+            auto path = AssetManager::ToAbsolute(shaderAsset);
             std::error_code ec;
             auto stamp = std::filesystem::last_write_time(path, ec);
             sv.valid = !ec || Pak::Contains(path);
-            sv.version = FileSystem::Utf8(path) + "|" + std::to_string(ec ? Pak::Generation() : stamp.time_since_epoch().count());
+            std::string version = FileSystem::Utf8(path) + "|" + std::to_string(ec ? Pak::Generation() : stamp.time_since_epoch().count());
+            if (version != sv.version) {
+                sv.version = version;
+                sv.queue = sv.blend = sv.zwrite = sv.cull = -1;
+                auto schema = nlohmann::json::parse(FileSystem::ReadText(AssetManager::ToAbsolute(shaderAsset + ".properties.json")), nullptr, false);
+                if (schema.is_object() && schema.contains("renderState") && schema["renderState"].is_object()) {
+                    const auto& state = schema["renderState"];
+                    if (state.contains("queue")) sv.queue = state.value("queue", std::string()) == "transparent" ? 1 : 0;
+                    if (state.contains("blend")) { auto b = state.value("blend", std::string()); sv.blend = b == "alpha" ? (int)BlendMode::Alpha : b == "additive" || b == "additiveAlpha" ? (int)BlendMode::Additive : b == "premultiplied" ? (int)BlendMode::Premultiplied : (int)BlendMode::None; }
+                    if (state.contains("zwrite") && state["zwrite"].is_boolean()) sv.zwrite = state["zwrite"].get<bool>() ? 1 : 0;
+                    if (state.contains("cull")) { auto c = state.value("cull", std::string()); sv.cull = c == "off" ? (int)CullMode::None : c == "front" ? (int)CullMode::Front : (int)CullMode::Back; }
+                }
+            }
         }
         if (sv.valid) {
-            std::string key = sv.version + std::to_string(m.doubleSided) + std::to_string(transparent);
+            if (sv.queue >= 0) {
+                // The shader queue picks the pass: transparent objects are sorted and drawn after the opaque ones
+                transparent = sv.queue == 1;
+                auto& item = m_Draws.back();
+                if (transparent) item.shader = ShaderType::Transparent;
+                else if (item.shader == ShaderType::Transparent || item.shader == ShaderType::UI || item.shader == ShaderType::Water) item.shader = ShaderType::Standard;
+                item.castShadows = castShadows && !transparent;
+            }
+            const CullMode cull = sv.cull >= 0 ? (CullMode)sv.cull : m.doubleSided ? CullMode::None : CullMode::Back;
+            const BlendMode blend = sv.blend >= 0 ? (BlendMode)sv.blend : transparent ? BlendMode::Alpha : BlendMode::None;
+            const bool depthWrite = sv.zwrite >= 0 ? sv.zwrite == 1 : !transparent;
+            std::string key = sv.version + "|" + std::to_string((int)cull) + std::to_string((int)blend) + std::to_string(depthWrite);
             auto& pipeline = m_CustomPipelines[key];
             if (!pipeline) {
                 GraphicsPipelineDesc custom;
-                custom.name = m.customPixelShader;
-                custom.vs = "Mesh.vs"; custom.ps = "asset:" + m.customPixelShader;
+                custom.name = shaderAsset;
+                custom.vs = "Mesh.vs"; custom.ps = "asset:" + shaderAsset;
                 custom.colorFormats = { kHDRFormat, kIdFormat }; custom.depthFormat = kDepthFormat;
-                custom.cull = m.doubleSided ? CullMode::None : CullMode::Back;
-                if (transparent) { custom.blend = BlendMode::Alpha; custom.depthWrite = false; }
+                custom.cull = cull; custom.blend = blend; custom.depthWrite = depthWrite;
                 pipeline = m_Device.CreateGraphicsPipeline(custom);
             }
             m_Draws.back().customPipeline = pipeline;
@@ -234,13 +276,13 @@ void SceneRenderer::SubmitUI(const Ref<Mesh>& mesh, const glm::mat4& transform, 
     if(overlay) {
         item.customPipeline=m_UIOverlayPipeline;
         if(!material.customPixelShader.empty()) {
-            auto path=AssetManager::ToAbsolute(material.customPixelShader);
+            auto path=AssetManager::ToAbsolute(material.PixelShaderAsset());
             std::error_code ec; auto stamp=std::filesystem::last_write_time(path,ec);
             if(!ec||Pak::Contains(path)) {
                 auto key="ui-overlay:"+FileSystem::Utf8(path)+std::to_string(ec?Pak::Generation():stamp.time_since_epoch().count());
                 auto& pipeline=m_CustomPipelines[key];
                 if(!pipeline) {
-                    GraphicsPipelineDesc d; d.name=key; d.vs="UI.vs"; d.ps="asset:"+material.customPixelShader;
+                    GraphicsPipelineDesc d; d.name=key; d.vs="UI.vs"; d.ps="asset:"+material.PixelShaderAsset();
                     d.colorFormats={kOutputFormat}; d.depthTest=false; d.depthWrite=false; d.cull=CullMode::None; d.blend=BlendMode::Alpha;
                     pipeline=m_Device.CreateGraphicsPipeline(d);
                 }
@@ -402,6 +444,8 @@ void SceneRenderer::Render(CommandList& cmd) {
     ps.saturation = m_Env.saturation;
     ps.vignette = m_Env.vignette;
     ps.fxaa = m_Env.fxaa;
+    if (!GraphicsQuality::Current().bloom) ps.bloomIntensity = 0;
+    if (!GraphicsQuality::Current().fxaa) ps.fxaa = false;
     if (!m_Camera.postProcessing) { ps.bloomIntensity = 0; ps.vignette = 0; ps.fxaa = false; }
     m_Post->Execute(cmd, m_HDR.get(), m_Output.get(), ps);
 
@@ -429,9 +473,20 @@ void SceneRenderer::Render(CommandList& cmd) {
         cmd.Draw(6);
         cmd.EndRendering();
     }
+    // Render scale: the 3D image is scaled to the display size first, so the UI below is drawn at full resolution
+    Texture* target = m_Output.get();
+    if (m_Display) {
+        cmd.Barrier(m_Output.get(), ResourceState::ShaderRead);
+        RenderingDesc rd; rd.colors.push_back({ m_Display.get(), LoadOp::DontCare }); cmd.BeginRendering(rd);
+        cmd.SetPipeline(m_DisplayBlitPipeline.get());
+        u32 source = m_Output->SRV(); cmd.Push(source);
+        cmd.Draw(3);
+        cmd.EndRendering();
+        target = m_Display.get();
+    }
     bool hasUI=std::any_of(m_Draws.begin(),m_Draws.end(),[](const auto& d){return d.uiOverlay;});
     if(hasUI) {
-        RenderingDesc rd; rd.colors.push_back({m_Output.get(),LoadOp::Load}); cmd.BeginRendering(rd);
+        RenderingDesc rd; rd.colors.push_back({target,LoadOp::Load}); cmd.BeginRendering(rd);
         auto* draws=m_DrawBuffers[fi].get();
         for(u32 i=0;i<m_Draws.size();++i) if(m_Draws[i].uiOverlay) {
             auto& d=m_Draws[i]; cmd.SetPipeline(d.customPipeline.get());
@@ -440,7 +495,8 @@ void SceneRenderer::Render(CommandList& cmd) {
         }
         cmd.EndRendering();
     }
-    cmd.Barrier(m_Output.get(), ResourceState::ShaderRead);
+    cmd.Barrier(target, ResourceState::ShaderRead);
+    if (target != m_Output.get()) cmd.Barrier(m_Output.get(), ResourceState::ShaderRead);
 }
 
 // Cascade splits: blend of logarithmic and uniform distribution ("practical split scheme").

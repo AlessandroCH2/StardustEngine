@@ -26,7 +26,7 @@ void EditorApp::DrawTerrainInspector(EntityID e, TerrainComponent& tc) {
     auto data = TerrainData::Find(uuid);
     TerrainSettings& s = tc.settings;
 
-    // Unity's five terrain tools: neighbors, paint terrain, paint trees, paint details, settings
+    // The five terrain tools: neighbors, paint terrain, paint trees, paint details, settings
     static int tab = 1;
     if (m_TerrainTool == TerrainBrush::Trees) tab = 2;
     else if (m_TerrainTool != TerrainBrush::None) tab = 1;

@@ -82,7 +82,7 @@ void EditorCamera::Update(float dt, bool hovered, bool focused) {
         if (Input::IsKeyDown(Key::Q)) move -= glm::vec3(0, 1, 0);
         if (glm::length(move) > 0) m_Position += glm::normalize(move) * speed * dt;
 
-        // Scroll while flying changes speed (Unity behaviour)
+        // Scroll while flying changes speed
         float s = Input::ScrollDelta();
         if (s != 0) moveSpeed = std::clamp(moveSpeed * (s > 0 ? 1.2f : 1.0f / 1.2f), 0.5f, 500.0f);
     } else if (hovered) {

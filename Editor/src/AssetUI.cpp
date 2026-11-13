@@ -107,7 +107,7 @@ static bool Slider(const char* label, float& v, float a, float b) {
 bool MaterialEditor(Material& m) {
     bool changed = false;
     ImGui::PushID(&m);
-    changed |= AssetField("Custom Shader",m.customPixelShader,{".spv"},"(built-in shader)");
+    changed |= AssetField("Custom Shader",m.customPixelShader,{".shader",".shadergraph",".spv"},"(built-in shader)");
     Label(m.customPixelShader.empty()?"Shader":"Surface Pipeline");
     if (Insp::BeginCombo("##shader", ShaderName(m.shader))) {
         for (int s = 0; s < (int)ShaderType::Count; ++s)

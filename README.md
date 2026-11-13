@@ -1,15 +1,15 @@
 # Stardust Engine
 
-A game engine written from scratch in C++20, with a Unity-like editor, C# scripting on .NET 8 and a bindless Vulkan 1.3 renderer.
+A game engine written from scratch in C++20, with a visual editor, C# scripting on .NET 8 and a bindless Vulkan 1.3 renderer.
 
 ![Stardust editor](docs/images/editor.png)
 
 ## Highlights
 
-- **Editor**: Hierarchy, Inspector, Project with a folder tree, Console with message details, Scene and Game views, Animation and Animator windows, Lighting, Build Settings and saved layouts.
+- **Editor**: Hierarchy, Inspector, Project with a folder tree, Console with message details, Scene and Game views, Animation and Animator windows, Shader Graph, a Script Editor with autocompletion, Lighting, Build Settings and saved layouts.
 - **Scripting**: C# components with Inspector fields, prefabs, scene loading, input axes, physics, UI, audio and editor-only scripts.
-- **Rendering**: PBR materials, shadows, procedural sky and clouds, terrain with vegetation, water, post processing, LOD Groups, render textures and custom shaders.
-- **Effects**: Unity-style Particle System (emission and bursts, shapes, colour, size and rotation over lifetime, noise, collision, texture sheets, additive blending) with a live preview in the Scene view.
+- **Rendering**: PBR materials, shadows, procedural sky and clouds, terrain with vegetation, water, post processing, LOD Groups, render textures, `.shader` files and a node-based Shader Graph.
+- **Effects**: Particle System (emission and bursts, shapes, colour, size and rotation over lifetime, noise, collision, texture sheets, additive blending) with a live preview in the Scene view.
 - **Animation**: skinned FBX models, Animator controllers with transitions and 1D/2D blend trees.
 - **2D**: sprites, Sprite Batch with animated quads, 2D physics (Rigidbody 2D, box, circle and capsule colliders), and the official Tilemap package with brushes, auto-tiles and animated tiles.
 - **Media**: audio through miniaudio, Video Player (MPEG-1 everywhere; MP4/MOV/WMV/AVI on Windows).
@@ -33,6 +33,7 @@ The editor is written to `build/bin/Release/StardustEditor.exe`. Close the edito
 - [Custom shader properties](docs/CUSTOM_SHADER_PROPERTIES.md)
 - [2D Tilemap package](docs/TILEMAP.md)
 - [Particle System](docs/PARTICLES.md)
+- [Shaders, Shader Graph and the Script Editor](docs/SHADERS.md)
 - [Engine architecture](docs/ARCHITECTURE.md)
 - [Linux Player](docs/LINUX_PLAYER.md)
 - [All documents](docs/README.md)

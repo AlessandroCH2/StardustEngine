@@ -48,6 +48,9 @@ public:
 
     // Build the game scripts with `dotnet build` on a background thread (output goes to the log)
     static void BuildAsync();
+    // Errors and warnings of the last script build ("file(line,col): error CS0103: ..."), and a counter that changes with each build
+    static std::vector<std::string> BuildDiagnostics();
+    static u64 BuildDiagnosticsGeneration();
     static bool IsBuilding() { return s_Building; }
     static bool TakeBuildFinished(bool& success);
 

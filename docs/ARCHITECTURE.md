@@ -1,6 +1,6 @@
 # Stardust Engine — Architettura
 
-Engine 3D custom in **C++20** con editor in stile Unity e scripting in **C#** (.NET 8 hostato nativamente).
+Engine 3D custom in **C++20** con editor visuale e scripting in **C#** (.NET 8 hostato nativamente).
 Obiettivo visivo: paesaggi naturali realistici (prato, alberi, cielo con nuvole) a 60+ fps su GPU di fascia media (target: RX 6600 @ 1080p, < 8 ms GPU).
 
 ## Toolchain
@@ -51,7 +51,7 @@ GameEngineCustom/
   `Camera`, `DirectionalLight` (sole → guida cielo e ombre), `Environment` (ora del giorno, nuvole, nebbia, esposizione),
   `Terrain`, `Grass`, `TreeScatter`, `Script` (classe C# + campi pubblici).
 - `SceneSerializer`: formato `.scene` JSON leggibile.
-- Play mode: la scena viene copiata (snapshot) al Play e ripristinata allo Stop, come Unity.
+- Play mode: la scena viene copiata (snapshot) al Play e ripristinata allo Stop.
 
 ### RHI (Render Hardware Interface)
 - API astratta in stile Vulkan/D3D12 (`RHI/RHI.h`): Device, CommandList, Buffer, Texture, Pipeline.
@@ -96,7 +96,7 @@ Ordine dei pass per frame:
   Input, FindEntityByName, componenti luce/ambiente, ecc.
 - Gli script di gioco stanno in un `AssemblyLoadContext` collezionabile → **hot reload** quando la DLL cambia
   (l'editor offre "Build Scripts" che lancia `dotnet build`).
-- API stile Unity:
+- API a componenti:
   ```csharp
   public class Rotator : ScriptBehaviour {
       public float Speed = 45f;
@@ -104,13 +104,13 @@ Ordine dei pass per frame:
   }
   ```
 
-### Editor (stile Unity)
+### Editor
 - Layout dockable di default: **Hierarchy** a sinistra, **Scene/Game** al centro, **Inspector** a destra,
   **Project** e **Console** in basso; toolbar centrale Play / Pause / Step.
 - Scene view: camera fly con tasto destro + WASD/QE, rotella per zoom, `F` per focus, gizmo W/E/R (ImGuizmo),
   selezione con click (picking tramite buffer ID entità).
 - Inspector con "Add Component", campi script esposti automaticamente.
-- Tema scuro simile a Unity, salvataggio layout in `imgui.ini`.
+- Tema scuro, salvataggio layout in `imgui.ini`.
 
 ## Ottimizzazioni chiave
 - Draw call minime: instancing ovunque, indirect draw per l'erba, mesh terreno condivise per LOD.
@@ -126,7 +126,7 @@ Ordine dei pass per frame:
    erba GPU (compute + indirect, ~1M fili), alberi procedurali instanziati con 2 LOD, bloom/ACES/grading/FXAA.
    Nota: la pipeline è **forward** con un solo sole (più semplice e altrettanto veloce del deferred previsto,
    dato che l'erba è geometria opaca); il G-Buffer resta un'opzione se serviranno molte luci.
-4. ✅ Scripting C# (.NET 8 via hostfxr, ALC collezionabile con hot reload, API stile Unity), fisica Jolt
+4. ✅ Scripting C# (.NET 8 via hostfxr, ALC collezionabile con hot reload, API a componenti), fisica Jolt
    (Rigidbody, Box/Sphere/Capsule/Mesh Collider, heightfield del terreno, raycast, OnCollisionEnter),
    editor del terreno (Raise/Smooth/Flatten/Set Height/Paint/Trees, terreno piatto o procedurale, 4 layer con texture,
    file .terrain), asset pipeline (texture PNG/JPG, mesh OBJ/glTF/GLB, materiali .mat con shader

@@ -50,7 +50,7 @@ public static class InputManager {
     public static void Bind(string action,InputBinding binding){if(bindings==null)Reload();bindings[action]=binding??throw new ArgumentNullException(nameof(binding));}
     public static IReadOnlyDictionary<string,InputBinding> Bindings {get {if(bindings==null)Reload();return bindings;}}
     static bool Key(KeyCode code,bool down)=>code!=0&&(down?Input.GetKeyDown(code):Input.GetKey(code));
-    // Keys ease in and out like Unity's axes; a gamepad stick is already analog and is returned as it is
+    // Keys ease in and out; a gamepad stick is already analog and is returned as it is
     public static float GetAxis(string action)=>Read(action,true);
     public static float GetAxisRaw(string action)=>Read(action,false);
     static float Read(string action,bool smooth) {

@@ -209,7 +209,7 @@ public class TilemapEditor : Stardust.Editor.Editor {
         }
         Handles.color = erasing ? new Color(1, 0.35f, 0.3f, 1) : tool == TileTool.Pick ? new Color(1, 0.85f, 0.3f, 1) : new Color(0.3f, 0.65f, 1, 1);
         Handles.DrawRect(lo, hi, false, 2);
-        // Brush position, like Unity's
+        // Brush position
         Handles.color = new Color(1, 1, 1, 0.9f);
         int under = m.GetTile(x, y);
         Handles.Label(new Vector3(hi.x + 0.1f * m.CellSize.x, hi.y, 0), under >= 0 ? $"({x}, {y})  tile {under}" : $"({x}, {y})");

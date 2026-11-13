@@ -1,4 +1,4 @@
-// Animation window (dopesheet + curves) and Animator window. Both follow the selected object, like Unity,
+// Animation window (dopesheet + curves) and Animator window. Both follow the selected object,
 // autosave after each edit, and keep their own undo history.
 #include <format>
 #include "EditorApp.h"

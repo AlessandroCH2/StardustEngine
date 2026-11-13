@@ -93,7 +93,7 @@ void EditorApp::DecorateDockTabs() {
     const ImGuiStyle& style = g.Style;
     const float scale = UiScale(), pad = 13 * scale, iconSize = std::round(g.FontSize * 0.78f), gap = 6 * scale;
 
-    // Tabs close from the node's X button or the Window menu, like Unity; no per-tab X
+    // Tabs close from the node's X button or the Window menu; no per-tab X
     for (ImGuiWindow* window : g.Windows) if (window->DockNode) window->WindowClass.TabItemFlagsOverrideSet |= ImGuiTabItemFlags_NoCloseButton;
 
     for (int n = 0; n < g.DockContext.Nodes.Data.Size; ++n) {
@@ -232,7 +232,7 @@ void DrawLogLevelIcon(ImDrawList* d, ImVec2 c, float r, LogLevel level) {
     }
 }
 
-// Unity-style status bar: the last console message, scripts state on the right. Clicking opens the Console.
+// Status bar: the last console message, scripts state on the right. Clicking opens the Console.
 void EditorApp::DrawStatusBar(float height) {
     ImDrawList* draw = ImGui::GetWindowDrawList();
     const ImVec2 min = ImGui::GetCursorScreenPos(), max(min.x + ImGui::GetContentRegionAvail().x, min.y + height);

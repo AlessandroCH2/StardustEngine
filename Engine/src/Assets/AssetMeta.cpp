@@ -155,6 +155,9 @@ void NewIdentity(const fs::path& metaFile) {
 bool IsSideFile(const fs::path& file) {
     const std::string name = FileSystem::Utf8(file.filename());
     if (name.ends_with(".meta")) return true;
+    // Compiled .shader / .shadergraph output: the source asset stands for it
+    for (const char* generated : { ".shader.spv", ".shadergraph.spv", ".shader.spv.properties.json", ".shadergraph.spv.properties.json", ".spv.tmp" })
+        if (name.ends_with(generated)) return true;
     for (const Legacy& legacy : kLegacy) if (name.ends_with(legacy.suffix)) return true;
     return false;
 }

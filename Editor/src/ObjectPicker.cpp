@@ -1,4 +1,4 @@
-// Unity-style object slot ("None (Material)" + target button) and the grid picker with Assets / Scene tabs.
+// Object slot ("None (Material)" + target button) and the grid picker with Assets / Scene tabs.
 #include <format>
 #include "AssetUI.h"
 #include "EditorIcons.h"
@@ -120,20 +120,12 @@ static bool DrawPickerPopup(const ObjectSlotDesc& desc, std::string& picked) {
     bool result = false;
 
     ImGui::SetNextItemWidth(width);
-    ImGui::InputTextWithHint("##pickerSearch", "Search...", &state.filter);
+    ImGui::InputTextWithHint("##pickerSearch", std::format("Search {}...", desc.typeName).c_str(), &state.filter);
 
-    const char* tabs[] = { "Assets", "Scene" };
-    for (int i = 0; i < 2; ++i) {
-        if (i) ImGui::SameLine(0, 2);
-        bool active = state.tab == i;
-        ImGui::PushStyleColor(ImGuiCol_Button, active ? IM_COL32(44, 46, 49, 255) : IM_COL32(26, 28, 31, 255));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(50, 52, 55, 255));
-        ImGui::PushStyleColor(ImGuiCol_Text, active ? IM_COL32(255, 255, 255, 255) : IM_COL32(180, 180, 180, 255));
-        if (ImGui::Button(std::format("{} ({})", tabs[i], state.items[i].size()).c_str(), { 110, 0 })) state.tab = i;
-        ImGui::PopStyleColor(3);
-    }
-    ImGui::SameLine();
-    ImGui::TextDisabled("Select %s", desc.typeName.c_str());
+    // Assets / Scene as segmented tabs (the Tilemap inspector's style), with the count of each
+    const std::string labels[] = { std::format("Assets ({})", state.items[0].size()), std::format("Scene ({})", state.items[1].size()) };
+    const char* tabs[] = { labels[0].c_str(), labels[1].c_str() };
+    EditorIcons::SettingsTabs("##pickerTabs", state.tab, tabs, 2);
 
     // None comes first; the search filters everything else
     std::vector<const PickerItem*> visible;

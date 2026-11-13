@@ -1,4 +1,4 @@
-// Package Manager window, in the style of Unity's: a list of packages on the left, details on the right,
+// Package Manager window: a list of packages on the left, details on the right,
 // install/update/remove, samples, and packages added from disk or from a git URL
 #include "EditorApp.h"
 #include "FileDialogs.h"

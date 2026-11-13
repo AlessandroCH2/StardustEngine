@@ -6,7 +6,7 @@ Select the animated object, then open an `.anim` asset from Project. The Animati
 
 Press Record Selected, move the playhead, and move/rotate/scale the selected object or its descendants in Scene. Changes create position, rotation and scale keys at the rounded sample frame. Inspector transform edits also record. At the first nonzero key, the original pose is inserted at time zero. Multiple selected descendants record their own tracks. Save writes the clip; leaving preview does not apply temporary transforms to the scene.
 
-The window supports frame stepping, timeline scrubbing, movable keys, dope sheet/curves, Linear/Constant/Cubic interpolation and cubic in/out tangents. Animator controllers use the graph editor, states, parameters, conditions, exit time and transition duration. Animation clips and controllers are different assets/windows: record keyframes in Animation; configure state transitions in Animator. Animation events, blend trees, humanoid retargeting, layered masks and Unity's complete property recorder are not implemented.
+The window supports frame stepping, timeline scrubbing, movable keys, dope sheet/curves, Linear/Constant/Cubic interpolation and cubic in/out tangents. Animator controllers use the graph editor, states, parameters, conditions, exit time and transition duration. Animation clips and controllers are different assets/windows: record keyframes in Animation; configure state transitions in Animator. Animation events, blend trees, humanoid retargeting and layered masks are not implemented.
 
 ## Selection and multiple objects
 

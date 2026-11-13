@@ -6,7 +6,7 @@
 
 namespace Stardust {
 
-// One paintable surface layer (like a Unity TerrainLayer). Without a texture a procedural look is used.
+// One paintable surface layer. Without a texture a procedural look is used.
 struct TerrainLayer {
     std::string name;
     std::string albedoMap;   // asset path, optional

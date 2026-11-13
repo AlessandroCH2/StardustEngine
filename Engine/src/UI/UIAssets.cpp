@@ -10,7 +10,7 @@ namespace Stardust {
 SpriteAsset SpriteAsset::Load(const std::string& path) {
     SpriteAsset s;
     const bool embedded=!path.ends_with(".sprite");
-    // A texture imported as Sprite keeps its sprite in its own .meta, like Unity: no extra file
+    // A texture imported as Sprite keeps its sprite in its own .meta: no extra file
     auto j=embedded?AssetMeta::Read(path,"sprite"):nlohmann::json::parse(FileSystem::ReadText(AssetManager::ToAbsolute(path)),nullptr,false);
     if(embedded)s.texture=path;
     if(!j.is_object()||j.empty()) return s;
