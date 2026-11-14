@@ -1,8 +1,0 @@
-{
-  "prefab": 1,
-  "entities": [{
-    "uuid": "000000000000ad01", "name": "Water", "layer": 4, "active": true,
-    "transform": {"position": [0,0,0], "rotation": [1,0,0,0], "euler": [0,0,0], "scale": [100,1,100]},
-    "meshRenderer": {"mesh": "builtin:Plane", "material": "Packages/com.stardust.core/Materials/Water.mat", "castShadows": false, "receiveShadows": true}
-  }]
-}

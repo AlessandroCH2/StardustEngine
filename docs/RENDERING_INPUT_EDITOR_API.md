@@ -125,7 +125,7 @@ public class MyTools : EditorWindow {
 
 MyMover is a project script with a serializable float Speed field. Available controls: LabelField, HelpBox, FloatField, IntField, TextField, Toggle, Vector3Field, ColorField, Space, GUILayout.Button/Label. Windows can Close/Repaint. Controls use stable draw order to match events. Custom inspectors persist supported scalar/value fields; retain DrawDefaultInspector for entity/asset references and collections. This is a small editor GUI API: only the controls listed here are available.
 
-See [Editor 0.6 workflows](EDITOR_06.md), [Linux export](LINUX_PLAYER.md), and `Examples/FeatureLab` for working project scripts.
+See [Editor 0.6 workflows](EDITOR_06.md) and [Linux export](LINUX_PLAYER.md).
 
 ## Shader-specific properties
 
