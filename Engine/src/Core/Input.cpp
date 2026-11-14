@@ -1,6 +1,11 @@
 #include "Core/Input.h"
 #include <GLFW/glfw3.h>
 #include <cstring>
+#ifdef _WIN32
+#include <windows.h>
+#define GLFW_EXPOSE_NATIVE_WIN32
+#include <GLFW/glfw3native.h>
+#endif
 
 namespace Stardust {
 
@@ -11,8 +16,15 @@ void Input::Attach(GLFWwindow* window) {
     glfwSetKeyCallback(window, [](GLFWwindow*, int key, int, int action, int) {
         if (key >= 0 && key < 512 && action == GLFW_PRESS) s_PendingKeys[key] = true;
     });
-    glfwSetMouseButtonCallback(window, [](GLFWwindow*, int button, int action, int) {
-        if (button >= 0 && button < 8 && action == GLFW_PRESS) s_PendingMouse[button] = true;
+    glfwSetMouseButtonCallback(window, [](GLFWwindow* window, int button, int action, int) {
+        if(button>=0&&button<8&&action==GLFW_PRESS){s_PendingMouse[button]=true;double x,y;glfwGetCursorPos(window,&x,&y);
+#ifdef _WIN32
+            DWORD messagePosition=GetMessagePos();POINT point{(short)LOWORD(messagePosition),(short)HIWORD(messagePosition)};ScreenToClient(glfwGetWin32Window(window),&point);
+            RecordMousePress(button,(u32)GetMessageTime(),{(float)point.x,(float)point.y},GetDoubleClickTime(),(float)std::max(GetSystemMetrics(SM_CXDOUBLECLK),GetSystemMetrics(SM_CYDOUBLECLK)));
+#else
+            RecordMousePress(button,(u32)(glfwGetTime()*1000),{(float)x,(float)y});
+#endif
+        }
     });
     // Chain scroll: ImGui's GLFW backend installs its callbacks later with chaining enabled, so ours stays called.
     glfwSetScrollCallback(window, [](GLFWwindow*, double, double y) { s_ScrollAccum += (float)y; });
@@ -21,6 +33,7 @@ void Input::Attach(GLFWwindow* window) {
 void Input::BeginFrame() {
     std::memcpy(s_PrevKeys, s_Keys, sizeof(s_Keys));
     std::memcpy(s_PrevMouse, s_Mouse, sizeof(s_Mouse));
+    std::memcpy(s_DoublePressed,s_PendingDouble,sizeof(s_DoublePressed));std::memset(s_PendingDouble,0,sizeof(s_PendingDouble));
     s_Scroll = s_ScrollAccum;
     s_ScrollAccum = 0;
 
@@ -46,6 +59,8 @@ float Input::GamepadAxis(int i,int a){return RuntimeKeyboard&&GamepadConnected(i
 bool Input::GamepadButton(int i,int b,bool pressed){return RuntimeKeyboard&&GamepadConnected(i)&&b>=0&&b<15&&s_GamepadButtons[i][b]&&(!pressed||!s_PrevGamepadButtons[i][b]);}
 bool Input::IsKeyPressed(Key k) { return (int)k>=0&&(int)k<512&&s_PressedKeys[(int)k]; }
 bool Input::IsMouseDown(MouseButton b) { return (int)b>=0&&(int)b<8&&s_Mouse[(int)b]; }
+void Input::RecordMousePress(int b,u32 time,glm::vec2 position,u32 interval,float distance){if(b<0||b>=8)return;auto delta=position-s_ClickPosition[b];bool pair=s_HasClick[b]&&(u32)(time-s_ClickTime[b])<=interval&&(delta.x*delta.x+delta.y*delta.y)<=distance*distance;if(pair)s_PendingDouble[b]=true;s_HasClick[b]=!pair;s_ClickTime[b]=time;s_ClickPosition[b]=position;}
+bool Input::IsMouseDoublePressed(MouseButton b){return (int)b>=0&&(int)b<8&&s_DoublePressed[(int)b];}
 bool Input::IsMousePressed(MouseButton b) { return (int)b>=0&&(int)b<8&&s_PressedMouse[(int)b]; }
 void Input::ResetMouseTracking(){s_FirstMouse=true;s_PrevMousePos=s_MousePos;}
 void Input::SampleMousePosition(glm::vec2 position){s_PrevMousePos=s_MousePos;s_MousePos=position;if(s_FirstMouse){s_PrevMousePos=position;s_FirstMouse=false;}}

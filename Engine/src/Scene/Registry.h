@@ -65,6 +65,7 @@ private:
 };
 
 class Registry {
+    friend class Scene;
 public:
     Registry() = default;
     Registry(const Registry& o) { *this = o; }
@@ -108,8 +109,10 @@ public:
     void Each(Fn&& fn) {
         auto& first = Pool<First>();
         std::vector<EntityID> ids = first.Entities(); // copy: fn may add/remove components
+        // References to unordered_map elements survive rehashes caused by callbacks.
+        auto& disabled=m_Disabled[std::type_index(typeid(First))];
         for (EntityID e : ids) {
-            if (!first.Has(e)||!IsEnabled<First>(e)) continue;
+            if (!first.Has(e)||disabled.contains(e)) continue;
             if constexpr (sizeof...(Rest) > 0) { if (!(IsEnabled<Rest>(e) && ...)) continue; }
             fn(e, first.Get(e), Pool<Rest>().Get(e)...);
         }

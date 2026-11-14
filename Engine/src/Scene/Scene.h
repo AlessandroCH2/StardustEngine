@@ -57,8 +57,10 @@ public:
     EnvironmentSettings GatherEnvironment();
     bool GetPrimaryCamera(RenderCamera& out, float aspect);
     bool GetCamera(EntityID entity,RenderCamera& out,float aspect);
-    void RenderCameraTargets(RHI::Device& device,RHI::CommandList& cmd,float time);
-    void SubmitToRenderer(SceneRenderer& renderer, RHI::Device& device,bool animationPreview=false);
+    // A render batch shares one transform snapshot between all cameras. Call again after scene edits.
+    void PrepareRenderFrame();
+    void RenderCameraTargets(RHI::Device& device,RHI::CommandList& cmd,float time,bool transformsReady=false);
+    void SubmitToRenderer(SceneRenderer& renderer, RHI::Device& device,bool animationPreview=false,bool transformsReady=false);
     // LOD Groups: the share of the view's height the group covers (quality LOD bias included), the level that
     // gives (-1 = culled), and the bounds measured from its renderers
     float LODScreenHeight(EntityID group, const RenderCamera& camera);
@@ -80,7 +82,11 @@ private:
     std::string m_Name = "Untitled";
     bool m_Running = false;
     std::vector<EntityID> m_RootOrder;          // ordering of root entities
-    std::vector<glm::mat4> m_WorldCache;        // per-frame world matrices, indexed by EntityID
+    std::vector<glm::mat4> m_WorldCache;
+    struct TransformCache {glm::vec3 position{0},scale{1};glm::quat rotation{1,0,0,0};EntityID parent=0;u64 parentRevision=0,revision=0;};
+    std::vector<TransformCache> m_TransformCache;
+    u64 m_WorldRevision=0;
+    std::vector<u8> m_SubmitActive;        // per-frame world matrices, indexed by EntityID
     std::unordered_map<u64, EntityID> m_UUIDMap;
     Scope<PhysicsWorld> m_Physics;
     std::unordered_map<u64,Scope<SceneRenderer>> m_CameraTargets;

@@ -27,10 +27,9 @@ inline glm::mat4 OrthoReverseZ(float l, float r, float b, float t, float n, floa
     return p;
 }
 
-// Side planes of a view frustum (the reverse-Z infinite projection has no usable far plane;
-// the near plane is irrelevant for culling at our scales).
+// Vulkan [0,1] reverse-Z frustum. Degenerate far planes of infinite projections are ignored.
 struct Frustum {
-    glm::vec4 planes[4]{};
+    glm::vec4 planes[6]{};
 
     static Frustum FromViewProj(const glm::mat4& m) {
         auto row = [&](int i) { return glm::vec4(m[0][i], m[1][i], m[2][i], m[3][i]); };
@@ -39,7 +38,9 @@ struct Frustum {
         f.planes[1] = row(3) - row(0); // right
         f.planes[2] = row(3) + row(1); // bottom
         f.planes[3] = row(3) - row(1); // top
-        for (auto& p : f.planes) p /= glm::length(glm::vec3(p));
+        f.planes[4]=row(3)-row(2); // reverse-Z near: z <= w
+        f.planes[5]=row(2); // far: z >= 0; an infinite far plane has a zero normal
+        for(auto& p:f.planes){float length=glm::length(glm::vec3(p));p=length>1e-8f?p/length:glm::vec4(0,0,0,1); }
         return f;
     }
     bool Sphere(const glm::vec3& c, float r) const {

@@ -1,3 +1,4 @@
+#include "Core/Input.h"
 // Animation window (dopesheet + curves) and Animator window. Both follow the selected object,
 // autosave after each edit, and keep their own undo history.
 #include <format>
@@ -1027,7 +1028,7 @@ void EditorApp::DrawAnimationWindow() {
                     beginKeyDrag(events[hitEvent].value("time", 0.0f));
                 } else if (!io.KeyShift) s.selectedEvents.clear();
             }
-            if (laneHovered && ImGui::IsMouseDoubleClicked(0)) {
+            if (laneHovered && Input::IsMouseDoublePressed(MouseButton::Left)) {
                 if (hitEvent >= 0) { s.editEvent = hitEvent; s.openEventEditor = true; }
                 else addEvent(T(mouse.x));
             }
@@ -1230,7 +1231,7 @@ void EditorApp::DrawAnimationWindow() {
                     s.handleSide = hitHandle;
                 } else if (!io.KeyShift) s.selection.clear();
             }
-            if (hovered && ImGui::IsMouseDoubleClicked(0) && !hit && !curves.empty()) {
+            if (hovered && Input::IsMouseDoublePressed(MouseButton::Left) && !hit && !curves.empty()) {
                 float t = T(mouse.x), best = FLT_MAX;
                 std::tuple<int, int, int> nearest = curves[0];
                 for (auto& curve : curves) {
@@ -1327,7 +1328,7 @@ void EditorApp::DrawAnimationWindow() {
                     s.boxStart = mouse;
                 }
             }
-            if (hovered && ImGui::IsMouseDoubleClicked(0) && !hit && hoveredRow >= 0 && hoveredRow < (int)rows.size())
+            if (hovered && Input::IsMouseDoublePressed(MouseButton::Left) && !hit && hoveredRow >= 0 && hoveredRow < (int)rows.size())
                 addKey(rows[hoveredRow].track, rows[hoveredRow].channel, T(mouse.x));
             if (hovered && ImGui::IsMouseClicked(1)) {
                 s.menuRow = hoveredRow < (int)rows.size() ? hoveredRow : -1;

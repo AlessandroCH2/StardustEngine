@@ -110,14 +110,15 @@ protected:
     }
 
     void OnRender(RHI::CommandList& cmd) override {
-        m_Scene->RenderCameraTargets(GetDevice(),cmd,(float)TotalTime());
+        m_Scene->PrepareRenderFrame();
+        m_Scene->RenderCameraTargets(GetDevice(),cmd,(float)TotalTime(),true);
         auto& w = GetWindow();
         { float scale = GraphicsQuality::Current().renderScale; m_Renderer->Resize((u32)(w.Width() * scale), (u32)(w.Height() * scale)); m_Renderer->SetDisplaySize(w.Width(), w.Height()); }
         float aspect = (float)w.Width() / std::max(1u, w.Height());
         RenderCamera cam;
         if (!m_Scene->GetPrimaryCamera(cam, aspect)) cam.projection = PerspectiveReverseZ(cam.fovY, aspect, cam.nearPlane);
         m_Renderer->BeginScene(cam, m_Scene->GatherEnvironment(), (float)TotalTime());
-        m_Scene->SubmitToRenderer(*m_Renderer, GetDevice());
+        m_Scene->SubmitToRenderer(*m_Renderer, GetDevice(),false,true);
         CanvasRenderer::Submit(*m_Scene,*m_Renderer,GetDevice(),{w.Width(),w.Height()},false);
         m_Renderer->Render(cmd);
     }

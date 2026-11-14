@@ -27,6 +27,7 @@ public:
 
     // Textures (PNG/JPG/TGA/BMP via stb_image, full mip chain). Returns the bindless SRV of the texture or a fallback.
     static Ref<RHI::Texture> GetTexture(const std::string& path, bool srgb); // large files decode in the background: nullptr until ready
+    static void PumpTextures(); // non-blocking progress for loading screens
     static int PendingTextures();   // textures still decoding
     static void WaitForTextures();  // finishes every pending texture now
     static void SetRuntimeTexture(const std::string& path,Ref<RHI::Texture> texture);
@@ -36,6 +37,7 @@ public:
 
     // Meshes
     static Ref<Mesh> GetMesh(const std::string& ref);
+    static u64 MeshCacheHits();
     static Ref<Mesh> GetAnimatedFbx(const std::string& ref, float time, const std::string& animation = {});
     static std::string BuiltinRef(PrimitiveType t) { return std::string("builtin:") + PrimitiveName(t); }
 

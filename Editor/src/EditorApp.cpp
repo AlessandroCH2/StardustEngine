@@ -278,6 +278,7 @@ void EditorApp::LoadSceneInPlayMode(const std::string& assetPath) {
 
 void EditorApp::OnUpdate(float dt) {
     Profiler::EndFrame();
+    if(m_ProjectLoading){UpdateProjectLoading();return;}
     UpdateAnimationPreview(dt);
     if (m_ShowHub || !m_ActiveScene) return;
     if (m_State == PlayState::Play || (m_State == PlayState::Pause && m_StepFrame)) {
@@ -329,9 +330,11 @@ void EditorApp::OnUpdate(float dt) {
 }
 
 void EditorApp::OnRender(RHI::CommandList& cmd) {
-    if(m_ActiveScene&&!m_ShowHub)ActiveScene().RenderCameraTargets(GetDevice(),cmd,(float)TotalTime());
+    if(m_ProjectLoading)return;
+    if(m_ActiveScene&&!m_ShowHub){ActiveScene().PrepareRenderFrame();ActiveScene().RenderCameraTargets(GetDevice(),cmd,(float)TotalTime(),true);}
     if (m_ShowHub || !m_ActiveScene) return;
     Scene& scene = m_AnimationPreviewScene?*m_AnimationPreviewScene:ActiveScene();
+    if(m_AnimationPreviewScene)scene.PrepareRenderFrame();
     EntityID selected=m_Selected;if(m_AnimationPreviewScene&&ActiveScene().Reg().Valid(m_Selected))selected=scene.FindByUUID(ActiveScene().Reg().Get<IDComponent>(m_Selected).uuid);
     m_SceneRenderer->selectedEntity=m_ShowGizmos&&scene.Reg().Valid(selected)?selected:0;if(scene.Reg().Has<RectTransformComponent>(selected)||scene.Reg().Has<CanvasComponent>(selected))m_SceneRenderer->selectedEntity=0;
     EnvironmentSettings env = scene.GatherEnvironment();
@@ -345,7 +348,7 @@ void EditorApp::OnRender(RHI::CommandList& cmd) {
         float aspect = m_SceneView.size.x / std::max(1.0f, m_SceneView.size.y);
         m_LastSceneCamera = m_Camera.GetRenderCamera(aspect); m_HasSceneCamera = true;
         m_SceneRenderer->BeginScene(m_LastSceneCamera, env, time);
-        { SD_PROFILE("Scene view: submit"); scene.SubmitToRenderer(*m_SceneRenderer, GetDevice(),bool(m_AnimationPreviewScene));
+        { SD_PROFILE("Scene view: submit"); scene.SubmitToRenderer(*m_SceneRenderer, GetDevice(),bool(m_AnimationPreviewScene),true);
           CanvasRenderer::Submit(scene,*m_SceneRenderer,GetDevice(),m_SceneView.size,true,m_Camera.Is2D()); }
         SD_PROFILE("Scene view: record");
         bool grid=m_SceneRenderer->drawGrid;
@@ -359,7 +362,7 @@ void EditorApp::OnRender(RHI::CommandList& cmd) {
         RenderCamera cam;
         if (!scene.GetPrimaryCamera(cam, aspect)) cam = m_Camera.GetRenderCamera(aspect);
         m_GameRenderer->BeginScene(cam, env, time);
-        { SD_PROFILE("Game view: submit"); scene.SubmitToRenderer(*m_GameRenderer, GetDevice(),bool(m_AnimationPreviewScene));
+        { SD_PROFILE("Game view: submit"); scene.SubmitToRenderer(*m_GameRenderer, GetDevice(),bool(m_AnimationPreviewScene),true);
           CanvasRenderer::Submit(scene,*m_GameRenderer,GetDevice(),m_GameRenderSize,false); }
         SD_PROFILE("Game view: record");
         m_GameRenderer->Render(cmd);
@@ -404,6 +407,7 @@ void EditorApp::HandleShortcuts() {
 // ------------------------------------------------------------------------------------------------ UI
 
 void EditorApp::OnImGui() {
+    if(m_ProjectLoading){DrawProjectLoading();return;}
     AssetUI::SetEditorContext(&GetDevice(), m_ActiveScene.get());
     if (m_ShowHub || !m_ActiveScene) {
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(7, 6));
@@ -599,7 +603,7 @@ void EditorApp::DrawMenuBar() {
 
     // Project and scene in the middle, transport controls on the right
     {
-        // "Project - Scene - Stardust 0.6.4" with a chevron; it opens the project info
+        // "Project - Scene - Stardust 0.6.6" with a chevron; it opens the project info
         std::string title = (Project::IsLoaded() ? Project::Config().name + " - " : std::string()) + ActiveScene().Name() + (m_SceneDirty ? "*" : "") + " - Stardust " STARDUST_VERSION;
         float windowWidth = ImGui::GetWindowWidth(), buttonSize = ImGui::GetFrameHeight();
         const float menusEnd = ImGui::GetCursorScreenPos().x + 8, transportX = windowWidth - 46 * 3 - 28 - (buttonSize + 6) * 3;

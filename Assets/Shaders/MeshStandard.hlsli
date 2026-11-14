@@ -5,7 +5,7 @@
 #include "Shadows.hlsli"
 
 MeshPSOut main(MeshVSOut i, bool frontFace : SV_IsFrontFace) {
-    DrawData d = LoadDraw(g_Push.drawBuffer, g_Push.drawIndex);
+    DrawData d = LoadDraw(g_Push.drawBuffer, i.drawIndex);
     float4 albedo = SampleAlbedo(d, i.uv);
 #ifndef MATERIAL_TRANSPARENT
     if (d.params.w > 0.0 && albedo.a < d.params.w) discard;

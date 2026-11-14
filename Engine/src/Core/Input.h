@@ -25,6 +25,8 @@ public:
     static bool IsKeyPressed(Key k);   // went down this frame
     static bool IsMouseDown(MouseButton b);
     static bool IsMousePressed(MouseButton b);
+    static bool IsMouseDoublePressed(MouseButton b);
+    static void RecordMousePress(int button,u32 milliseconds,glm::vec2 position,u32 maxInterval=500,float maxDistance=6);
     static glm::vec2 MousePosition();
     static glm::vec2 MouseDelta();
     static float ScrollDelta();
@@ -52,6 +54,8 @@ private:
     static inline bool s_PendingMouse[8]{}, s_PressedMouse[8]{};
     static inline glm::vec2 s_MousePos{}, s_PrevMousePos{};
     static inline float s_Scroll = 0, s_ScrollAccum = 0;
+    static inline bool s_DoublePressed[8]{},s_PendingDouble[8]{},s_HasClick[8]{};
+    static inline u32 s_ClickTime[8]{};static inline glm::vec2 s_ClickPosition[8]{};
     static inline bool s_FirstMouse = true;
     static inline CursorMode s_CursorMode=CursorMode::Normal;
     static inline bool s_GamepadConnected[16]{};

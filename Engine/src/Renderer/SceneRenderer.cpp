@@ -113,6 +113,7 @@ SceneRenderer::SceneRenderer(Device& device) : m_Device(device) {
         m_PickBuffers[i] = device.CreateBuffer({ 16, BufferUsage::CopyDst, MemoryUsage::GPUToCPU, "PickReadback" });
         m_MaterialBuffers[i]=device.CreateBuffer({65536*sizeof(glm::vec4),BufferUsage::Storage,MemoryUsage::CPUToGPU,"MaterialProperties"});
         m_DrawBuffers[i] = device.CreateBuffer({ kMaxDraws * sizeof(DrawDataGPU), BufferUsage::Storage, MemoryUsage::CPUToGPU, "DrawData" });
+        m_InstanceBuffers[i]=device.CreateBuffer({kMaxDraws*(kShadowCascades+1)*sizeof(u32),BufferUsage::Storage,MemoryUsage::CPUToGPU,"MeshInstanceIndices"});
         m_LightBuffers[i] = device.CreateBuffer({ kMaxLocalLights * sizeof(LocalLight), BufferUsage::Storage, MemoryUsage::CPUToGPU, "LocalLights" });
     }
 
@@ -176,22 +177,30 @@ void SceneRenderer::SetDisplaySize(u32 width, u32 height) {
 
 
 void SceneRenderer::BeginScene(const RenderCamera& camera, const EnvironmentSettings& env, float time) {
-    m_TextureSamplers.clear();
-    m_Camera = camera;
+    if(m_SamplerRoot!=AssetManager::Root()||m_SamplerPakGeneration!=Pak::Generation()){
+        m_TextureSamplers.clear();m_SamplerRoot=AssetManager::Root();m_SamplerPakGeneration=Pak::Generation();
+    }
+    m_Camera = camera; m_ViewFrustum=Frustum::FromViewProj(camera.projection*camera.view);m_EarlyCulled=0;
     m_Env = env;
     if (!GraphicsQuality::Current().shadows) m_Env.castShadows = false;
     m_Env.shadowDistance *= GraphicsQuality::Current().shadowDistance;
+    m_HasShadowVolumes=m_Env.castShadows&&camera.shadows&&glm::normalize(m_Env.sunDirection).y>-.05f;
+    if(m_HasShadowVolumes){FrameConstants fc{};ComputeCascades(fc,(float)m_Width/std::max(1u,m_Height));for(u32 c=0;c<kShadowCascades;++c)m_ShadowFrusta[c]=Frustum::FromViewProj(fc.cascadeViewProj[c]);}
     m_Time = time;
-    m_Draws.clear();
+    m_Draws.clear();m_InstanceOffset=0;
     m_DrawData.clear();m_MaterialValues.clear();
     m_Lights.clear();
     m_ActiveTerrains.clear();
 }
 
-void SceneRenderer::Submit(const Ref<Mesh>& sourceMesh, const glm::mat4& transform, const Material& m, u32 entityId, bool castShadows,u32 firstIndex,u32 indexCount,bool receiveShadows,int sortingOrder) {
+void SceneRenderer::Submit(const Ref<Mesh>& sourceMesh, const glm::mat4& transform, const Material& m, u32 entityId, bool castShadows,u32 firstIndex,u32 indexCount,bool receiveShadows,int sortingOrder,bool cullable) {
     Ref<Mesh> mesh=m.shader==ShaderType::Water&&sourceMesh&&sourceMesh->Name()=="Plane"?MeshLibrary::WaterGrid():sourceMesh;
     if(mesh!=sourceMesh&&mesh){firstIndex=0;indexCount=mesh->IndexCount();}
     if (!mesh || m_DrawData.size() >= kMaxDraws) return;
+    const auto& bounds=mesh->Bounds();glm::vec3 center=glm::vec3(transform*glm::vec4(bounds.Center(),1));glm::vec3 extents(0);for(int axis=0;axis<3;++axis)extents+=glm::abs(glm::vec3(transform[axis]))*bounds.Extents()[axis];float radius=glm::length(extents);
+    bool outside=cullable&&m.shader!=ShaderType::UI&&m.shader!=ShaderType::Water&&!m_ViewFrustum.Box(center-extents,center+extents);
+    bool shadowOnly=outside&&castShadows&&m_HasShadowVolumes&&std::any_of(m_ShadowFrusta.begin(),m_ShadowFrusta.end(),[&](const Frustum& f){return f.Box(center-extents,center+extents);})&&m.shader!=ShaderType::Transparent&&m.shader!=ShaderType::UI&&m.shader!=ShaderType::Water&&m.shader!=ShaderType::Unlit;
+    if(outside&&(!shadowOnly||m.customPixelShader.empty())){if(!shadowOnly){++m_EarlyCulled;return;}DrawDataGPU shadow{};shadow.model=transform;m_DrawData.push_back(shadow);m_Draws.push_back({mesh,m.shader,m.doubleSided,true,0,center,radius});auto& draw=m_Draws.back();draw.boundsExtents=extents;draw.firstIndex=firstIndex;draw.indexCount=indexCount?indexCount:mesh->IndexCount();return;}
     DrawDataGPU d;
     d.model = transform;
     d.color = m.color;
@@ -201,7 +210,13 @@ void SceneRenderer::Submit(const Ref<Mesh>& sourceMesh, const glm::mat4& transfo
     d.ids = { m.runtimeAlbedo ? m.runtimeAlbedo->SRV() : AssetManager::TextureSRV(m.albedoMap, true, DefaultTexture::White),
               m.runtimeMask ? m.runtimeMask->SRV() : AssetManager::TextureSRV(m.normalMap, false, DefaultTexture::FlatNormal),
               entityId, std::bit_cast<u32>(m.rimStrength) };
-    auto sampler=[&](const std::string& path){auto found=m_TextureSamplers.find(path);if(found!=m_TextureSamplers.end())return found->second;auto value=(u32)TextureImportSettings::Load(path).Sampler();m_TextureSamplers[path]=value;return value;};
+    auto sampler=[&](const std::string& path){
+        auto now=std::chrono::steady_clock::now();auto& entry=m_TextureSamplers[path];
+        if(entry.checked.time_since_epoch().count()==0||now-entry.checked>std::chrono::milliseconds(500)){
+            entry.value=(u32)TextureImportSettings::Load(path).Sampler();entry.checked=now;
+        }
+        return entry.value;
+    };
     d.ids.w=(d.ids.w&~63u)|(sampler(m.albedoMap)&7u)|((sampler(m.normalMap)&7u)<<3);
     m_DrawData.push_back(d);
 
@@ -212,7 +227,7 @@ void SceneRenderer::Submit(const Ref<Mesh>& sourceMesh, const glm::mat4& transfo
     m_Draws.push_back({ mesh, m.shader, m.doubleSided, castShadows && !transparent && m.shader != ShaderType::Unlit,
                         0.0f, c, glm::length(b.Extents()) * s });
     if(!m.customPixelShader.empty()||m.shader==ShaderType::Water){auto values=m.PropertyValues();if(m_MaterialValues.size()+values.size()<=65536){m_Draws.back().propertyOffset=(u32)m_MaterialValues.size();m_Draws.back().propertyCount=(u32)values.size();m_MaterialValues.insert(m_MaterialValues.end(),values.begin(),values.end());}}
-    m_Draws.back().sortingOrder=sortingOrder;m_Draws.back().firstIndex=firstIndex;m_Draws.back().indexCount=indexCount?indexCount:mesh->IndexCount();
+    m_Draws.back().boundsExtents=extents;m_Draws.back().cullable=cullable;m_Draws.back().sortingOrder=sortingOrder;m_Draws.back().firstIndex=firstIndex;m_Draws.back().indexCount=indexCount?indexCount:mesh->IndexCount();
     if (!m.customPixelShader.empty()) {
         // The shader file's version is looked up at most twice a second per shader, not for every draw
         // Render state from the shader schema (.shader / Shader Graph: Queue, Blend, ZWrite, Cull); -1 = the material decides
@@ -297,7 +312,7 @@ void SceneRenderer::SubmitParticles(const Ref<Mesh>& mesh, const Material& mater
     const bool custom = !m.customPixelShader.empty();
     if (!custom) { m.shader = ShaderType::Transparent; }
     size_t previous = m_Draws.size();
-    Submit(mesh, glm::mat4(1), m, entityId, false, 0, indexCount, false, sortingOrder);
+    Submit(mesh, glm::mat4(1), m, entityId, false, 0, indexCount, false, sortingOrder,false);
     if (m_Draws.size() == previous) return;
     m_Draws.back().cullable = false;
     if (!custom) {
@@ -312,8 +327,9 @@ void SceneRenderer::DrawMeshes(CommandList& cmd, Buffer* frameBuf, bool transpar
     for (u32 i = 0; i < (u32)m_Draws.size(); ++i) {
         const DrawItem& d = m_Draws[i];
         if (d.uiOverlay || ((d.shader == ShaderType::Transparent || d.shader == ShaderType::UI || d.shader == ShaderType::Water) != transparent)) continue;
-        // Frustum culling: the bounding sphere (with a margin for skinning and water waves) against the view's side planes
-        if (d.cullable && !m_ViewFrustum.Sphere(d.boundsCenter, d.boundsRadius * 1.1f + 1.0f)) { m_Stats.culledDraws++; continue; }
+        // Test the transformed box, not a sphere that becomes enormous for long roads.
+        // Water can displace outside its source bounds.
+        if (d.cullable && d.shader!=ShaderType::Water && !m_ViewFrustum.Box(d.boundsCenter-d.boundsExtents,d.boundsCenter+d.boundsExtents)) { m_Stats.culledDraws++; continue; }
         order.push_back(i);
     }
     if (transparent) {
@@ -325,21 +341,40 @@ void SceneRenderer::DrawMeshes(CommandList& cmd, Buffer* frameBuf, bool transpar
             return m_Draws[a].sortDepth > m_Draws[b].sortDepth; });
     } else {
         std::sort(order.begin(), order.end(), [&](u32 a, u32 b) {
-            return std::tie(m_Draws[a].shader, m_Draws[a].doubleSided) < std::tie(m_Draws[b].shader, m_Draws[b].doubleSided);
+            const auto& x=m_Draws[a];const auto& y=m_Draws[b];
+            return std::tuple(x.shader,x.doubleSided,(uintptr_t)x.customPipeline.get(),(uintptr_t)x.mesh.get(),x.firstIndex,x.indexCount)
+                 < std::tuple(y.shader,y.doubleSided,(uintptr_t)y.customPipeline.get(),(uintptr_t)y.mesh.get(),y.firstIndex,y.indexCount);
         });
     }
     Pipeline* bound = nullptr;
     Buffer* drawBuf = m_DrawBuffers[m_Device.FrameIndex()].get();
-    for (u32 i : order) {
-        const DrawItem& d = m_Draws[i];
+    Buffer* instances=m_InstanceBuffers[m_Device.FrameIndex()].get();
+    auto* ids=instances->As<u32>();
+    for (size_t at=0;at<order.size();) {
+        u32 i=order[at];const DrawItem& d=m_Draws[i];
+        const bool canInstance=!transparent&&!d.customPipeline&&(d.shader==ShaderType::Standard||d.shader==ShaderType::Toon||d.shader==ShaderType::Unlit);
+        size_t end=at+1;
+        if(canInstance)while(end<order.size()){
+            const auto& other=m_Draws[order[end]];
+            if(other.customPipeline||other.mesh!=d.mesh||other.shader!=d.shader||other.doubleSided!=d.doubleSided||other.firstIndex!=d.firstIndex||other.indexCount!=d.indexCount)break;
+            ++end;
+        }
+        const u32 count=(u32)(end-at);
         Pipeline* p = d.customPipeline ? d.customPipeline.get() : MeshPipeline(d.shader, d.doubleSided);
         if (p != bound) { cmd.SetPipeline(p); bound = p; }
         MeshPush push{ frameBuf->Index(), drawBuf->Index(), i, d.mesh->VertexBuffer()->Index(), 0,m_MaterialBuffers[m_Device.FrameIndex()]->Index(),d.propertyOffset,d.propertyCount };
+        if(count>1){
+            // Built-in vertex/pixel shaders retain per-instance entity ids and material data.
+            push.cascade=0x80000000u|instances->Index();push.drawIndex=m_InstanceOffset;
+            for(size_t n=at;n<end;++n)ids[m_InstanceOffset++]=order[n];
+            m_Stats.instancedObjects+=count;
+        }
         cmd.Push(push);
         cmd.SetIndexBuffer(d.mesh->IndexBuffer());
-        cmd.DrawIndexed(d.indexCount,1,d.firstIndex);
+        cmd.DrawIndexed(d.indexCount,count,d.firstIndex);
         m_Stats.drawCalls++;
-        m_Stats.triangles += d.indexCount / 3;
+        m_Stats.triangles += (u64)d.indexCount*count/3;
+        at=end;
     }
 }
 
@@ -351,7 +386,7 @@ void SceneRenderer::Render(CommandList& cmd) {
     AssetManager::FlushSkinning(cmd);
     m_Sky->Resize(m_Width, m_Height); // picks up a changed cloud quality
     ScopedGpuTimer frameTimer(m_Device, "Scene");
-    m_Stats = {};
+    m_Stats = {};m_Stats.culledDraws=m_EarlyCulled;
 
     // This frame slot's fence has been waited on, so a pick copied kFramesInFlight frames ago is ready.
     u32 fi = m_Device.FrameIndex();
@@ -571,19 +606,27 @@ void SceneRenderer::RenderShadows(CommandList& cmd, Buffer* frameBuf) {
         rd.depth = { m_ShadowMap.get(), LoadOp::Clear, 0.0f, c };
         cmd.BeginRendering(rd);
         cmd.SetPipeline(m_ShadowPipeline.get());
-        glm::vec3 sphereCenter = glm::vec3(m_CascadeSpheres[c]);
-        float sphereRadius = m_CascadeSpheres[c].w;
+        const Frustum cascade=Frustum::FromViewProj(reinterpret_cast<FrameConstants*>(frameBuf->Mapped())->cascadeViewProj[c]);
         Buffer* drawBuf = m_DrawBuffers[m_Device.FrameIndex()].get();
-        for (u32 i = 0; i < (u32)m_Draws.size(); ++i) {
-            const DrawItem& d = m_Draws[i];
-            if (!d.castShadows) continue;
-            // Coarse culling: bounding sphere of the mesh vs. bounding sphere of the cascade volume
-            if (glm::length(d.boundsCenter - sphereCenter) > sphereRadius + d.boundsRadius) continue;
-            MeshPush p{ frameBuf->Index(), drawBuf->Index(), i, d.mesh->VertexBuffer()->Index(), c };
-            cmd.Push(p);
-            cmd.SetIndexBuffer(d.mesh->IndexBuffer());
-            cmd.DrawIndexed(d.indexCount,1,d.firstIndex);
-            m_Stats.drawCalls++;
+        std::vector<u32> order;
+        for(u32 i=0;i<(u32)m_Draws.size();++i){
+            const auto& d=m_Draws[i];if(!d.castShadows)continue;
+            if(d.cullable&&!cascade.Box(d.boundsCenter-d.boundsExtents,d.boundsCenter+d.boundsExtents)){++m_Stats.shadowCulled;continue;}
+            order.push_back(i);
+        }
+        std::sort(order.begin(),order.end(),[&](u32 a,u32 b){
+            const auto& x=m_Draws[a];const auto& y=m_Draws[b];
+            return std::tuple((uintptr_t)x.mesh.get(),x.firstIndex,x.indexCount)<std::tuple((uintptr_t)y.mesh.get(),y.firstIndex,y.indexCount);
+        });
+        auto* instances=m_InstanceBuffers[m_Device.FrameIndex()].get();auto* ids=instances->As<u32>();
+        for(size_t at=0;at<order.size();){
+            const auto& d=m_Draws[order[at]];size_t end=at+1;
+            while(end<order.size()) {const auto& other=m_Draws[order[end]];if(other.mesh!=d.mesh||other.firstIndex!=d.firstIndex||other.indexCount!=d.indexCount)break;++end;}
+            MeshPush p{frameBuf->Index(),drawBuf->Index(),order[at],d.mesh->VertexBuffer()->Index(),c};
+            const u32 count=(u32)(end-at);
+            if(count>1){p.materialBuffer=instances->Index();p.materialOffset=m_InstanceOffset;p.materialCount=~0u;for(size_t n=at;n<end;++n)ids[m_InstanceOffset++]=order[n];}
+            cmd.Push(p);cmd.SetIndexBuffer(d.mesh->IndexBuffer());cmd.DrawIndexed(d.indexCount,count,d.firstIndex);
+            ++m_Stats.drawCalls;++m_Stats.shadowDraws;m_Stats.shadowInstances+=count;at=end;
         }
         for(auto* batch:m_ActiveTerrains){batch->terrain->DrawShadow(cmd,frameBuf,c);batch->trees->DrawShadow(cmd,frameBuf,c);}
         cmd.EndRendering();

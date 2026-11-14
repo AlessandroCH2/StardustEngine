@@ -1,3 +1,4 @@
+#include "Core/Input.h"
 #include "Core/Profiler.h"
 // Project Hub, Build Settings, Project Settings, player builds and undo/redo
 #include "Assets/AssetMeta.h"
@@ -318,7 +319,7 @@ void EditorApp::DrawProjectHub() {
             if (overStar) SetHubFavorite(p, !favorite);
             else if (overDots) ImGui::OpenPopup("ProjectMenu");
         }
-        if (hovered && !overStar && !overDots && ImGui::IsMouseDoubleClicked(0) && exists) requestOpen(p);
+        if (hovered && !overStar && !overDots && Input::IsMouseDoublePressed(MouseButton::Left) && exists) requestOpen(p);
         if (ImGui::IsItemClicked(1)) { selected = p; ImGui::OpenPopup("ProjectMenu"); }
 
         auto* d = ImGui::GetWindowDrawList();
@@ -460,11 +461,17 @@ void EditorApp::DrawProjectHub() {
 }
 
 void EditorApp::OpenProject(const fs::path& file, bool isNew) {
+    if(m_ProjectLoading)return;
+    m_ProjectLoading=true;m_ProjectLoadProgress=0;
+    m_ProjectLoadName=FileSystem::Utf8(file.stem());m_ProjectLoadStatus="Opening project";
+    m_ProjectLoadTasks.clear();m_ProjectLoadTextures.clear();
+    m_ProjectLoadTasks.emplace_back("Opening project and packages",[this,file]{
     StopAnimationPreview();
     if(!m_PrefabAsset.empty())ExitPrefabStage();
     if (m_State != PlayState::Edit) Stop();
     if (Project::IsLoaded() && m_EditorScene) SaveProjectState();
-    if (!Project::Load(file)) return;
+    if (!Project::Load(file)) throw std::runtime_error("Cannot open project");
+    m_ProjectLoadName=Project::Config().name;
     Project::Save(); // stamps the engine version the Hub shows
     Pak::SetPassphrase(Project::Config().pakKey);
     AssetMeta::MigrateFolder(Project::AssetsDir());
@@ -474,6 +481,7 @@ void EditorApp::OpenProject(const fs::path& file, bool isNew) {
     m_ProjectRoot = Project::AssetsDir();
     m_ProjectCurrentDir = m_ProjectRoot;
     m_SelectedAsset.clear();
+    GetDevice().WaitIdle();
     CanvasRenderer::Clear();
     AssetManager::Shutdown();
     AssetManager::Init(GetDevice(), m_ProjectRoot);
@@ -484,6 +492,9 @@ void EditorApp::OpenProject(const fs::path& file, bool isNew) {
     ScriptEngine::CheckForSourceChange();
     if (ScriptEngine::IsReady() && ScriptEngine::NeedsBuild()) { SD_INFO("Compiling project scripts..."); ScriptEngine::BuildAsync(); }
 
+        m_ProjectLoadProgress=.15f;
+    });
+    m_ProjectLoadTasks.emplace_back("Loading initial scene",[this]{
     // Last scene, else the first scene in build, else a new default scene
     std::string scene = Project::Config().lastOpenedScene;
     if (scene.empty() || !fs::exists(m_ProjectRoot / fs::u8path(scene))) scene = Project::EnabledScenes().empty() ? "" : Project::EnabledScenes()[0];
@@ -495,10 +506,75 @@ void EditorApp::OpenProject(const fs::path& file, bool isNew) {
         if (cfg.scenes.empty()) { cfg.scenes.push_back("Scenes/Main.scene"); cfg.scenesEnabled.push_back(true); }
         Project::Save();
     }
-    m_Undo.clear(); m_Redo.clear(); m_UndoSnapshot.clear();
-    m_ShowHub = false;
-    UpdateTitle();
+        m_ProjectLoadProgress=.3f;
+    });
+    m_ProjectLoadTasks.emplace_back("Preparing scene assets",[this]{
+        std::vector<std::pair<std::string,std::function<void()>>> assets;
+        std::unordered_set<std::string> meshes,materials;
+        m_ActiveScene->Reg().Each<MeshRendererComponent>([&](EntityID,MeshRendererComponent& c){
+            if(!c.mesh.empty())meshes.insert(c.mesh);
+            if(!c.materialPath.empty())materials.insert(c.materialPath);
+            for(auto& path:c.materials)if(!path.empty())materials.insert(path);
+            auto texture=[&](const std::string& path,bool srgb){if(!path.empty())m_ProjectLoadTextures.emplace_back(path,srgb);};
+            texture(c.material.albedoMap,true);texture(c.material.normalMap,false);
+        });
+        for(auto& path:meshes)assets.emplace_back(path,[path]{AssetManager::GetMesh(path);});
+        for(auto& path:materials)assets.emplace_back(path,[this,path]{if(auto m=AssetManager::GetMaterial(path)){
+            if(!m->albedoMap.empty())m_ProjectLoadTextures.emplace_back(m->albedoMap,true);
+            if(!m->normalMap.empty())m_ProjectLoadTextures.emplace_back(m->normalMap,false);
+        }});
+        size_t total=assets.size(),index=0;
+        for(auto& [path,load]:assets){float progress=.3f+.55f*(float)(++index)/std::max<size_t>(1,total);
+            m_ProjectLoadTasks.emplace_back("Loading "+path,[this,load=std::move(load),progress]{load();m_ProjectLoadProgress=progress;});}
+        m_ProjectLoadTasks.emplace_back("Preparing terrain",[this]{m_ActiveScene->PrepareTerrains(GetDevice());m_ProjectLoadProgress=.9f;});
+        m_ProjectLoadTasks.emplace_back("Loading textures",[this]{
+            std::sort(m_ProjectLoadTextures.begin(),m_ProjectLoadTextures.end());
+            m_ProjectLoadTextures.erase(std::unique(m_ProjectLoadTextures.begin(),m_ProjectLoadTextures.end()),m_ProjectLoadTextures.end());
+            for(auto& [path,srgb]:m_ProjectLoadTextures)m_ProjectLoadTasks.emplace_back("Loading "+path,[path,srgb]{AssetManager::GetTexture(path,srgb);});
+            m_ProjectLoadProgress=.95f;
+        });
+    });
     (void)isNew;
+}
+
+void EditorApp::UpdateProjectLoading(){
+    // Work stays on the render thread: GPU uploads are not safe on an arbitrary worker.
+    // Present the current stage before executing it, then import assets in bounded batches.
+    static bool presented=false;
+    if(!presented){presented=true;return;}
+    try{
+        auto start=std::chrono::steady_clock::now();
+        bool setup=m_ProjectLoadProgress<.3f;
+        while(!m_ProjectLoadTasks.empty()){
+            auto task=std::move(m_ProjectLoadTasks.front());m_ProjectLoadTasks.pop_front();
+            task.second();
+            if(setup||std::chrono::steady_clock::now()-start>std::chrono::milliseconds(8))break;
+        }
+        if(!m_ProjectLoadTasks.empty()){m_ProjectLoadStatus=m_ProjectLoadTasks.front().first;return;}
+        AssetManager::PumpTextures();
+        if(AssetManager::PendingTextures()){m_ProjectLoadStatus="Loading textures";return;}
+        m_ProjectLoading=false;presented=false;m_ProjectLoadProgress=1;
+        m_ProjectLoadTextures.clear();m_Undo.clear();m_Redo.clear();m_UndoSnapshot.clear();
+        m_ShowHub=false;UpdateTitle();
+    }catch(const std::exception& e){
+        SD_ERROR("Project loading failed: {}",e.what());m_ProjectLoadTasks.clear();m_ProjectLoadTextures.clear();
+        m_ProjectLoading=false;presented=false;m_ShowHub=true;
+    }
+}
+
+void EditorApp::DrawProjectLoading(){
+    if(ImGui::BeginMainMenuBar()){ImGui::TextUnformatted("Stardust  |  Opening project");DrawWindowButtons(ImGui::GetCursorPosX(),ImGui::GetWindowWidth());ImGui::EndMainMenuBar();}
+    auto* viewport=ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(viewport->WorkPos);ImGui::SetNextWindowSize(viewport->WorkSize);
+    ImGui::Begin("##projectLoading",nullptr,ImGuiWindowFlags_NoDecoration|ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoSavedSettings);
+    float width=std::min(640.f*UiScale(),ImGui::GetContentRegionAvail().x*.85f);
+    ImGui::SetCursorPos(ImVec2((viewport->WorkSize.x-width)*.5f,viewport->WorkSize.y*.4f));
+    ImGui::BeginGroup();
+    ImGui::TextUnformatted("Opening project");
+    ImGui::TextUnformatted(m_ProjectLoadName.c_str());ImGui::Spacing();
+    ImGui::ProgressBar(m_ProjectLoadProgress,ImVec2(width,22*UiScale()));
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX()+width);ImGui::TextDisabled("%s",m_ProjectLoadStatus.c_str());ImGui::PopTextWrapPos();
+    ImGui::EndGroup();ImGui::End();
 }
 
 void EditorApp::SaveProjectState() {
@@ -934,21 +1010,22 @@ void EditorApp::UpdateUndo() {
     const bool gestureEnded = m_UndoWasBusy && !busy;
     const bool selectionChanged = m_UndoSelected != m_Selected;
     m_UndoWasBusy = busy;
-    m_UndoTimer += DeltaTime();
+    m_UndoTimer += ImGui::GetIO().DeltaTime;
     // Serializing the whole scene is expensive in big scenes: compare only when something can have
     // changed (a mouse gesture ended, the selection changed, keys were typed) and as a slow fallback
     auto& io = ImGui::GetIO();
     bool keys = io.InputQueueCharacters.Size > 0;
     for (int k = ImGuiKey_NamedKey_BEGIN; !keys && k < ImGuiKey_NamedKey_END; ++k) keys = ImGui::IsKeyPressed((ImGuiKey)k, false);
-    m_UndoPending |= keys;
-    const bool due = gestureEnded || selectionChanged || (m_UndoPending && m_UndoTimer >= 0.25f) || m_UndoTimer >= 5.0f;
+    if(gestureEnded||keys||ImGui::GetCurrentContext()->ActiveIdHasBeenEditedThisFrame){m_UndoPending=true;m_UndoTimer=0;}
+    if(selectionChanged)m_UndoSelected=m_Selected;
+    const bool due=m_UndoPending&&m_UndoTimer>=0.75f;
     if (busy || !due) return;
     SD_PROFILE("Undo snapshot");
     m_UndoPending = false;
     m_UndoTimer = 0.0f;
     m_UndoSelected = m_Selected;
     std::string now = SceneSerializer::ToJson(*m_EditorScene, true);
-    if (m_UndoSnapshot.empty()) { m_UndoSnapshot = std::move(now); m_UndoRebase = selectionChanged ? 2 : 0; return; }
+    if (m_UndoSnapshot.empty()) { m_UndoSnapshot = std::move(now); m_UndoRebase = 0; return; }
     if (now != m_UndoSnapshot) {
         m_Undo.push_back(std::move(m_UndoSnapshot));
         if (m_Undo.size() > 100) m_Undo.erase(m_Undo.begin());
@@ -957,7 +1034,7 @@ void EditorApp::UpdateUndo() {
         m_SceneDirty = true;
         if (m_AnimationPreviewScene && !m_AnimationRecording) RefreshAnimationPreview();
     }
-    if (selectionChanged) m_UndoRebase = 2;
+
 }
 
 // Previews run on a copy of the scene: rebuild the copy so they show the current values

@@ -50,6 +50,7 @@ struct MeshVSOut {
     float3 normal   : NORMAL;
     float4 tangent  : TANGENT;
     float2 uv       : TEXCOORD0;
+    nointerpolation uint drawIndex : TEXCOORD1;
 };
 
 struct MeshPSOut {

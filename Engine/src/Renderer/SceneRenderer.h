@@ -1,4 +1,5 @@
 ﻿#pragma once
+#include <chrono>
 #include "RHI/RHI.h"
 #include "Renderer/Camera.h"
 #include "Renderer/Mesh.h"
@@ -90,6 +91,8 @@ struct RenderStats {
     u64 triangles = 0;
     u32 terrainPatches = 0;
     u32 visibleTrees = 0;
+    u32 shadowDraws = 0, shadowCulled = 0;
+    u32 instancedObjects=0,shadowInstances=0;
     u32 culledDraws = 0;   // mesh draws skipped because they are outside the camera's view
 };
 
@@ -105,7 +108,7 @@ public:
     void SetDisplaySize(u32 width, u32 height);
     void SyncQuality(); // call outside a render pass, before submitting
     void BeginScene(const RenderCamera& camera, const EnvironmentSettings& env, float time);
-    void Submit(const Ref<Mesh>& mesh, const glm::mat4& transform, const Material& material, u32 entityId, bool castShadows = true,u32 firstIndex=0,u32 indexCount=0,bool receiveShadows=true,int sortingOrder=0);
+    void Submit(const Ref<Mesh>& mesh, const glm::mat4& transform, const Material& material, u32 entityId, bool castShadows = true,u32 firstIndex=0,u32 indexCount=0,bool receiveShadows=true,int sortingOrder=0,bool cullable=true);
     const RenderCamera& Camera()const{return m_Camera;}
     void SubmitUI(const Ref<Mesh>& mesh, const glm::mat4& transform, const Material& material, u32 entityId, bool overlay);
     // Particle quads (world space, colour in the vertex tangent): drawn with the transparent objects, alpha or additive
@@ -144,6 +147,7 @@ private:
         bool uiOverlay = false;
         bool cullable = true;   // false for geometry whose bounds are not known up front (particles)
         u32 firstIndex=0,indexCount=0;int sortingOrder=0;u32 propertyOffset=0,propertyCount=0;
+        glm::vec3 boundsExtents{0};
     };
     void DrawMeshes(RHI::CommandList& cmd, RHI::Buffer* frameBuf, bool transparent);
     RHI::Pipeline* MeshPipeline(ShaderType s, bool doubleSided) const { return m_MeshPipelines[(int)s][doubleSided ? 1 : 0].get(); }
@@ -154,6 +158,9 @@ private:
     RHI::Device& m_Device;
     std::unordered_map<std::string, Ref<RHI::Pipeline>> m_CustomPipelines;
     u32 m_Width = 0, m_Height = 0;
+    u32 m_EarlyCulled=0;
+    std::array<Frustum,kShadowCascades> m_ShadowFrusta{};
+    bool m_HasShadowVolumes=false;
     Frustum m_ViewFrustum;   // of the camera being rendered: mesh draws outside it are skipped
     Ref<RHI::Texture> m_HDR, m_Depth, m_EntityId, m_Output,m_OpaqueColor,m_OpaqueDepth;
     Ref<RHI::Pipeline> m_MeshPipelines[(int)ShaderType::Count][2];
@@ -163,6 +170,8 @@ private:
     u32 m_DisplayWidth = 0, m_DisplayHeight = 0;
     Ref<RHI::Pipeline> m_ParticlePipelines[2]; // alpha, additive
     std::array<Ref<RHI::Buffer>, RHI::kFramesInFlight> m_DrawBuffers;
+    std::array<Ref<RHI::Buffer>, RHI::kFramesInFlight> m_InstanceBuffers;
+    u32 m_InstanceOffset=0;
     std::vector<DrawDataGPU> m_DrawData;
     std::vector<glm::vec4> m_MaterialValues;
     std::array<Ref<RHI::Buffer>, RHI::kFramesInFlight> m_MaterialBuffers;
@@ -185,7 +194,10 @@ private:
     EnvironmentSettings m_Env;
     float m_Time = 0;
     std::vector<DrawItem> m_Draws;
-    std::unordered_map<std::string,u32> m_TextureSamplers;
+    struct SamplerCache {u32 value=0;std::chrono::steady_clock::time_point checked{};};
+    std::unordered_map<std::string,SamplerCache> m_TextureSamplers;
+    std::filesystem::path m_SamplerRoot;
+    u64 m_SamplerPakGeneration=~0ull;
 
     RenderStats m_Stats;
 

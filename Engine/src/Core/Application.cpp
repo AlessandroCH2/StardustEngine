@@ -38,6 +38,7 @@ void Application::InitImGui() {
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_DockingEnable;
     io.ConfigWindowsMoveFromTitleBarOnly = true;
+    io.ConfigInputTrickleEventQueue=true; // retain complete press/release sequences during slow frames
 
     LoadUiFonts(1.f);
     ImGui_ImplGlfw_InitForVulkan(m_Window->Native(), true);

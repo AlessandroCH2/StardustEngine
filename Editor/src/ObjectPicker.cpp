@@ -1,3 +1,4 @@
+#include "Core/Input.h"
 // Object slot ("None (Material)" + target button) and the grid picker with Assets / Scene tabs.
 #include <format>
 #include "AssetUI.h"
@@ -171,7 +172,7 @@ static bool DrawPickerPopup(const ObjectSlotDesc& desc, std::string& picked) {
                 ImGui::RenderTextEllipsis(draw, { textX, textY }, { p.x + cellWidth - 3, textY + ImGui::GetTextLineHeight() }, p.x + cellWidth - 3, p.x + cellWidth - 3, begin, end, nullptr);
                 if (hover) hovered = item.detail.empty() ? item.name : item.detail;
                 if (ImGui::IsItemClicked()) { picked = item.key; result = true; }
-                if (hover && ImGui::IsMouseDoubleClicked(0)) ImGui::CloseCurrentPopup();
+                if (hover && Input::IsMouseDoublePressed(MouseButton::Left)) ImGui::CloseCurrentPopup();
                 ImGui::PopID();
             }
         }
@@ -222,7 +223,7 @@ bool ObjectSlot(const ObjectSlotDesc& desc, std::string& picked, bool* doubleCli
     draw->AddCircleFilled(c, height * 0.1f, targetColor);
 
     if (ImGui::IsItemClicked() && overTarget) ImGui::OpenPopup("##objectPicker");
-    if (doubleClicked) *doubleClicked = hovered && !overTarget && ImGui::IsMouseDoubleClicked(0);
+    if (doubleClicked) *doubleClicked = hovered && !overTarget && Input::IsMouseDoublePressed(MouseButton::Left);
 
     bool changed = false;
     if (desc.allowNone && ImGui::BeginPopupContextItem("##objectMenu")) {

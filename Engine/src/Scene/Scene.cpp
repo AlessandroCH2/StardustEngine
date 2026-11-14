@@ -256,6 +256,7 @@ void Scene::SetParent(EntityID child, EntityID parent, bool keepWorld, int index
     else list.insert(list.begin() + index, child);
 
     if (keepWorld) SetWorldMatrix(child, world);
+    if(m_Running&&m_Physics){std::vector<EntityID> nodes{child};while(!nodes.empty()){auto node=nodes.back();nodes.pop_back();if(IsActiveInHierarchy(node))m_Physics->CreateBody(node);else m_Physics->DestroyBody(node);for(auto c:GetChildren(node))nodes.push_back(c);}}
 }
 
 void Scene::MoveInParent(EntityID e, int newIndex) {
@@ -267,9 +268,18 @@ void Scene::MoveInParent(EntityID e, int newIndex) {
 }
 
 glm::mat4 Scene::GetWorldMatrix(EntityID e) {
-    glm::mat4 local = m_Registry.Get<TransformComponent>(e).Matrix();
-    EntityID p = GetParent(e);
-    return p ? GetWorldMatrix(p) * local : local;
+    if(!m_Registry.Valid(e))return glm::mat4(1);
+    const size_t size=m_Registry.m_Alive.size();
+    if(m_WorldCache.size()<size){m_WorldCache.resize(size);m_TransformCache.resize(size);}
+    auto* relation=m_Registry.Pool<RelationshipComponent>().TryGet(e);EntityID parent=relation?relation->parent:0;
+    if(parent)GetWorldMatrix(parent); // validates direct field edits along the ancestor chain
+    auto& cached=m_TransformCache[e];const auto& t=m_Registry.Pool<TransformComponent>().Get(e);
+    const u64 revision=parent?m_TransformCache[parent].revision:0;
+    if(!cached.revision||cached.parent!=parent||cached.parentRevision!=revision||cached.position!=t.position||cached.rotation!=t.rotation||cached.scale!=t.scale){
+        auto local=t.Matrix();m_WorldCache[e]=parent?m_WorldCache[parent]*local:local;
+        cached.position=t.position;cached.rotation=t.rotation;cached.scale=t.scale;cached.parent=parent;cached.parentRevision=revision;cached.revision=++m_WorldRevision;
+    }
+    return m_WorldCache[e];
 }
 
 void Scene::SetWorldMatrix(EntityID e, const glm::mat4& world) {
@@ -287,17 +297,22 @@ bool Scene::IsActiveInHierarchy(EntityID e) {
 }
 
 void Scene::ComputeWorldMatrices() {
-    // Depth-first from the roots: each world matrix is computed exactly once
-    std::vector<EntityID> all = m_Registry.AllEntities();
-    m_WorldCache.assign(all.empty() ? 0 : all.back() + 1, glm::mat4(1.0f));
-    std::vector<std::pair<EntityID, glm::mat4>> stack;
-    for (EntityID r : GetRoots()) stack.push_back({ r, glm::mat4(1.0f) });
-    while (!stack.empty()) {
-        auto [e, parentWorld] = stack.back();
-        stack.pop_back();
-        glm::mat4 w = parentWorld * m_Registry.Get<TransformComponent>(e).Matrix();
-        m_WorldCache[e] = w;
-        for (EntityID c : GetChildren(e)) stack.push_back({ c, w });
+    // Revisions detect parent changes made while a child was inactive, including direct field edits.
+    auto& transforms=m_Registry.Pool<TransformComponent>();
+    auto& names=m_Registry.Pool<NameComponent>();auto& relationships=m_Registry.Pool<RelationshipComponent>();
+    const size_t size=m_Registry.m_Alive.size();m_WorldCache.resize(size);m_TransformCache.resize(size);m_SubmitActive.assign(size,0);
+    std::vector<EntityID> stack;stack.reserve(size);
+    for(EntityID e:m_RootOrder)if(m_Registry.Valid(e))stack.push_back(e);
+    while(!stack.empty()){
+        EntityID e=stack.back();stack.pop_back();if(!names.Get(e).active)continue;
+        m_SubmitActive[e]=1;const auto& t=transforms.Get(e);auto& cached=m_TransformCache[e];
+        auto* relation=relationships.TryGet(e);EntityID parent=relation?relation->parent:0;
+        const u64 revision=parent?m_TransformCache[parent].revision:0;
+        if(!cached.revision||cached.parent!=parent||cached.parentRevision!=revision||cached.position!=t.position||cached.rotation!=t.rotation||cached.scale!=t.scale){
+            auto local=t.Matrix();m_WorldCache[e]=parent?m_WorldCache[parent]*local:local;
+            cached.position=t.position;cached.rotation=t.rotation;cached.scale=t.scale;cached.parent=parent;cached.parentRevision=revision;cached.revision=++m_WorldRevision;
+        }
+        if(relation)for(EntityID child:relation->children)stack.push_back(child);
     }
 }
 
@@ -427,7 +442,9 @@ bool Scene::GetPrimaryCamera(RenderCamera& out,float aspect){
     for(auto e:m_Registry.AllEntities())if(auto* c=m_Registry.TryGet<CameraComponent>(e);c&&c->primary&&c->targetTexture.empty()&&GetCamera(e,out,aspect))return true;
     return false;
 }
-void Scene::RenderCameraTargets(RHI::Device& device,RHI::CommandList& cmd,float time){
+void Scene::PrepareRenderFrame(){SD_PROFILE("Submit: world matrices");ComputeWorldMatrices();}
+void Scene::RenderCameraTargets(RHI::Device& device,RHI::CommandList& cmd,float time,bool transformsReady){
+    if(!transformsReady)PrepareRenderFrame();
     std::unordered_set<u64> live;std::unordered_set<std::string> livePaths;
     m_Registry.Each<CameraComponent>([&](EntityID e,CameraComponent& c){
         if(c.targetTexture.empty()||!IsActiveInHierarchy(e))return;
@@ -442,7 +459,7 @@ void Scene::RenderCameraTargets(RHI::Device& device,RHI::CommandList& cmd,float 
             width=cached.second.x;height=cached.second.y;}
 
         renderer->Resize(width,height);RenderCamera camera;if(!GetCamera(e,camera,(float)width/height))return;
-        renderer->BeginScene(camera,GatherEnvironment(),time);SubmitToRenderer(*renderer,device);CanvasRenderer::Submit(*this,*renderer,device,{width,height},false,false,false);renderer->Render(cmd);
+        renderer->BeginScene(camera,GatherEnvironment(),time);SubmitToRenderer(*renderer,device,false,true);CanvasRenderer::Submit(*this,*renderer,device,{width,height},false,false,false);renderer->Render(cmd);
         auto old=m_CameraTexturePaths.find(uuid);if(old!=m_CameraTexturePaths.end()&&old->second!=c.targetTexture)AssetManager::SetRuntimeTexture(old->second,nullptr);m_CameraTexturePaths[uuid]=c.targetTexture;
         AssetManager::SetRuntimeTexture(c.targetTexture,renderer->OutputRef());
     });
@@ -518,13 +535,13 @@ int Scene::SelectLOD(EntityID group, const RenderCamera& camera) {
     return -1;
 }
 
-void Scene::SubmitToRenderer(SceneRenderer& renderer, RHI::Device& device,bool animationPreview) {
-    { SD_PROFILE("Submit: world matrices"); ComputeWorldMatrices(); }
+void Scene::SubmitToRenderer(SceneRenderer& renderer, RHI::Device& device,bool animationPreview,bool transformsReady) {
+    if(!transformsReady)PrepareRenderFrame();
     renderer.SyncQuality();
     // LOD Groups: the levels not chosen for this camera are left out, children included
     std::unordered_set<EntityID> lodHidden;
     m_Registry.Each<LODGroupComponent>([&](EntityID e, LODGroupComponent& g) {
-        if (!m_Registry.IsEnabled<LODGroupComponent>(e) || !IsActiveInHierarchy(e) || g.levels.empty()) return;
+        if (!m_Registry.IsEnabled<LODGroupComponent>(e) || !m_SubmitActive[e] || g.levels.empty()) return;
         const int level = SelectLOD(e, renderer.Camera());
         g.currentLevel = level;
         std::function<void(EntityID, bool)> mark = [&](EntityID r, bool hide) { if (hide) lodHidden.insert(r); else lodHidden.erase(r); for (EntityID child : GetChildren(r)) mark(child, hide); };
@@ -533,21 +550,21 @@ void Scene::SubmitToRenderer(SceneRenderer& renderer, RHI::Device& device,bool a
     });
     std::optional<ProfileScope> section; section.emplace("Submit: terrain");
     m_Registry.Each<TerrainComponent>([&](EntityID e, TerrainComponent& t) {
-        if (!IsActiveInHierarchy(e)||!(renderer.Camera().cullingMask&(1u<<std::clamp(m_Registry.Get<NameComponent>(e).layer,0,31)))) return;
+        if (!m_SubmitActive[e]||!(renderer.Camera().cullingMask&(1u<<std::clamp(m_Registry.Get<NameComponent>(e).layer,0,31)))) return;
         u64 uuid = m_Registry.Get<IDComponent>(e).uuid;
         renderer.SetTerrain(AcquireTerrain(*this,e,t,device), glm::vec3(m_WorldCache[e][3]), e);
     });
     section.reset(); section.emplace("Submit: meshes");
     m_Registry.Each<MeshRendererComponent>([&](EntityID e, MeshRendererComponent& mr) {
-        if (lodHidden.count(e)||!IsActiveInHierarchy(e)||!(renderer.Camera().cullingMask&(1u<<std::clamp(m_Registry.Get<NameComponent>(e).layer,0,31)))) return;
+        if (lodHidden.count(e)||!m_SubmitActive[e]||!(renderer.Camera().cullingMask&(1u<<std::clamp(m_Registry.Get<NameComponent>(e).layer,0,31)))) return;
         const Material* mat = &mr.material;
         Ref<Material> loadedMaterial;
         if (!mr.materialPath.empty())
             if ((loadedMaterial = AssetManager::GetMaterial(mr.materialPath))) mat = loadedMaterial.get();
-        Material tintedCopy;
+        std::optional<Material> tintedCopy;
         Ref<RHI::Texture> video;
         if(auto* player=m_Registry.TryGetEnabled<VideoPlayerComponent>(e);player&&player->renderMode==1)video=VideoPlayerSystem::Output(*this,e);
-        auto tinted=[&](const Material& source)->const Material&{if(mr.tint==glm::vec4(1)&&!video)return source;tintedCopy=source;tintedCopy.color*=mr.tint;if(video)tintedCopy.runtimeAlbedo=video;return tintedCopy;};
+        auto tinted=[&](const Material& source)->const Material&{if(mr.tint==glm::vec4(1)&&!video)return source;tintedCopy=source;tintedCopy->color*=mr.tint;if(video)tintedCopy->runtimeAlbedo=video;return *tintedCopy;};
         auto* animator = m_Registry.TryGet<AnimatorComponent>(e);
         std::optional<ProfileScope> skinned; if (m_Registry.Has<FbxRigComponent>(e)) skinned.emplace("Submit: skinned meshes");
         auto mesh = m_Registry.Has<FbxRigComponent>(e)?AssetManager::GetPosedFbx(mr.mesh,m_Registry.Get<IDComponent>(e).uuid^((u64)(uintptr_t)this*0x9E3779B97F4A7C15ull),ModelSkeleton::Pose(*this,e)):animator && (m_Running||animationPreview) ? AssetManager::GetAnimatedFbx(mr.mesh,animator->time,animator->state) : AssetManager::GetMesh(mr.mesh);
@@ -560,7 +577,7 @@ void Scene::SubmitToRenderer(SceneRenderer& renderer, RHI::Device& device,bool a
     std::stable_sort(sprites.begin(),sprites.end(),[&](auto a,auto b){return m_Registry.Get<SpriteRendererComponent>(a).sortingOrder<m_Registry.Get<SpriteRendererComponent>(b).sortingOrder;});
     for(auto e:sprites){
         auto& c=m_Registry.Get<SpriteRendererComponent>(e);
-        if(!IsActiveInHierarchy(e)||!(renderer.Camera().cullingMask&(1u<<std::clamp(m_Registry.Get<NameComponent>(e).layer,0,31))))continue;
+        if(!m_SubmitActive[e]||!(renderer.Camera().cullingMask&(1u<<std::clamp(m_Registry.Get<NameComponent>(e).layer,0,31))))continue;
         auto sprite=SpriteAsset::Load(c.sprite);auto texture=AssetManager::GetTexture(sprite.texture,true);if(!texture)continue;
         float tw=texture->Desc().width,th=texture->Desc().height;auto r=sprite.rect;if(r.z<=0||r.w<=0)r={0,0,tw,th};
         float ppu=std::max(.01f,c.pixelsPerUnit>0?c.pixelsPerUnit:sprite.pixelsPerUnit);glm::vec2 size=glm::vec2(r.z,r.w)/ppu;
@@ -583,7 +600,7 @@ void Scene::SubmitToRenderer(SceneRenderer& renderer, RHI::Device& device,bool a
     static const auto s_BatchClock = std::chrono::steady_clock::now();
     const double batchTime = std::chrono::duration<double>(std::chrono::steady_clock::now() - s_BatchClock).count();
     m_Registry.Each<SpriteBatchComponent>([&](EntityID e, SpriteBatchComponent& c) {
-        if (!m_Registry.TryGetEnabled<SpriteBatchComponent>(e) || !IsActiveInHierarchy(e) || c.quads.empty()) return;
+        if (!m_Registry.TryGetEnabled<SpriteBatchComponent>(e) || !m_SubmitActive[e] || c.quads.empty()) return;
         if (!(renderer.Camera().cullingMask & (1u << std::clamp(m_Registry.Get<NameComponent>(e).layer, 0, 31)))) return;
         if (c.chunkVersions.size() != (c.quads.size() + SpriteBatchComponent::kChunk - 1) / SpriteBatchComponent::kChunk) c.Touch();
         auto& cache = m_SpriteBatchMeshes[m_Registry.Get<IDComponent>(e).uuid];
@@ -676,7 +693,7 @@ void Scene::SubmitToRenderer(SceneRenderer& renderer, RHI::Device& device,bool a
     });
     // Particle Systems: camera-facing quads written into a vertex buffer the CPU maps, one draw per system
     m_Registry.Each<ParticleSystemComponent>([&](EntityID e, ParticleSystemComponent& c) {
-        if (c.particles.empty() || !m_Registry.IsEnabled<ParticleSystemComponent>(e) || !IsActiveInHierarchy(e)) return;
+        if (c.particles.empty() || !m_Registry.IsEnabled<ParticleSystemComponent>(e) || !m_SubmitActive[e]) return;
         if (!(renderer.Camera().cullingMask & (1u << std::clamp(m_Registry.Get<NameComponent>(e).layer, 0, 31)))) return;
         glm::vec3 boundsMin, boundsMax;
         const u32 quads = ParticleSystems::BuildVertices(*this, e, c, renderer.Camera(), m_ParticleScratch, boundsMin, boundsMax);
@@ -711,11 +728,11 @@ void Scene::SubmitToRenderer(SceneRenderer& renderer, RHI::Device& device,bool a
         renderer.SubmitParticles(slot->mesh, material, e, quads * 6, c.blendMode == 1, c.sortingOrder);
     });
     m_Registry.Each<PointLightComponent>([&](EntityID e, PointLightComponent& l) {
-        if (!IsActiveInHierarchy(e)||!(renderer.Camera().cullingMask&(1u<<std::clamp(m_Registry.Get<NameComponent>(e).layer,0,31)))) return;
+        if (!m_SubmitActive[e]||!(renderer.Camera().cullingMask&(1u<<std::clamp(m_Registry.Get<NameComponent>(e).layer,0,31)))) return;
         renderer.SubmitLight({ glm::vec3(m_WorldCache[e][3]), l.range, l.color * l.intensity, 0.0f, glm::vec3(0, -1, 0), 0.0f, 1.0f, {} });
     });
     m_Registry.Each<SpotLightComponent>([&](EntityID e, SpotLightComponent& l) {
-        if (!IsActiveInHierarchy(e)||!(renderer.Camera().cullingMask&(1u<<std::clamp(m_Registry.Get<NameComponent>(e).layer,0,31)))) return;
+        if (!m_SubmitActive[e]||!(renderer.Camera().cullingMask&(1u<<std::clamp(m_Registry.Get<NameComponent>(e).layer,0,31)))) return;
         glm::vec3 dir = glm::normalize(-glm::vec3(m_WorldCache[e][2]));
         float outer = glm::radians(std::max(l.outerAngle, 0.5f)), inner = glm::radians(std::min(l.innerAngle, l.outerAngle));
         renderer.SubmitLight({ glm::vec3(m_WorldCache[e][3]), l.range, l.color * l.intensity, 1.0f, dir, std::cos(outer), std::cos(inner), {} });
@@ -741,7 +758,7 @@ void Scene::PopulateDefault() {
 
     EntityID cam = CreateEntity("Main Camera");
     m_Registry.Add<CameraComponent>(cam);
-    m_Registry.Add<ScriptComponent>(cam, "FlyCamera");
+    m_Registry.Add<ScriptComponent>(cam, "Stardust.Engine.FlyCamera");
     auto& ct = m_Registry.Get<TransformComponent>(cam);
     ct.position = { 0.0f, 2.0f, 8.0f };
     ct.SetEuler({ 4.0f, 0.0f, 0.0f });
@@ -768,7 +785,8 @@ void Scene::PopulateDefault() {
     m_Registry.Get<TransformComponent>(sphere).position = { 0.0f, 4.0f, 0.0f };
     m_Registry.Add<SphereColliderComponent>(sphere).material.restitution = 0.6f;
     m_Registry.Add<RigidbodyComponent>(sphere);
-    m_Registry.Add<ScriptComponent>(sphere, "ColorPulse");
+
+    m_Registry.Add<ScriptComponent>(sphere,"Stardust.Engine.ColorPulse");
     SetParent(sphere, props);
 
     EntityID cyl = CreatePrimitive(PrimitiveType::Cylinder);
@@ -777,7 +795,7 @@ void Scene::PopulateDefault() {
     cyt.scale = { 1.0f, 2.0f, 1.0f };
     m_Registry.Get<MeshRendererComponent>(cyl).material.color = { 0.2f, 0.45f, 0.85f, 1.0f };
     m_Registry.Add<MeshColliderComponent>(cyl);  // convex hull of the cylinder mesh (static)
-    m_Registry.Add<ScriptComponent>(cyl, "Rotator");
+
     m_Registry.Get<MeshRendererComponent>(cyl).material.shader = ShaderType::Toon;
 
     // A stack of crates to knock over
@@ -795,6 +813,7 @@ void Scene::PopulateDefault() {
             m_Registry.Add<RigidbodyComponent>(c).mass = 2.0f;
             SetParent(c, crates);
         }
+    m_Registry.Add<ScriptComponent>(cyl,"Stardust.Engine.Rotator");
     SetParent(cyl, props);
 }
 

@@ -11,5 +11,5 @@ MeshVSOut main(uint vid : SV_VertexID) {
     o.normal = v.normal;
     o.tangent = float4(1, 0, 0, 1);
     o.uv = v.uv;
-    return o;
+    o.drawIndex=g_Push.drawIndex;return o;
 }

@@ -169,7 +169,7 @@ bool Project::Create(const fs::path& folder, const std::string& name) {
     s_Loaded = true;
     WriteScriptProject(s_Dir / (assembly + ".csproj"), assembly);
     WriteEditorScriptProject();
-    FileSystem::WriteText(s_Dir / ".gitignore", "bin/\nobj/\nBuild/\n");
+    FileSystem::WriteText(s_Dir / ".gitignore", "bin/\nobj/\nBuild/\nLibrary/\n");
     FileSystem::WriteText(s_Dir / "Assets/Scripts/PlayerController.cs", R"(using Stardust;
 
 // Starter script: WASD moves the object, Space jumps when it has a Rigidbody.

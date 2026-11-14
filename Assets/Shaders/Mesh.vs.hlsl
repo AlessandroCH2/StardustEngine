@@ -1,8 +1,9 @@
 #include "MeshCommon.hlsli"
 
-MeshVSOut main(uint vid : SV_VertexID) {
+MeshVSOut main(uint vid : SV_VertexID, uint instance : SV_InstanceID) {
     FrameData f = LoadFrame(g_Push.frameBuffer);
-    DrawData d = LoadDraw(g_Push.drawBuffer, g_Push.drawIndex);
+    uint drawIndex=(g_Push.cascade&0x80000000u)?GetBuffer(g_Push.cascade&0x7fffffffu).Load((g_Push.drawIndex+instance)*4):g_Push.drawIndex;
+    DrawData d = LoadDraw(g_Push.drawBuffer,drawIndex);
     Vertex v = LoadVertex(g_Push.vertexBuffer, vid);
     float4 world = mul(d.model, float4(v.position, 1.0));
     // inverse-transpose for correct normals under non-uniform scale
@@ -14,5 +15,6 @@ MeshVSOut main(uint vid : SV_VertexID) {
     o.normal = normalize(mul(cof, v.normal));
     o.tangent = float4(normalize(mul(m, v.tangent.xyz)), v.tangent.w);
     o.uv = v.uv;
+    o.drawIndex=drawIndex;
     return o;
 }

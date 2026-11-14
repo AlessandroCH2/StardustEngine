@@ -7,6 +7,8 @@
 #include <filesystem>
 #include <atomic>
 #include <thread>
+#include <deque>
+#include <functional>
 
 namespace Stardust {
 
@@ -166,6 +168,13 @@ private:
     // projects, build, undo (ProjectWindows.cpp)
     void DrawProjectHub();
     void OpenProject(const std::filesystem::path& file, bool isNew = false);
+    void UpdateProjectLoading();
+    void DrawProjectLoading();
+    bool m_ProjectLoading=false;
+    float m_ProjectLoadProgress=0;
+    std::string m_ProjectLoadName,m_ProjectLoadStatus;
+    std::deque<std::pair<std::string,std::function<void()>>> m_ProjectLoadTasks;
+    std::vector<std::pair<std::string,bool>> m_ProjectLoadTextures;
     void SaveProjectState();
     void DrawBuildSettings();
     void DrawProjectSettings();

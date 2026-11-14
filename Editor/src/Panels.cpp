@@ -1,3 +1,4 @@
+#include "Core/Input.h"
 #include "Assets/AssetMeta.h"
 #include "EditorApp.h"
 #include "Core/Profiler.h"
@@ -293,7 +294,7 @@ void EditorApp::DrawEntityNode(EntityID e) {
     if(prefab)ImGui::PopStyleColor();
 
     if (ImGui::IsItemHovered() && ImGui::IsMouseReleased(0) && !ImGui::IsMouseDragPastThreshold(0) && !ImGui::IsItemToggledOpen()) { SelectHierarchy(e); }
-    if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0)) { m_Selected = e; FocusSelected(); }
+    if (ImGui::IsItemHovered() && Input::IsMouseDoublePressed(MouseButton::Left)) { m_Selected = e; FocusSelected(); }
 
     if (ImGui::BeginDragDropSource()) {
         ImGui::SetDragDropPayload("STARDUST_ENTITY", &e, sizeof(EntityID));
@@ -516,14 +517,14 @@ void EditorApp::DrawInspector() {
     if(m_EntitySelection.size()>1&&ImGui::CollapsingHeader("Multiple Objects",ImGuiTreeNodeFlags_DefaultOpen)){
         ImGui::Text("%zu objects selected",m_EntitySelection.size());
         auto apply=[&](auto operation){for(auto target:m_EntitySelection)if(reg.Valid(target))operation(target);};
-        bool active=reg.Get<NameComponent>(e).active;if(Insp::Checkbox("Active (all)",&active))apply([&](auto t){reg.Get<NameComponent>(t).active=active;});
+        bool active=reg.Get<NameComponent>(e).active;if(Insp::Checkbox("Active (all)",&active))apply([&](auto t){inspectScene.SetActive(t,active);});
         int layer=reg.Get<NameComponent>(e).layer;if(Insp::SliderInt("Layer (all)",&layer,0,31))apply([&](auto t){reg.Get<NameComponent>(t).layer=layer;});
         auto transform=reg.Get<TransformComponent>(e);if(Vec3Control("Position (all)",transform.position))apply([&](auto t){reg.Get<TransformComponent>(t).position=transform.position;});if(Vec3Control("Rotation (all)",transform.eulerHint))apply([&](auto t){reg.Get<TransformComponent>(t).SetEuler(transform.eulerHint);});if(Vec3Control("Scale (all)",transform.scale,1))apply([&](auto t){reg.Get<TransformComponent>(t).scale=transform.scale;});
         static std::string material;if(AssetUI::AssetField("Material (all meshes)",material,{".mat"}))apply([&](auto t){if(auto* mesh=reg.TryGet<MeshRendererComponent>(t)){mesh->materialPath=material;mesh->materials.assign(mesh->materials.size(),material);}});
         bool scriptsEnabled=true;apply([&](auto t){if(auto* scripts=reg.TryGet<ScriptComponent>(t))for(size_t i=0;i<scripts->Count();++i)scriptsEnabled&=scripts->Slot(i).enabled;});if(Insp::Checkbox("Scripts Enabled (all)",&scriptsEnabled))apply([&](auto t){if(auto* scripts=reg.TryGet<ScriptComponent>(t))for(size_t i=0;i<scripts->Count();++i)scripts->Slot(i).enabled=scriptsEnabled;});
     }
     auto& name = reg.Get<NameComponent>(e);
-    Insp::Checkbox("##active", &name.active);
+    {bool active=name.active;if(Insp::Checkbox("##active",&active))inspectScene.SetActive(e,active);}
     ImGui::SameLine();
     ImGui::SetNextItemWidth(-1);
     Insp::InputText("##name", &name.name);
@@ -1142,7 +1143,7 @@ void EditorApp::DrawLightingWindow() {
                     ImGui::PushID((int)e);
                     ImGui::TableNextRow();
                     ImGui::TableNextColumn();
-                    ImGui::Checkbox("##on", &reg.Get<NameComponent>(e).active);
+                    {bool active=reg.Get<NameComponent>(e).active;if(ImGui::Checkbox("##on",&active))ActiveScene().SetActive(e,active);}
                     ImGui::TableNextColumn();
                     ImGui::AlignTextToFramePadding();
                     if (ImGui::Selectable(reg.Get<NameComponent>(e).name.c_str(), e == m_Selected, ImGuiSelectableFlags_SpanAvailWidth)) { m_Selected = e; m_EntitySelection = { e }; m_InspectAsset = false; }
@@ -1766,7 +1767,7 @@ void EditorApp::DrawProject() {
                 else ImGui::Text("%s", fname.c_str());
                 ImGui::EndDragDropSource();
             }
-            if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0)) {
+            if (ImGui::IsItemHovered() && Input::IsMouseDoublePressed(MouseButton::Left)) {
                 if (dir) { m_ProjectCurrentDir = de.path(); projectSearch.clear(); }
                 else if (ext == ".scene") OpenScene(de.path());
                 else if (ext == ".prefab") OpenPrefab(de.path());
@@ -1840,6 +1841,8 @@ void EditorApp::DrawStats() {
     ImGui::Separator();
     auto& s = m_SceneRenderer->Stats();
     ImGui::Text("Scene view: %u draws, %llu tris, %u culled, %ux%u", s.drawCalls, (unsigned long long)s.triangles, s.culledDraws, m_SceneRenderer->Width(), m_SceneRenderer->Height());
+    ImGui::Text("Scene shadows: %u draws, %u rejected per cascade",s.shadowDraws,s.shadowCulled);
+    ImGui::Text("Instancing: %u color objects; %u shadow instances",s.instancedObjects,s.shadowInstances);
     if (m_GameRenderer) { auto& g = m_GameRenderer->Stats(); ImGui::Text("Game view: %u draws, %llu tris, %u culled, %ux%u", g.drawCalls, (unsigned long long)g.triangles, g.culledDraws, m_GameRenderer->Width(), m_GameRenderer->Height()); }
     ImGui::SeparatorText("CPU systems");
     if (ImGui::BeginTable("##cpu", 3, ImGuiTableFlags_RowBg)) {

@@ -439,27 +439,24 @@ void PhysicsWorld::Step(float dt) {
 
     // Compare world matrices, including inherited changes. Collider-only children are static bodies
     // in Jolt, but their parent can still move, rotate, or scale them from gameplay code.
+    auto changed=[](const glm::mat4& a,const glm::mat4& b){
+        for(int c=0;c<4;++c)for(int r=0;r<4;++r)if(std::abs(a[c][r]-b[c][r])>.00001f)return true;
+        return false;
+    };
     std::vector<EntityID> resize;
-    for (auto& [e, previous] : m_Impl->transforms) {
-        if (!reg.Valid(e)) continue;
-        glm::vec3 p, s, skew; glm::vec4 perspective; glm::quat r;
-        glm::decompose(m_Scene.GetWorldMatrix(e), s, r, p, skew, perspective);
-        if (glm::length(glm::abs(s) - m_Impl->scales[e]) > 0.0001f) resize.push_back(e);
+    for(auto& [e,previous]:m_Impl->transforms){
+        if(!reg.Valid(e))continue;
+        glm::mat4 world=m_Scene.GetWorldMatrix(e);
+        const bool moved=changed(world,previous);auto type=m_Impl->types[e];
+        if(!moved&&type!=BodyType::Kinematic)continue;
+        glm::vec3 pos,scale,skew;glm::vec4 perspective;glm::quat rot;
+        glm::decompose(world,scale,rot,pos,skew,perspective);
+        if(moved&&glm::length(glm::abs(scale)-m_Impl->scales[e])>.0001f){resize.push_back(e);continue;}
+        if(type==BodyType::Kinematic)bi.MoveKinematic(m_Impl->bodies[e],RVec3(pos.x,pos.y,pos.z),ToJ(glm::normalize(rot)),dt);
+        else bi.SetPositionAndRotation(m_Impl->bodies[e],RVec3(pos.x,pos.y,pos.z),ToJ(glm::normalize(rot)),EActivation::Activate);
+        previous=world;
     }
-    for (EntityID e : resize) RecreateBody(e);
-    for (auto& [e, id] : m_Impl->bodies) {
-        if (!reg.Valid(e) || !m_Impl->transforms.contains(e)) continue;
-        glm::mat4 world = m_Scene.GetWorldMatrix(e);
-        bool changed = false;
-        for (int c = 0; c < 4; ++c) for (int r = 0; r < 4; ++r)
-            changed |= std::abs(world[c][r] - m_Impl->transforms[e][c][r]) > 0.00001f;
-        if (!changed && m_Impl->types[e] != BodyType::Kinematic) continue;
-        glm::vec3 pos, scale, skew; glm::vec4 persp; glm::quat rot;
-        glm::decompose(world, scale, rot, pos, skew, persp);
-        if (m_Impl->types[e] == BodyType::Kinematic)
-            bi.MoveKinematic(id, RVec3(pos.x, pos.y, pos.z), ToJ(glm::normalize(rot)), dt);
-        else bi.SetPositionAndRotation(id, RVec3(pos.x, pos.y, pos.z), ToJ(glm::normalize(rot)), EActivation::Activate);
-    }
+    for(EntityID e:resize)RecreateBody(e);
 
     // Vehicle inputs from the components (set by scripts)
     for (auto& [e, v] : m_Impl->vehicles) {
@@ -474,28 +471,25 @@ void PhysicsWorld::Step(float dt) {
 
     // Parents must be written before children; unordered body iteration can otherwise apply an
     // ancestor's movement twice to a dynamic child.
-    std::vector<EntityID> ordered;
-    for (auto& [e, id] : m_Impl->bodies) if (reg.Valid(e)) ordered.push_back(e);
-    auto depth = [&](EntityID e) { int d = 0; for (; m_Scene.GetParent(e); e = m_Scene.GetParent(e)) ++d; return d; };
-    std::stable_sort(ordered.begin(), ordered.end(), [&](EntityID a, EntityID b) { return depth(a) < depth(b); });
-    for (EntityID e : ordered) {
-        auto id = m_Impl->bodies[e];
-        if (m_Impl->types[e] != BodyType::Dynamic || !reg.Valid(e)) continue;
-        RVec3 p; Quat q;
-        bi.GetPositionAndRotation(id, p, q);
-        glm::mat4 world = glm::translate(glm::mat4(1.0f), glm::vec3(p.GetX(), p.GetY(), p.GetZ())) * glm::toMat4(ToG(q))
-                        * glm::scale(glm::mat4(1.0f), m_Impl->scales[e]);
-        m_Scene.SetWorldMatrix(e, world);
+    std::vector<std::pair<int,EntityID>> ordered;
+    for(auto& [e,id]:m_Impl->bodies)if(reg.Valid(e)&&m_Impl->types[e]==BodyType::Dynamic){
+        int depth=0;for(EntityID p=m_Scene.GetParent(e);p;p=m_Scene.GetParent(p))++depth;
+        ordered.emplace_back(depth,e);
     }
-    for (EntityID e : ordered) {
-        if (!m_Impl->transforms.contains(e)) continue;
-        auto world = m_Scene.GetWorldMatrix(e);
-        if (m_Impl->types[e] != BodyType::Dynamic) {
-            glm::vec3 p, s, skew; glm::vec4 perspective; glm::quat r;
-            glm::decompose(world, s, r, p, skew, perspective);
-            bi.SetPositionAndRotation(m_Impl->bodies[e], RVec3(p.x, p.y, p.z), ToJ(glm::normalize(r)), EActivation::DontActivate);
+    std::sort(ordered.begin(),ordered.end());
+    for(auto [depth,e]:ordered){
+        auto id=m_Impl->bodies[e];RVec3 p;Quat q;bi.GetPositionAndRotation(id,p,q);
+        glm::mat4 world=glm::translate(glm::mat4(1),glm::vec3(p.GetX(),p.GetY(),p.GetZ()))*glm::toMat4(ToG(q))*glm::scale(glm::mat4(1),m_Impl->scales[e]);
+        if(changed(world,m_Impl->transforms[e]))m_Scene.SetWorldMatrix(e,world);
+    }
+    // Static children of moving bodies still follow their parents; unchanged city geometry needs no Jolt write.
+    for(auto& [e,previous]:m_Impl->transforms){
+        if(!reg.Valid(e))continue;auto world=m_Scene.GetWorldMatrix(e);
+        if(m_Impl->types[e]!=BodyType::Dynamic&&changed(world,previous)){
+            glm::vec3 p,s,skew;glm::vec4 perspective;glm::quat r;glm::decompose(world,s,r,p,skew,perspective);
+            bi.SetPositionAndRotation(m_Impl->bodies[e],RVec3(p.x,p.y,p.z),ToJ(glm::normalize(r)),EActivation::DontActivate);
         }
-        m_Impl->transforms[e] = world;
+        previous=world;
     }
 
     // Vehicles: read back speed and engine state, place the wheel objects (suspension, steering, rolling)
