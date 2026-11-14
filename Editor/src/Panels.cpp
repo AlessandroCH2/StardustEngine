@@ -1839,7 +1839,8 @@ void EditorApp::DrawStats() {
     ImGui::Text("CPU (record): %.2f ms", CpuFrameMs());
     ImGui::Separator();
     auto& s = m_SceneRenderer->Stats();
-    ImGui::Text("Scene view: %u draws, %llu tris, %ux%u", s.drawCalls, (unsigned long long)s.triangles, m_SceneRenderer->Width(), m_SceneRenderer->Height());
+    ImGui::Text("Scene view: %u draws, %llu tris, %u culled, %ux%u", s.drawCalls, (unsigned long long)s.triangles, s.culledDraws, m_SceneRenderer->Width(), m_SceneRenderer->Height());
+    if (m_GameRenderer) { auto& g = m_GameRenderer->Stats(); ImGui::Text("Game view: %u draws, %llu tris, %u culled, %ux%u", g.drawCalls, (unsigned long long)g.triangles, g.culledDraws, m_GameRenderer->Width(), m_GameRenderer->Height()); }
     ImGui::SeparatorText("CPU systems");
     if (ImGui::BeginTable("##cpu", 3, ImGuiTableFlags_RowBg)) {
         ImGui::TableSetupColumn("System"); ImGui::TableSetupColumn("Average"); ImGui::TableSetupColumn("Peak (1 s)");

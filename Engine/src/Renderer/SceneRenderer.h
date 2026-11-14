@@ -90,6 +90,7 @@ struct RenderStats {
     u64 triangles = 0;
     u32 terrainPatches = 0;
     u32 visibleTrees = 0;
+    u32 culledDraws = 0;   // mesh draws skipped because they are outside the camera's view
 };
 
 // Renders a scene view (editor scene view, game view, or the player) into its own set of targets.
@@ -141,6 +142,7 @@ private:
         float boundsRadius;
         Ref<RHI::Pipeline> customPipeline;
         bool uiOverlay = false;
+        bool cullable = true;   // false for geometry whose bounds are not known up front (particles)
         u32 firstIndex=0,indexCount=0;int sortingOrder=0;u32 propertyOffset=0,propertyCount=0;
     };
     void DrawMeshes(RHI::CommandList& cmd, RHI::Buffer* frameBuf, bool transparent);
@@ -152,6 +154,7 @@ private:
     RHI::Device& m_Device;
     std::unordered_map<std::string, Ref<RHI::Pipeline>> m_CustomPipelines;
     u32 m_Width = 0, m_Height = 0;
+    Frustum m_ViewFrustum;   // of the camera being rendered: mesh draws outside it are skipped
     Ref<RHI::Texture> m_HDR, m_Depth, m_EntityId, m_Output,m_OpaqueColor,m_OpaqueDepth;
     Ref<RHI::Pipeline> m_MeshPipelines[(int)ShaderType::Count][2];
     Ref<RHI::Pipeline> m_SkyPipeline, m_ShadowPipeline, m_GridPipeline,m_Grid2DPipeline;

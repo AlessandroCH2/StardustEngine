@@ -299,6 +299,7 @@ void SceneRenderer::SubmitParticles(const Ref<Mesh>& mesh, const Material& mater
     size_t previous = m_Draws.size();
     Submit(mesh, glm::mat4(1), m, entityId, false, 0, indexCount, false, sortingOrder);
     if (m_Draws.size() == previous) return;
+    m_Draws.back().cullable = false;
     if (!custom) {
         m_Draws.back().customPipeline = m_ParticlePipelines[additive ? 1 : 0];
         m_DrawData.back().params.z = additive ? 1.0f : 0.0f;
@@ -308,8 +309,13 @@ void SceneRenderer::SubmitParticles(const Ref<Mesh>& mesh, const Material& mater
 // Draw items and their GPU data share the same index
 void SceneRenderer::DrawMeshes(CommandList& cmd, Buffer* frameBuf, bool transparent) {
     std::vector<u32> order;
-    for (u32 i = 0; i < (u32)m_Draws.size(); ++i)
-        if (!m_Draws[i].uiOverlay && ((m_Draws[i].shader == ShaderType::Transparent || m_Draws[i].shader == ShaderType::UI || m_Draws[i].shader==ShaderType::Water) == transparent)) order.push_back(i);
+    for (u32 i = 0; i < (u32)m_Draws.size(); ++i) {
+        const DrawItem& d = m_Draws[i];
+        if (d.uiOverlay || ((d.shader == ShaderType::Transparent || d.shader == ShaderType::UI || d.shader == ShaderType::Water) != transparent)) continue;
+        // Frustum culling: the bounding sphere (with a margin for skinning and water waves) against the view's side planes
+        if (d.cullable && !m_ViewFrustum.Sphere(d.boundsCenter, d.boundsRadius * 1.1f + 1.0f)) { m_Stats.culledDraws++; continue; }
+        order.push_back(i);
+    }
     if (transparent) {
         for (u32 i : order) m_Draws[i].sortDepth = glm::length(m_Draws[i].boundsCenter - m_Camera.position);
         std::stable_sort(order.begin(), order.end(), [&](u32 a, u32 b) { bool au=m_Draws[a].shader==ShaderType::UI,bu=m_Draws[b].shader==ShaderType::UI;
@@ -391,6 +397,7 @@ void SceneRenderer::Render(CommandList& cmd) {
     reinterpret_cast<FrameConstants*>(frameBuf->Mapped())->lightInfo = { m_LightBuffers[fi]->Index(), (u32)m_Lights.size(), m_OpaqueColor->SRV(), m_OpaqueDepth->SRV() };
 
     Frustum frustum = Frustum::FromViewProj(fc.viewProj);
+    m_ViewFrustum = frustum;
     for(auto* batch:m_ActiveTerrains){batch->terrain->Prepare(*batch->data,batch->origin,batch->entity,m_Camera.position,frustum,m_Env.shadowDistance);batch->trees->Prepare(*batch->data,batch->origin,batch->entity,m_Camera.position,frustum,fc,shadows);m_Stats.terrainPatches+=batch->terrain->PatchCount();m_Stats.visibleTrees+=batch->trees->VisibleTrees();m_Stats.triangles+=batch->terrain->Triangles()+batch->trees->Triangles();}
     for(auto* batch:m_ActiveTerrains)batch->data->FlushGpu(cmd,fi);
     m_Sky->Update(cmd,frameBuf,clouds);
