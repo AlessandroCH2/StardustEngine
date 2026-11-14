@@ -45,7 +45,9 @@ std::string ReadText(const fs::path& path) {
 
 bool WriteText(const fs::path& path, const std::string& text) {
     if (path.has_parent_path()) fs::create_directories(path.parent_path());
-    std::ofstream f(path);
+    // Binary: the text is written exactly as given. Text mode would turn every LF into CRLF on Windows
+    // (and CRLF into CR CR LF, which shows as an extra empty line).
+    std::ofstream f(path, std::ios::binary);
     if (!f) return false;
     f << text;
     return true;
