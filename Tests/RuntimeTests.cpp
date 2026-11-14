@@ -55,6 +55,10 @@ struct TestWorkspace {
         std::filesystem::create_directories(s_TestRoot);
     }
     ~TestWorkspace() {
+        for(auto& file:Project::RecentProjects()){
+            auto relative=file.lexically_relative(s_TestRoot);
+            if(!relative.empty()&&*relative.begin()!="..")Project::RemoveRecent(file);
+        }
         std::error_code ec;
         auto parent=std::filesystem::absolute(FileSystem::EngineRoot()/"build/TestWork").lexically_normal();
         if(s_TestRoot.parent_path()==parent&&s_TestRoot.filename().string().starts_with("RuntimeTests-"))
@@ -120,6 +124,15 @@ static void TestHierarchyColliders() {
     Check(!physics.Raycast({2,3,0},{0,-1,0},10,hit),"child collider stayed at old position");
     transform.scale={2,2,2}; physics.Step(1.0f/60);
     Check(physics.Raycast({10,3,-5.5f},{0,-1,0},10,hit) && hit.entity==child,"child collider did not inherit scale");
+    // A static collider attached to a dynamic body follows its post-simulation position too.
+    Scene moving;auto body=moving.CreateEntity("Moving parent");moving.Reg().Add<BoxColliderComponent>(body);moving.Reg().Add<RigidbodyComponent>(body).useGravity=false;
+    auto attachment=moving.CreateEntity("Attachment");moving.SetParent(attachment,body,false);moving.Reg().Get<TransformComponent>(attachment).position={2,2,0};moving.Reg().Add<BoxColliderComponent>(attachment).size={.5f,.5f,.5f};
+    PhysicsWorld dynamic(moving);dynamic.SetVelocity(body,{2,0,0});
+    for(int n=0;n<10;++n)dynamic.Step(1.f/60);
+    auto attachedPosition=glm::vec3(moving.GetWorldMatrix(attachment)[3]);
+    Check(attachedPosition.x>2.1f,"dynamic parent did not move during collider test");
+    Check(dynamic.Raycast(attachedPosition+glm::vec3(0,2,0),{0,-1,0},3,hit)&&hit.entity==attachment,"static child collider missed dynamic parent's movement");
+
 }
 
 static void TestSerialization() {
@@ -215,6 +228,7 @@ public class TestWindow : EditorWindow {public int Count;public override void On
     ScriptEngine::SetEditorMode(true);
     Check(ScriptEngine::Init(),"managed ABI/hosting failed");
     auto assembly=Project::ScriptAssembly();auto compiled=std::filesystem::last_write_time(assembly);std::filesystem::last_write_time(assembly,compiled-std::chrono::hours(24));Check(ScriptEngine::NeedsBuild(),"outdated ScriptCore consumer was not scheduled for rebuild");std::filesystem::last_write_time(assembly,compiled);
+    Check(ScriptEngine::FindClass("Stardust.Engine.FlyCamera")&&ScriptEngine::FindClass("Stardust.Engine.Rotator")&&ScriptEngine::FindClass("Stardust.Engine.ColorPulse"),"default package scripts did not compile");
     Check(!ScriptEngine::FindClass("EditorBehaviour"),"Editor Only class leaked into runtime behaviours");
     Check(ScriptEngine::EditorCommands().size()==2,"Editor Only menu discovery failed");
     ScriptEngine::RunEditorCommand("Tests/Editor command");
@@ -582,9 +596,62 @@ static void TestTerrainSceneTransitions() {
     current.OnRuntimeStop();SceneManager::CancelLoads();TerrainData::ClearCache();AssetManager::Shutdown();
 }
 
+// The terrain of a new scene (default settings: 2 km, 1024 samples) must stop falling bodies
+static void TestDefaultTerrainCollider() {
+    Tests::MemoryDevice device;
+    auto root=TestRoot()/"DefaultTerrainTests";
+    std::filesystem::create_directories(root);
+    AssetManager::Init(device,root);MeshLibrary::Init(device);
+    Scene scene;scene.PopulateDefault();
+    { std::vector<EntityID> scripted; scene.Reg().Each<ScriptComponent>([&](EntityID e, ScriptComponent&) { scripted.push_back(e); }); for (auto e : scripted) scene.Reg().Remove<ScriptComponent>(e); } // no C# runtime in this test
+    auto terrain=scene.FindByName("Terrain");
+    Check(terrain!=kNullEntity,"default scene has no terrain");
+    scene.PrepareTerrains(device);
+    scene.OnRuntimeStart();
+    Check(scene.Physics()->HasBody(terrain),"default terrain has no collider");
+    RaycastHit hit;
+    Check(scene.Physics()->Raycast({20,500,20},{0,-1,0},1000,hit)&&hit.entity==terrain,"raycast misses the default terrain");
+    const float ground=hit.point.y;
+    auto ball=scene.CreatePrimitive(PrimitiveType::Sphere,"Falling sphere");
+    scene.Reg().Get<TransformComponent>(ball).position={20,ground+6,20};
+    scene.Reg().Add<RigidbodyComponent>(ball);
+    scene.Reg().Add<SphereColliderComponent>(ball);
+    scene.Physics()->CreateBody(ball);
+    for(int i=0;i<240;++i)scene.OnUpdate(1.f/60);
+    const float y=scene.GetWorldMatrix(ball)[3].y;
+    Check(y>ground+0.3f&&y<ground+0.8f,"rigidbody fell through the default terrain");
+    scene.OnRuntimeStop();TerrainData::ClearCache();MeshLibrary::Shutdown();AssetManager::Shutdown();
+}
+
 static void TestComponentEnableAndMouse(){
     Input::ResetMouseTracking();Input::SampleMousePosition({100,100});Check(Input::MouseDelta()==glm::vec2(0),"first mouse sample jumped");Input::SampleMousePosition({104,98});Check(Input::MouseDelta()==glm::vec2(4,-2),"mouse movement lost");Input::ResetMouseTracking();Input::SampleMousePosition({-10000,3000});Check(Input::MouseDelta()==glm::vec2(0),"cursor mode warp leaked into look delta");Input::SampleMousePosition({-9997,3001});Check(Input::MouseDelta()==glm::vec2(3,1),"locked mouse delta rebounded");
     Tests::MemoryDevice device;AssetManager::Init(device,TestRoot());MeshLibrary::Init(device);Scene scene;auto object=scene.CreatePrimitive(PrimitiveType::Cube,"Disabled Renderer");scene.Reg().Add<BoxColliderComponent>(object);auto camera=scene.CreateEntity("Camera");scene.Reg().Add<CameraComponent>(camera);RenderCamera view;scene.GetCamera(camera,view,1);SceneRenderer renderer(device);scene.Reg().SetEnabled<MeshRendererComponent>(object,false);renderer.BeginScene(view,{},0);scene.SubmitToRenderer(renderer,device);Check(renderer.SubmittedDrawCount()==0,"disabled mesh renderer still rendered");scene.Reg().SetEnabled<CameraComponent>(camera,false);Check(!scene.GetPrimaryCamera(view,1),"disabled camera remained primary");Registry copied=scene.Reg();Check(!copied.IsEnabled<MeshRendererComponent>(object),"registry copy lost disabled state");auto duplicate=scene.DuplicateEntity(object);Check(!scene.Reg().IsEnabled<MeshRendererComponent>(duplicate),"duplicate lost disabled component state");auto saved=SceneSerializer::FromJson(SceneSerializer::ToJson(scene));auto loaded=saved->FindByName("Disabled Renderer");Check(!saved->Reg().IsEnabled<MeshRendererComponent>(loaded),"component enabled state lost in scene serialization");scene.Reg().SetEnabled<MeshRendererComponent>(object,true);renderer.BeginScene(view,{},0);scene.SubmitToRenderer(renderer,device);Check(renderer.SubmittedDrawCount()==1,"renderer did not re-enable");scene.Reg().SetEnabled<BoxColliderComponent>(object,false);scene.OnRuntimeStart();Check(!scene.Physics()->HasBody(object),"disabled collider created physics body");scene.Reg().SetEnabled<BoxColliderComponent>(object,true);scene.RefreshComponentState(object,3);Check(scene.Physics()->HasBody(object),"collider did not re-enable");scene.Reg().SetEnabled<BoxColliderComponent>(object,false);scene.RefreshComponentState(object,3);Check(!scene.Physics()->HasBody(object),"disabled collider retained physics body");scene.OnRuntimeStop();MeshLibrary::Shutdown();AssetManager::Shutdown();
+}
+
+static void TestProjectCacheAndCulling(){
+ auto root=TestRoot()/"ProjectPerformance";Check(Project::Create(root,"Starter"),"new project failed");Check(PackageManager::EnsureDefault(),"starter package missing");Scene starter;starter.PopulateDefault();starter.Reg().Each<ScriptComponent>([&](EntityID,ScriptComponent& scripts){for(size_t i=0;i<scripts.Count();++i){auto name=scripts.Slot(i).className;Check(name.starts_with("Stardust.Engine."),"default scene refers to an unbundled script");Check(std::filesystem::exists(root/"Packages/com.stardust.core/Scripts"/(name.substr(name.find_last_of('.')+1)+".cs")),"starter script file missing");}});
+ Tests::MemoryDevice device;AssetManager::Init(device,root/"Assets");MeshLibrary::Init(device);auto obj=root/"Assets/Test.obj";FileSystem::WriteText(obj,"v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n");auto mesh=AssetManager::GetMesh("Test.obj");Check(mesh&&mesh->IndexCount()==3,"OBJ fixture import failed");auto hits=AssetManager::MeshCacheHits();AssetManager::Invalidate("Test.obj");mesh=AssetManager::GetMesh("Test.obj");Check(mesh&&AssetManager::MeshCacheHits()==hits+1,"OBJ binary cache was not reused");FileSystem::WriteText(obj,"v 0 0 0\nv 20 0 0\nv 0 1 0\nf 1 2 3\n");AssetManager::Invalidate("Test.obj");mesh=AssetManager::GetMesh("Test.obj");Check(mesh&&mesh->Bounds().max.x==20&&AssetManager::MeshCacheHits()==hits+1,"OBJ cache ignored source changes");
+ auto projection=PerspectiveReverseZ(glm::radians(60.f),1,.1f,100);auto frustum=Frustum::FromViewProj(projection);Check(frustum.Sphere({0,0,-5},.5f)&&!frustum.Sphere({0,0,5},.5f)&&!frustum.Sphere({0,0,-120},1),"reverse-Z near/far frustum planes failed");Check(Frustum::FromViewProj(PerspectiveReverseZ(glm::radians(60.f),1,.1f)).Sphere({0,0,-1000000},1),"infinite far plane rejected visible geometry");SceneRenderer renderer(device);RenderCamera camera;camera.projection=projection;renderer.BeginScene(camera,{},0);Material material;renderer.Submit(MeshLibrary::Get(PrimitiveType::Cube),glm::translate(glm::mat4(1),{0,0,5}),material,1,false);Check(renderer.SubmittedDrawCount()==0,"offscreen non-shadow mesh reached material submission");renderer.Submit(MeshLibrary::Get(PrimitiveType::Cube),glm::translate(glm::mat4(1),{0,0,5}),material,1,true);Check(renderer.SubmittedDrawCount()==1,"offscreen shadow caster was incorrectly removed");
+ // Long thin objects outside the top plane must not survive because of a huge spherical radius.
+ renderer.BeginScene(camera,{},0);auto road=glm::translate(glm::mat4(1),glm::vec3(0,10,-5))*glm::scale(glm::mat4(1),glm::vec3(100,.1f,.1f));
+ renderer.Submit(MeshLibrary::Get(PrimitiveType::Cube),road,material,2,false);
+ Check(renderer.SubmittedDrawCount()==0,"long offscreen mesh survived box culling");
+ renderer.Submit(MeshLibrary::Get(PrimitiveType::Cube),glm::translate(glm::mat4(1),glm::vec3(10000,0,-5)),material,3,true);
+ Check(renderer.SubmittedDrawCount()==0,"distant offscreen shadow caster survived all light volumes");
+ road=glm::translate(glm::mat4(1),glm::vec3(0,0,-5))*glm::rotate(glm::mat4(1),.7f,glm::vec3(0,0,1))*glm::scale(glm::mat4(1),glm::vec3(-10,.1f,1));
+ renderer.Submit(MeshLibrary::Get(PrimitiveType::Cube),road,material,4,false);
+ Check(renderer.SubmittedDrawCount()==1,"visible rotated negative-scale mesh was culled");
+ Scene scene;auto parent=scene.CreateEntity("Parent");auto child=scene.CreatePrimitive(PrimitiveType::Cube,"Child");scene.Reg().Add<BoxColliderComponent>(child);scene.SetParent(child,parent,false);scene.OnRuntimeStart();Check(scene.Physics()->HasBody(child),"active child body missing");scene.SetActive(parent,false);Check(!scene.Physics()->HasBody(child),"inactive parent retained child collider");scene.SetActive(parent,true);Check(scene.Physics()->HasBody(child),"reactivated parent lost child collider");auto inactive=scene.CreateEntity("Inactive");scene.SetActive(inactive,false);scene.SetParent(child,inactive,true);Check(!scene.Physics()->HasBody(child),"reparenting under inactive entity retained collider");scene.SetParent(child,parent,true);Check(scene.Physics()->HasBody(child),"reparenting into active hierarchy failed to recreate collider");scene.OnRuntimeStop();
+ {
+ Scene cached;auto root=cached.CreateEntity("Root");auto item=cached.CreatePrimitive(PrimitiveType::Cube,"Cached");cached.SetParent(item,root,false);cached.Reg().Get<TransformComponent>(item).position={0,0,-5};EnvironmentSettings env;env.castShadows=false;
+ auto submit=[&]{renderer.BeginScene(camera,env,0);cached.PrepareRenderFrame();cached.SubmitToRenderer(renderer,device,false,true);return renderer.SubmittedDrawCount();};
+ Check(submit()==1&&submit()==1,"unchanged transform cache lost mesh");
+ cached.SetActive(item,false);Check(submit()==0,"inactive cached item submitted");cached.Reg().Get<TransformComponent>(root).position={1000,0,0};Check(submit()==0,"inactive child submitted while parent moved");cached.SetActive(item,true);Check(submit()==0,"reactivated child used stale parent world transform");
+ cached.Reg().Get<TransformComponent>(root).position={0,0,0};Check(submit()==1,"direct parent transform edit was not detected");
+ auto other=cached.CreateEntity("Other");cached.Reg().Get<TransformComponent>(other).position={1000,0,0};cached.SetParent(item,other,false);Check(submit()==0,"reparent used cached transform from old parent");cached.SetParent(item,root,false);Check(submit()==1,"reparent back failed");
+ cached.DestroyEntity(item);item=cached.CreatePrimitive(PrimitiveType::Cube,"Recycled");cached.Reg().Get<TransformComponent>(item).position={0,0,-5};Check(submit()==1,"recycled entity inherited stale cached transform");
+ }
+ Input::RecordMousePress(0,1000,{0,0});Input::BeginFrame();Check(!Input::IsMouseDoublePressed(MouseButton::Left),"single click became double");Input::RecordMousePress(0,1100,{0,0});Input::BeginFrame();Check(Input::IsMouseDoublePressed(MouseButton::Left),"batched physical double click lost");Input::BeginFrame();Check(!Input::IsMouseDoublePressed(MouseButton::Left),"double click repeated on later frame");Input::RecordMousePress(0,2000,{0,0});Input::RecordMousePress(0,3000,{0,0});Input::BeginFrame();Check(!Input::IsMouseDoublePressed(MouseButton::Left),"slow clicks in same frame became a double click");MeshLibrary::Shutdown();AssetManager::Shutdown();
 }
 
 static void TestRenderingSystems(){
@@ -604,6 +671,10 @@ static void TestRenderingSystems(){
     Pak::UnmountAll();MeshLibrary::Shutdown();AssetManager::Shutdown();
 }
 
+static void BenchmarkProject(const std::filesystem::path& file){
+ Check(Project::Load(file),"benchmark project missing");Tests::MemoryDevice device;AssetManager::Init(device,Project::AssetsDir());MeshLibrary::Init(device);auto scene=SceneSerializer::Load(Project::AssetsDir()/"Scenes/Portvale.scene");Check(bool(scene),"benchmark scene missing");scene->Reg().Each<TerrainComponent>([&](EntityID e,TerrainComponent&){scene->Reg().SetEnabled<TerrainComponent>(e,false);});SceneRenderer renderer(device);RenderCamera camera;camera.position={0,90,180};camera.view=glm::lookAt(camera.position,glm::vec3(0),glm::vec3(0,1,0));camera.projection=PerspectiveReverseZ(glm::radians(60.f),16.f/9,.1f,2000);auto pass=[&](){renderer.BeginScene(camera,scene->GatherEnvironment(),0);scene->SubmitToRenderer(renderer,device);};auto now=[](){return std::chrono::steady_clock::now();};auto start=now();pass();auto cold=std::chrono::duration<double,std::milli>(now()-start).count();AssetManager::WaitForTextures();start=now();for(int i=0;i<20;++i)pass();auto active=std::chrono::duration<double,std::milli>(now()-start).count()/20;auto draws=renderer.SubmittedDrawCount();auto city=scene->FindByName("City");Check(city!=0,"City root missing");scene->SetActive(city,false);start=now();for(int i=0;i<20;++i)pass();auto hidden=std::chrono::duration<double,std::milli>(now()-start).count()/20;std::cout<<"BENCHMARK cold submit "<<cold<<" ms; active city "<<active<<" ms ("<<draws<<" submitted); inactive city "<<hidden<<" ms ("<<renderer.SubmittedDrawCount()<<" submitted); OBJ cache hits "<<AssetManager::MeshCacheHits()<<"\n";scene.reset();MeshLibrary::Shutdown();AssetManager::Shutdown();
+}
+
 int main() {
     // The fixtures live in the source tree: the first parent folder of the executable that has Tests/Fixtures
     for (auto dir = Stardust::FileSystem::ExecutableDir(); !dir.empty(); dir = dir.parent_path()) {
@@ -612,11 +683,15 @@ int main() {
     }
     try {
         TestWorkspace workspace;
+        if(std::getenv("STARDUST_TEST_CULLING")){PhysicsWorld::InitJolt();TestProjectCacheAndCulling();TestForces();TestHierarchyColliders();PhysicsWorld::ShutdownJolt();std::cout<<"Culling, starter cache and hierarchy tests passed\n";return 0;}
+        if(auto project=std::getenv("STARDUST_BENCH_PROJECT")){BenchmarkProject(std::filesystem::u8path(project));return 0;}
+        TestDefaultTerrainCollider();
         TestScenes();
         TestForces();
         TestHierarchyColliders();
         TestSerialization();
         TestPaks();
+        TestProjectCacheAndCulling();
         TestManagedScripts();
         TestFbx();
         TestAnimator();

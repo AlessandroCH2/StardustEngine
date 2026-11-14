@@ -9,6 +9,11 @@
 #include "Physics/PhysicsWorld.h"
 #include "UI/CanvasRenderer.h"
 #include <iostream>
+#include "Core/Profiler.h"
+#include "Core/Input.h"
+#include "Audio/AudioEngine.h"
+#include <numeric>
+#include <chrono>
 #include <imgui.h>
 #include <nlohmann/json.hpp>
 #include "EditorIcons.h"
@@ -18,6 +23,36 @@ namespace Stardust {void ApplyEditorTheme();}
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include <stb_image_write.h>
 using namespace Stardust;
+static int BenchmarkCity(const std::filesystem::path& project){
+    if(!Project::Load(project))throw std::runtime_error("Benchmark project missing");
+    ImGui::CreateContext();PackageManager::EnsureDefault();
+    WindowDesc wd;wd.width=1280;wd.height=720;wd.visible=false;Window window(wd);
+    RHI::DeviceDesc options;options.validation=false;options.vsync=false;auto device=RHI::Device::Create(options,window);
+    AssetManager::Init(*device,Project::AssetsDir());MeshLibrary::Init(*device);PhysicsWorld::InitJolt();
+    if(!ScriptEngine::Init())throw std::runtime_error("Benchmark scripts unavailable");
+    auto scene=SceneSerializer::Load(Project::AssetsDir()/"Scenes/Portvale.scene");if(!scene)throw std::runtime_error("Benchmark scene missing");
+    scene->PrepareTerrains(*device);auto renderer=MakeScope<SceneRenderer>(*device);renderer->Resize(1280,720);
+    bool runtime=std::getenv("STARDUST_GPU_BENCH_RUNTIME")!=nullptr;
+    if(runtime)scene->OnRuntimeStart();
+    std::vector<double> frameTimes,updateTimes,submitTimes;
+    for(int frame=0;frame<360;++frame){
+        window.PollEvents();auto start=std::chrono::steady_clock::now();if(!device->BeginFrame()){--frame;continue;}
+        auto update=std::chrono::steady_clock::now();if(runtime)scene->OnUpdate(1.f/60);
+        auto render=std::chrono::steady_clock::now();auto& cmd=device->Cmd();
+        scene->PrepareRenderFrame();scene->RenderCameraTargets(*device,cmd,frame/60.f,true);
+        RenderCamera camera;if(!scene->GetPrimaryCamera(camera,1280.f/720)){camera.position={0,90,180};camera.view=glm::lookAt(camera.position,glm::vec3(0),glm::vec3(0,1,0));camera.projection=PerspectiveReverseZ(glm::radians(60.f),1280.f/720,.1f,2000);}
+        renderer->BeginScene(camera,scene->GatherEnvironment(),frame/60.f);scene->SubmitToRenderer(*renderer,*device,false,true);CanvasRenderer::Submit(*scene,*renderer,*device,{1280,720},false);renderer->Render(cmd);
+        device->EndFrame();auto end=std::chrono::steady_clock::now();
+        if(frame>=180){frameTimes.push_back(std::chrono::duration<double,std::milli>(end-start).count());updateTimes.push_back(std::chrono::duration<double,std::milli>(render-update).count());submitTimes.push_back(std::chrono::duration<double,std::milli>(end-render).count());}
+        Profiler::EndFrame();
+    }
+    device->WaitIdle();auto mean=[](auto& v){return std::accumulate(v.begin(),v.end(),0.)/v.size();};auto sorted=frameTimes;std::sort(sorted.begin(),sorted.end());
+    int cars=0,pedestrians=0;scene->Reg().Each<NameComponent>([&](EntityID,NameComponent& n){if(n.tag=="Vehicle")++cars;if(n.tag=="Pedestrian")++pedestrians;});auto stats=renderer->Stats();
+    std::cout<<"CITY GPU BENCH "<<(runtime?"runtime":"edit")<<" 1280x720 no editor UI: "<<mean(frameTimes)<<" ms / "<<1000/mean(frameTimes)<<" fps; p95 "<<sorted[(size_t)(sorted.size()*.95)]<<" ms; update "<<mean(updateTimes)<<" ms; render CPU "<<mean(submitTimes)<<" ms; draws "<<stats.drawCalls<<"; shadow draws "<<stats.shadowDraws<<"; instanced color "<<stats.instancedObjects<<"; shadow instances "<<stats.shadowInstances<<"; cars "<<cars<<"; pedestrians "<<pedestrians<<"\n";
+    for(auto& section:Profiler::Sections())std::cout<<"CPU "<<section.name<<": "<<section.average<<" ms\n";
+    if(runtime)scene->OnRuntimeStop();CanvasRenderer::Clear();scene.reset();renderer.reset();ScriptEngine::Shutdown();MeshLibrary::Shutdown();AssetManager::Shutdown();PhysicsWorld::ShutdownJolt();device.reset();ImGui::DestroyContext();return 0;
+}
+
 int main(){
     // The fixtures live in the source tree: the first parent folder of the executable that has Tests/Fixtures
     for (auto dir = Stardust::FileSystem::ExecutableDir(); !dir.empty(); dir = dir.parent_path()) {
@@ -25,6 +60,7 @@ int main(){
         if (dir == dir.parent_path()) break;
     }
  try{
+    if(auto project=std::getenv("STARDUST_GPU_BENCH_PROJECT"))return BenchmarkCity(std::filesystem::u8path(project));
     ImGui::CreateContext();ImGui::GetIO().DeltaTime=1.f/30;
     auto root=FileSystem::EngineRoot()/"Examples/FeatureLab";
     if(!Project::Load(root/"FeatureLab.sdproject"))throw std::runtime_error("Feature Lab missing");
@@ -61,6 +97,56 @@ int main(){
         auto bottom=probe.CreatePrimitive(PrimitiveType::Plane,"Bottom");probe.Reg().Get<TransformComponent>(bottom).position={0,-1.5f,0};probe.Reg().Get<TransformComponent>(bottom).scale={3,1,3};probe.Reg().Get<MeshRendererComponent>(bottom).material.color={.65f,.5f,.25f,1};
         auto stillA=render(probe,0),stillB=render(probe,17);if(stillA!=stillB)throw std::runtime_error("Water speed zero did not freeze the surface");probe.Reg().Get<MeshRendererComponent>(ocean).material.propertiesJson=R"({"WaveSpeed":1,"WaveHeight":0.5,"WindDirection":[1,0]})";auto moving=render(probe,4);if(moving==stillB)throw std::runtime_error("Water speed did not reach shader");probe.Reg().Get<MeshRendererComponent>(ocean).material.propertiesJson=R"({"WaveSpeed":1,"WaveHeight":0.5,"WindDirection":[0,1]})";auto changedWind=render(probe,4);if(changedWind==moving)throw std::runtime_error("Water direction did not reach shader");save("WaterMotion.png",moving);save("WaterDirection.png",changedWind);
         Scene materialScene;auto object=materialScene.CreatePrimitive(PrimitiveType::Cube,"Custom properties probe");materialScene.Reg().Get<TransformComponent>(object).scale={5,5,5};auto& material=materialScene.Reg().Get<MeshRendererComponent>(object).material;material.customPixelShader=(FileSystem::EngineRoot()/"build/TestShaders/CustomProperties.ps.spv").generic_string();FileSystem::WriteText(std::filesystem::path(material.customPixelShader+".properties.json"),R"({"properties":[{"name":"Tint","type":"color","default":[1,0,0,1]},{"name":"Brightness","type":"float","default":1}]})");material.propertiesJson=R"({"Tint":[0,1,0,1],"Brightness":1})";auto green=render(materialScene,0);material.propertiesJson=R"({"Tint":[1,0,1,1],"Brightness":1})";auto magenta=render(materialScene,0);int greenPixels=0,magentaPixels=0;for(size_t i=0;i<green.size();i+=4){if(green[i]<100&&green[i+1]>150&&green[i+2]<100)greenPixels++;if(magenta[i]>150&&magenta[i+1]<100&&magenta[i+2]>150)magentaPixels++;}if(greenPixels<500||magentaPixels<500)throw std::runtime_error("Custom shader property GPU colors incorrect");save("CustomShaderProperties.png",magenta);std::cout<<"Water freeze/speed/direction and custom shader GPU properties passed.\n";
+    }
+
+    {
+        SceneRenderer view(*device);view.Resize(320,240);
+        auto ids=device->CreateBuffer({320*240*4,RHI::BufferUsage::CopyDst,RHI::MemoryUsage::GPUToCPU,"Instance ids"});
+        EnvironmentSettings environment;environment.cloudCoverage=0;environment.castShadows=false;
+        RenderCamera camera;camera.solidColor=true;camera.postProcessing=false;camera.shadows=false;
+        camera.projection=PerspectiveReverseZ(glm::radians(60.f),320.f/240,.1f,100);
+        for(auto shader:{ShaderType::Standard,ShaderType::Unlit,ShaderType::Toon}){
+            if(!device->BeginFrame())throw std::runtime_error("Instance frame unavailable");
+            view.BeginScene(camera,environment,0);Material material;material.shader=shader;
+            material.color={1,0,0,1};view.Submit(MeshLibrary::Get(PrimitiveType::Cube),glm::translate(glm::mat4(1),glm::vec3(-1,0,-5)),material,101,false);
+            material.color={0,1,0,1};view.Submit(MeshLibrary::Get(PrimitiveType::Cube),glm::translate(glm::mat4(1),glm::vec3(1,0,-5)),material,202,false);
+            view.Render(device->Cmd());
+            if(view.Stats().drawCalls!=1||view.Stats().instancedObjects!=2)throw std::runtime_error("Repeated opaque meshes did not instance");
+            device->Cmd().CopyTextureToBuffer(view.EntityIdTarget(),ids.get(),0,0,320,240);
+            device->Cmd().CopyTextureToBuffer(view.Output(),capture.get(),0,0,320,240);device->EndFrame();device->WaitIdle();
+            auto* values=ids->As<u32>();auto* image=capture->As<u8>();int red=0,green=0;
+            for(int n=0;n<320*240;++n){if(values[n]==101&&image[n*4]>image[n*4+1]+30&&image[n*4]>30)++red;if(values[n]==202&&image[n*4+1]>image[n*4]+30&&image[n*4+1]>30)++green;}
+            if(red<100||green<100){int a=0,b=0,nonzero=0;for(int n=0;n<320*240;++n){a+=values[n]==101;b+=values[n]==202;nonzero+=values[n]!=0;}stbi_write_png((FileSystem::EngineRoot()/"build/InstanceFailure.png").string().c_str(),320,240,4,image,320*4);std::cerr<<"Instance shader "<<(int)shader<<" red "<<red<<" green "<<green<<" ids "<<a<<","<<b<<" nonzero "<<nonzero<<"\n";throw std::runtime_error("Instancing mixed colors or entity picking ids");}
+        }
+        environment.castShadows=true;camera.shadows=true;
+        if(!device->BeginFrame())throw std::runtime_error("Instance shadow frame unavailable");
+        view.BeginScene(camera,environment,0);Material material;
+        for(int n=0;n<20;++n)view.Submit(MeshLibrary::Get(PrimitiveType::Cube),glm::translate(glm::mat4(1),glm::vec3((n%5-2)*1.5f,0,-5-(n/5)*2)),material,n+1,true);
+        view.Render(device->Cmd());
+        if(view.Stats().shadowInstances<=view.Stats().shadowDraws||view.Stats().shadowDraws>kShadowCascades)throw std::runtime_error("Repeated shadow casters did not instance");
+        device->EndFrame();device->WaitIdle();
+        std::cout<<"Opaque instance colors, picking ids and shadow batching passed on GPU.\n";
+    }
+
+    {
+        SceneRenderer view(*device);view.Resize(320,240);
+        EnvironmentSettings environment;environment.cloudCoverage=0;environment.castShadows=false;
+        Material opaque;opaque.color={1,0,0,1};
+        for(int side:{-1,1}){
+            if(!device->BeginFrame())throw std::runtime_error("Culling frame unavailable");
+            RenderCamera camera;camera.solidColor=true;camera.postProcessing=false;camera.shadows=false;
+            camera.view=glm::lookAt(glm::vec3(0),glm::vec3(0,0,(float)side),glm::vec3(0,1,0));
+            camera.projection=PerspectiveReverseZ(glm::radians(60.f),320.f/240,.1f,100);
+            view.BeginScene(camera,environment,0);
+            for(float z:{-5.f,5.f})view.Submit(MeshLibrary::Get(PrimitiveType::Cube),glm::translate(glm::mat4(1),glm::vec3(0,0,z)),opaque,1,false);
+            auto road=glm::translate(glm::mat4(1),glm::vec3(0,10,5.f*side))*glm::scale(glm::mat4(1),glm::vec3(100,.1f,.1f));
+            view.Submit(MeshLibrary::Get(PrimitiveType::Cube),road,opaque,2,false);
+            if(view.SubmittedDrawCount()!=1)throw std::runtime_error("Camera-specific frustum submission failed");
+            view.Render(device->Cmd());
+            if(view.Stats().drawCalls!=1||view.Stats().culledDraws!=2)throw std::runtime_error("GPU frustum draw rejection failed");
+            device->EndFrame();device->WaitIdle();
+        }
+        std::cout<<"Opposite camera views and long-mesh frustum culling passed on GPU.\n";
     }
 
     {
