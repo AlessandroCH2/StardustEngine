@@ -10,3 +10,6 @@ dist/
 SandboxProject/
 NodulusProject/
 Examples/FeatureLab/
+# Local feature tests: not pushed
+Tests/GpuFeatureTests.cpp
+Tools/GenerateFeatureLab.py
