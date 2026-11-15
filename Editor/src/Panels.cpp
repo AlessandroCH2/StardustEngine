@@ -736,7 +736,6 @@ void EditorApp::DrawInspector() {
         Insp::InputInt("Max Points", &c.maxPoints); c.maxPoints = std::clamp(c.maxPoints, 2, 100000);
         Insp::InputInt("Sorting Order", &c.sortingOrder);
         { ImGui::Text("Points %d", (int)c.points.size()); ImGui::SameLine(); if (ImGui::SmallButton("Clear")) { c.points.clear(); c.open = false; } }
-        else ImGui::TextDisabled("Records the object's path in Play mode.");
     });
     ComponentSection<WheelColliderComponent>(inspectScene, e, "Wheel Collider", true, [&](WheelColliderComponent& c) {
         FloatProp("Radius", c.radius, 0.005f, 0.05f, 3.0f);
