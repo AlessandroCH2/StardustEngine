@@ -2,13 +2,17 @@
 #include "Core/Base.h"
 #include <filesystem>
 #include <string>
+#include <functional>
 
 namespace Stardust {
 // Indexed archives: mount reads metadata only; assets are read on demand without extraction.
+struct PakSource {std::string path;std::filesystem::path file;std::vector<u8> bytes;};
+using PakProgress=std::function<void(float,const std::string&)>;
 class Pak {
 public:
     // encrypt uses the key set with SetPassphrase / SetKey
     static bool Build(const std::filesystem::path& source, const std::filesystem::path& output, bool encrypt = false);
+    static bool BuildFiles(const std::vector<PakSource>& files,const std::filesystem::path& output,bool encrypt=false,const PakProgress& progress={});
     static bool Mount(const std::filesystem::path& archive, const std::filesystem::path& virtualRoot);
     static bool Unmount(const std::filesystem::path& archive);
     static void UnmountAll();

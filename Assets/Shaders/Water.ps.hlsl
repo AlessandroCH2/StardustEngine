@@ -15,6 +15,8 @@ MeshPSOut main(MeshVSOut i){
  if(refractedDepth>0&&dot(WaterWorld(f,refractedUV,refractedDepth)-i.worldPos,-V)<0)refractedUV=uv;
  float3 background=GetTex2D(f.lightInfo.z).SampleLevel(GetSampler(SAMPLER_LINEAR_CLAMP),refractedUV,0).rgb;
  float3 absorption=exp(-max(0,MaterialProperty(10,float4(.42,.12,.065,0)).rgb)*thickness);float3 shallow=MaterialProperty(0,float4(.055,.32,.28,1)).rgb,deep=MaterialProperty(1,float4(.018,.12,.18,1)).rgb;float lightShadow=SampleShadow(f,g_Push.frameBuffer,i.worldPos,N,saturate(dot(N,L)));float3 scattering=lerp(shallow,deep,1-exp(-thickness*.15))*(SceneAmbient(f,ambient,N)+SunRadiance(f,ambient)*(.06*saturate(L.y)*lightShadow));
+ // Night Glow: with the sun down, the water keeps some of its own colour (city lights, moonlit haze)
+ scattering+=lerp(shallow,deep,1-exp(-thickness*.15))*MaterialFloat(14,0)*saturate(.15-L.y*4);
  float3 transmission=background*absorption+scattering*(1-absorption);
  float3 R=reflect(-V,N),reflection=SampleSky(f,R);
  // Screen-space reflection with sky fallback outside the camera frustum.

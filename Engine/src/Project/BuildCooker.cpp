@@ -19,6 +19,7 @@ struct Collector {
  fs::path root;std::set<std::string> files;std::vector<std::string> pending;std::vector<std::string> optionalPrefixes;
  fs::path Absolute(const std::string& path){return root/(path.starts_with("Packages/")?fs::u8path(path):fs::path("Assets")/fs::u8path(path));}
  bool Add(std::string value,const std::string& owner="",bool relativeFirst=false){
+  auto last=value.find_last_not_of(" \t\r\n");if(last==std::string::npos)return false;value.resize(last+1);
   if(value.empty()||value.starts_with("builtin:")||value.find('\0')!=std::string::npos)return false;if(value.starts_with("asset:"))value=value.substr(6);
   std::replace(value.begin(),value.end(),'\\','/');fs::path candidate=fs::u8path(value);std::vector<fs::path> candidates{candidate};if(!owner.empty()){auto sibling=fs::u8path(owner).parent_path()/candidate;if(relativeFirst)candidates.insert(candidates.begin(),sibling);else candidates.push_back(sibling);}
   for(auto relative:candidates){relative=relative.lexically_normal();if(relative.is_absolute()){std::error_code ec;auto path=fs::relative(relative,root/"Assets",ec);if(ec||path.empty()||*path.begin()=="..")continue;relative=path;}if(relative.empty()||*relative.begin()=="..")continue;
@@ -31,25 +32,36 @@ struct Collector {
   if(ext==".spv")Add(path+".properties.json");
   if(ext==".shader"||ext==".shadergraph")Add(path+".spv");
   if(ext!=".meta")Add(path+".meta");if(ext==".mp4"||ext==".m4v"||ext==".mov"||ext==".wmv"||ext==".avi"||ext==".mpg"||ext==".mpeg"||ext==".png"||ext==".jpg"||ext==".ttf"||ext==".otf"||ext==".wav"||ext==".mp3"||ext==".ogg"||ext==".terrain"||ext==".bin"||ext==".spv")continue;
+  if(ext==".obj"||ext==".mtl"){
+   std::ifstream source(absolute);std::string line;
+   while(std::getline(source,line)){std::istringstream words(line);std::string key,value;words>>key;std::getline(words,value);auto first=value.find_first_not_of(" \t\r");if(first==std::string::npos)continue;value=value.substr(first);if(key=="mtllib"||key.starts_with("map_")||key=="bump"){if(!Add(value,path,true)){std::istringstream tokens(value);while(tokens>>value)Add(value,path);}}}
+   continue;
+  }
   auto bytes=FileSystem::ReadText(absolute);auto data=json::parse(bytes,nullptr,false);if(!data.is_discarded())Strings(data,path);
   if(ext==".obj"||ext==".mtl"){std::istringstream lines(bytes);std::string line;while(std::getline(lines,line)){std::istringstream words(line);std::string key,value;words>>key;std::getline(words,value);auto first=value.find_first_not_of(" \t\r");if(first==std::string::npos)continue;value=value.substr(first);if(key=="mtllib"||key.starts_with("map_")||key=="bump"){if(!Add(value,path,true)){std::istringstream tokens(value);while(tokens>>value)Add(value,path);}}}}
   if(ext==".hlsl"||ext==".hlsli"){std::regex include(R"inc(#include\s*"([^"]+)")inc");for(auto i=std::sregex_iterator(bytes.begin(),bytes.end(),include);i!=std::sregex_iterator();++i)Add((*i)[1],path,true);}
  }}
 };
 }
-bool BuildCooker::Cook(const fs::path& project,const fs::path& output,const ProjectConfig& config,CookReport* report){
- fs::path stage=output/(".cook-"+std::to_string(GenerateUUID()));
+bool BuildCooker::Cook(const fs::path& project,const fs::path& output,const ProjectConfig& config,CookReport* report,const std::function<void(float,const std::string&)>& progress){
  try{
   const bool encrypt=!config.pakKey.empty();if(encrypt)Pak::SetPassphrase(config.pakKey);
   Collector main{project};for(auto& pack:config.contentPacks)main.optionalPrefixes.push_back(pack.folder);for(size_t i=0;i<config.scenes.size();++i)if(i>=config.scenesEnabled.size()||config.scenesEnabled[i])if(!main.Add(config.scenes[i]))throw std::runtime_error("Missing build scene: "+config.scenes[i]);if(!config.icon.empty()&&!main.Add(config.icon))throw std::runtime_error("Missing game icon: "+config.icon);main.Add("Settings/Input.json");main.Resolve();
-  std::set<std::string> packages;auto stageFiles=[&](const std::set<std::string>& files,const fs::path& destination){fs::create_directories(destination);for(auto& path:files){if(path.starts_with("Packages/")){packages.insert(path);continue;}auto target=destination/fs::u8path(path);fs::create_directories(target.parent_path());fs::copy_file(project/"Assets"/fs::u8path(path),target,fs::copy_options::overwrite_existing);}};
-  stageFiles(main.files,stage/"Main");if(!Project::WriteRuntime(stage/"Main/__runtime.sdruntime",config)||!Pak::Build(stage/"Main",output/"Data/game.pak",encrypt))throw std::runtime_error("Cannot create main pak");
+  if(progress)progress(.12f,"Dependencies resolved");
+  std::set<std::string> packages;
+  auto inputs=[&](const std::set<std::string>& files){std::vector<PakSource> result;for(auto& path:files){if(path.starts_with("Packages/")){packages.insert(path);continue;}result.push_back({path,project/"Assets"/fs::u8path(path)});}return result;};
+  auto packProgress=[&](float start,float span){return [&,start,span](float p,const std::string& path){if(progress)progress(start+span*p,path);};};
+  auto mainInputs=inputs(main.files);mainInputs.push_back({"__runtime.sdruntime",{},Project::RuntimeBytes(config)});
+  if(!Pak::BuildFiles(mainInputs,output/"Data/game.pak",encrypt,packProgress(.12f,.55f)))throw std::runtime_error("Cannot create main pak");
   if(report){report->mainAssets=main.files;report->archives.push_back("game.pak");}
-  std::unordered_set<std::string> names{"game","packages"};
+  std::unordered_set<std::string> names{"game","packages"};size_t packIndex=0;
   for(auto& pack:config.contentPacks){if(pack.name.empty()||pack.name.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-")!=std::string::npos||!names.insert(pack.name).second)throw std::runtime_error("Invalid or duplicate pak name: "+pack.name);auto folder=fs::u8path(pack.folder).lexically_normal();if(folder.empty()||folder.is_absolute()||*folder.begin()==".."||!fs::is_directory(project/"Assets"/folder))throw std::runtime_error("Invalid pak folder: "+pack.folder);
-   Collector optional{project};for(auto& file:fs::recursive_directory_iterator(project/"Assets"/folder))if(file.is_regular_file())optional.Add(FileSystem::Utf8(fs::relative(file.path(),project/"Assets")));optional.Resolve();for(auto& path:main.files)optional.files.erase(path);stageFiles(optional.files,stage/pack.name);if(!Pak::Build(stage/pack.name,output/"Data/Optional"/(pack.name+".pak"),encrypt))throw std::runtime_error("Cannot create optional pak");if(report)report->archives.push_back(pack.name+".pak");
+   Collector optional{project};for(auto& file:fs::recursive_directory_iterator(project/"Assets"/folder))if(file.is_regular_file())optional.Add(FileSystem::Utf8(fs::relative(file.path(),project/"Assets")));optional.Resolve();for(auto& path:main.files)optional.files.erase(path);
+   auto files=inputs(optional.files);float span=.23f/std::max<size_t>(1,config.contentPacks.size());
+   if(!Pak::BuildFiles(files,output/"Data/Optional"/(pack.name+".pak"),encrypt,packProgress(.67f+span*packIndex++,span)))throw std::runtime_error("Cannot create optional pak");if(report)report->archives.push_back(pack.name+".pak");
   }
-  fs::create_directories(stage/"Packages");for(auto& path:packages){auto relative=fs::u8path(path).lexically_relative("Packages");auto target=stage/"Packages"/relative;fs::create_directories(target.parent_path());fs::copy_file(project/fs::u8path(path),target,fs::copy_options::overwrite_existing);}if(!Pak::Build(stage/"Packages",output/"Data/packages.pak",encrypt))throw std::runtime_error("Cannot create packages pak");
+  std::vector<PakSource> packageInputs;for(auto& path:packages)packageInputs.push_back({FileSystem::Utf8(fs::u8path(path).lexically_relative("Packages")),project/fs::u8path(path)});
+  if(!Pak::BuildFiles(packageInputs,output/"Data/packages.pak",encrypt,packProgress(.9f,.08f)))throw std::runtime_error("Cannot create packages pak");
   if(!config.icon.empty()&&config.buildTarget!="Linux"){
    std::string name=config.name;std::erase_if(name,[](char c){return std::string("\\/:*?\"<>|").find(c)!=std::string::npos;});if(name.empty())name="Game";
    auto executable=output/(name+".exe");
@@ -60,7 +72,7 @@ bool BuildCooker::Cook(const fs::path& project,const fs::path& output,const Proj
    auto executable=config.buildTarget=="Linux"?output/"Game.x86_64":output/(name+".exe");
    if(fs::is_regular_file(executable)&&!Pak::EmbedKey(executable,config.pakKey))throw std::runtime_error("Cannot write the pak key into the player");
   }
-  fs::remove_all(stage);SD_INFO("Cooked {} main dependencies and {} optional packs",main.files.size(),config.contentPacks.size());return true;
- }catch(const std::exception& e){SD_ERROR("Build cook failed: {}",e.what());fs::remove_all(stage);return false;}
+  if(progress)progress(1,"Assets packaged");SD_INFO("Cooked {} main dependencies and {} optional packs",main.files.size(),config.contentPacks.size());return true;
+ }catch(const std::exception& e){SD_ERROR("Build cook failed: {}",e.what());return false;}
 }
 }

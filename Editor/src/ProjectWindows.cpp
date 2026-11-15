@@ -733,6 +733,28 @@ void EditorApp::DrawBuildSettings() {
 }
 
 // Copies the player executable, runtime files, compiled scripts and the project assets into a standalone folder
+void EditorApp::SetBuildProgress(float progress,const std::string& status,bool failed){
+    std::lock_guard lock(m_BuildProgressMutex);m_BuildProgress=std::clamp(progress,0.f,1.f);m_BuildStatus=status;m_BuildFailed=failed;
+}
+
+void EditorApp::DrawBuildProgress(){
+    if(!m_ShowBuildProgress)return;
+    if(!ImGui::IsPopupOpen("Player Build"))ImGui::OpenPopup("Player Build");
+    auto* viewport=ImGui::GetMainViewport();ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x+viewport->WorkSize.x*.5f,viewport->WorkPos.y+viewport->WorkSize.y*.5f),ImGuiCond_Appearing,ImVec2(.5f,.5f));
+    ImGui::SetNextWindowSize(ImVec2(600*UiScale(),0),ImGuiCond_Appearing);
+    if(ImGui::BeginPopupModal("Player Build",nullptr,ImGuiWindowFlags_AlwaysAutoResize)){
+        float progress;std::string status;bool failed;{std::lock_guard lock(m_BuildProgressMutex);progress=m_BuildProgress;status=m_BuildStatus;failed=m_BuildFailed;}
+        ImGui::TextUnformatted(m_BuildProduct.c_str());ImGui::Spacing();
+        ImGui::ProgressBar(progress,ImVec2(560*UiScale(),24*UiScale()));
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX()+560*UiScale());
+        if(failed)ImGui::TextColored(ImVec4(1,.4f,.35f,1),"%s",status.c_str());else ImGui::TextUnformatted(status.c_str());
+        ImGui::PopTextWrapPos();
+        if(m_Building)ImGui::TextDisabled("Please wait - the editor remains responsive.");
+        else if(ImGui::Button("Close",ImVec2(120*UiScale(),0))){m_ShowBuildProgress=false;ImGui::CloseCurrentPopup();}
+        ImGui::EndPopup();
+    }
+}
+
 void EditorApp::BuildPlayer(bool run) {
     if(!m_PrefabAsset.empty())ExitPrefabStage();
     if (m_Building) return;
@@ -756,14 +778,16 @@ void EditorApp::BuildPlayer(bool run) {
     for (const auto& scene : Project::EnabledScenes()) {
         if (!fs::is_regular_file(assets / fs::u8path(scene))) { SD_ERROR("Build scene is missing: {}", scene); m_Building = false; return; }
     }
+    m_ShowBuildProgress=true;m_BuildProduct=cfg.name;SetBuildProgress(.02f,"Preparing player build");
     m_PlayerBuildThread = std::thread([this, cfg, out, exeDir, projectDir, assets, csproj, projectFile, run, within] {
-        auto fail = [&](const std::string& why) { SD_ERROR("Build failed: {}", why); m_Building = false; };
+        auto fail = [&](const std::string& why) { SD_ERROR("Build failed: {}", why); SetBuildProgress(0,"Build failed: "+why,true); m_Building = false; };
         try {
         std::error_code ec;
         SD_INFO("Building player '{}' into {}", cfg.name, out.string());
         fs::create_directories(out / "Data" / "Managed", ec);
         if (ec) return fail(ec.message());
 
+        SetBuildProgress(.05f,"Compiling C# scripts (Release)");
         // 1. C# scripts (Release)
         if (fs::exists(csproj)) {
             std::wstring cmd = L"dotnet build \"" + csproj.wstring() + L"\" -c Release -o \"" + (out / "Data" / "Managed").wstring() +
@@ -773,6 +797,7 @@ void EditorApp::BuildPlayer(bool run) {
             });
             if (code != 0) return fail("script compilation failed");
         }
+        SetBuildProgress(.27f,"Copying player runtime");
         // 2. runtime binaries
         std::string exeName = cfg.name;
         std::erase_if(exeName, [](char c) { return std::string("\\/:*?\"<>|").find(c) != std::string::npos; });
@@ -807,12 +832,14 @@ exec ./Game.x86_64 "$@"
         fs::copy(exeDir / "shaders", out / "shaders", fs::copy_options::recursive | fs::copy_options::overwrite_existing, ec);
         if (ec) return fail("cannot copy shaders: " + ec.message());
         // 3. assets (without C# sources) and project settings
-        if(!BuildCooker::Cook(projectDir,out,cfg))return fail("Asset dependency cooking failed (see Console)");
+        SetBuildProgress(.35f,"Resolving scene asset dependencies");
+        if(!BuildCooker::Cook(projectDir,out,cfg,nullptr,[this](float p,const std::string& path){SetBuildProgress(.35f+.62f*p,"Packaging: "+path);}))return fail("Asset dependency cooking failed (see Console)");
         auto loose=out/"Data/Assets";if(fs::exists(loose)){if(!within(loose,out/"Data"))return fail("Old loose asset folder is outside export");fs::remove_all(loose,ec);if(ec)return fail("Cannot remove old loose assets");}
         auto legacy=out/"Data/game.sdproject";if(fs::is_regular_file(legacy))fs::remove(legacy,ec);
         auto license=FileSystem::EngineRoot()/"docs/THIRD_PARTY_UFBX.txt";
         if (fs::exists(license)) fs::copy_file(license,out/"THIRD_PARTY_UFBX.txt",fs::copy_options::overwrite_existing);
         auto videoLicense=FileSystem::EngineRoot()/"docs/THIRD_PARTY_PL_MPEG.txt";if(fs::exists(videoLicense))fs::copy_file(videoLicense,out/"THIRD_PARTY_PL_MPEG.txt",fs::copy_options::overwrite_existing);
+        SetBuildProgress(1,"Build completed: "+playerFile.string());
         SD_INFO("Build complete: {} (Data/game.pak)", playerFile.string());
         if (run&&!linuxTarget) LaunchProcess(playerFile, out);
         else if(run&&linuxTarget) SD_INFO("Linux build ready; run Launch.sh on Linux.");

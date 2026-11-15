@@ -35,6 +35,7 @@ public:
     static bool Load(const std::filesystem::path& sdprojectFile);
     static bool Create(const std::filesystem::path& folder, const std::string& name); // new folder structure + C# project
     static bool Save();
+    static std::vector<u8> RuntimeBytes(const ProjectConfig& config);
     static bool WriteRuntime(const std::filesystem::path& file,const ProjectConfig& config);
     static bool LoadRuntime(const std::filesystem::path& dataDir);
     static bool IsLoaded() { return s_Loaded; }

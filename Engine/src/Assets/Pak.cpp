@@ -117,49 +117,71 @@ static void PruneStalePakCaches(){static bool pruned=false;if(pruned)return;prun
 static void PruneStalePakCaches(){}
 #endif
 
-bool Pak::Build(const fs::path& source, const fs::path& output, bool encrypt) {
-    try {
-        if (encrypt && !s_Key.enabled) { SD_ERROR("Pak build: encryption asked but no key is set"); return false; }
-        std::vector<fs::path> files;
-        for (auto& entry : fs::recursive_directory_iterator(source)) {
-            if (!entry.is_regular_file()) continue;
-            auto relative = fs::relative(entry.path(), source);
-            bool editor = false;
-            for (const auto& part : relative) if (part == "Editor") editor = true;
-            if (!editor && entry.path().extension() != ".cs" && entry.path().extension() != ".pak") files.push_back(entry.path());
+bool Pak::Build(const fs::path& source,const fs::path& output,bool encrypt){
+    std::vector<PakSource> files;
+    try{for(auto& entry:fs::recursive_directory_iterator(source)){
+        if(!entry.is_regular_file())continue;auto relative=fs::relative(entry.path(),source);bool editor=false;
+        for(auto& part:relative)if(part=="Editor")editor=true;
+        if(!editor&&relative.extension()!=".cs"&&relative.extension()!=".pak")files.push_back({FileSystem::Utf8(relative),entry.path()});
+    }}catch(const std::exception& e){SD_ERROR("Pak source scan failed: {}",e.what());return false;}
+    return BuildFiles(files,output,encrypt);
+}
+
+bool Pak::BuildFiles(const std::vector<PakSource>& sources,const fs::path& output,bool encrypt,const PakProgress& progress){
+    fs::path partial=output;partial+=fs::path(".partial-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    try{
+        if(encrypt&&!s_Key.enabled)throw std::runtime_error("Encryption key missing");
+        std::vector<const PakSource*> files;for(auto& source:sources)files.push_back(&source);
+        std::sort(files.begin(),files.end(),[](auto* a,auto* b){return a->path<b->path;});
+        std::vector<u64> sizes,hashes;u64 total=0;
+        std::string previous;
+        for(auto* file:files){
+            if(!Safe(file->path)||file->path==previous)throw std::runtime_error("Unsafe or duplicate archive path: "+file->path);
+            if(!file->file.empty()&&fs::absolute(file->file).lexically_normal()==fs::absolute(output).lexically_normal())throw std::runtime_error("Archive would overwrite a source asset");
+            u64 size=file->file.empty()?file->bytes.size():fs::file_size(file->file);sizes.push_back(size);total+=size;previous=file->path;
         }
-        std::sort(files.begin(), files.end());
-        u64 salt = 0; { std::random_device random; salt = ((u64)random() << 32) ^ random() ^ (u64)std::chrono::steady_clock::now().time_since_epoch().count(); }
-        // Index: sorted paths share their beginning, so each stores only how much it reuses and what is new
-        std::string index, previous;
-        u64 offset = 0;
-        for (const auto& file : files) {
-            const u64 size = fs::file_size(file);
-            auto name = FileSystem::Utf8(fs::relative(file, source));
-            size_t shared = 0; while (shared < name.size() && shared < previous.size() && shared < 65535 && name[shared] == previous[shared]) ++shared;
-            auto data = FileSystem::ReadBinary(file);
-            if (data.size() != size) return false;
-            PutVarint(index, shared); PutVarint(index, name.size() - shared); index.append(name, shared, std::string::npos);
-            PutVarint(index, offset); PutVarint(index, size);
-            const u64 hash = FastHash(data); index.append((const char*)&hash, 8);
-            previous = name; offset += size;
+        std::vector<u8> block(1024*1024);u64 processed=0;
+        auto read=[&](size_t index,auto consume){
+            const auto& file=*files[index];std::ifstream input;if(!file.file.empty()){input.open(file.file,std::ios::binary);if(!input)throw std::runtime_error("Cannot read "+file.path);}
+            u64 h=14695981039346656037ull^(sizes[index]*0x9E3779B97F4A7C15ull),offset=0;
+            while(offset<sizes[index]){
+                size_t count=(size_t)std::min<u64>(block.size(),sizes[index]-offset);
+                if(file.file.empty())std::memcpy(block.data(),file.bytes.data()+offset,count);
+                else{input.read((char*)block.data(),count);if((size_t)input.gcount()!=count)throw std::runtime_error("Source changed while building: "+file.path);}
+                size_t words=count/8;
+                for(size_t i=0;i<words;++i){u64 w;std::memcpy(&w,block.data()+i*8,8);h^=w*0xC2B2AE3D27D4EB4Full;h=(h<<31|h>>33)*0x9E3779B185EBCA87ull;}
+                for(size_t i=words*8;i<count;++i){h^=block[i];h*=1099511628211ull;}
+                consume(block.data(),count,offset);offset+=count;processed+=count;
+                if(progress)progress(total?(float)((double)processed/(2.0*total)):0,file.path);
+            }
+            if(!file.file.empty()&&input.peek()!=std::char_traits<char>::eof())throw std::runtime_error("Source grew while building: "+file.path);
+            h^=h>>33;h*=0xFF51AFD7ED558CCDull;h^=h>>33;return h;
+        };
+        u64 salt=0;{std::random_device random;salt=((u64)random()<<32)^random()^(u64)std::chrono::steady_clock::now().time_since_epoch().count();}
+        std::string index;previous.clear();u64 offset=0;
+        for(size_t i=0;i<files.size();++i){
+            auto& name=files[i]->path;size_t shared=0;while(shared<name.size()&&shared<previous.size()&&shared<65535&&name[shared]==previous[shared])++shared;
+            auto hash=read(i,[](u8*,size_t,u64){});hashes.push_back(hash);
+            PutVarint(index,shared);PutVarint(index,name.size()-shared);index.append(name,shared,std::string::npos);
+            PutVarint(index,offset);PutVarint(index,sizes[i]);index.append((const char*)&hash,8);offset+=sizes[i];previous=name;
         }
-        const u32 flags = encrypt ? 1u : 0u, count = (u32)files.size();
-        const u64 check = encrypt ? KeyCheck(s_Key, salt) : 0, indexSize = index.size();
-        if (encrypt) Crypt(s_Key, IndexNonce(salt), 0, (u8*)index.data(), index.size());
-        fs::create_directories(output.parent_path());
-        std::ofstream out(output, std::ios::binary | std::ios::trunc);
-        out.write(kMagicV2, 8); out.write((const char*)&flags, 4); out.write((const char*)&count, 4);
-        out.write((const char*)&salt, 8); out.write((const char*)&check, 8); out.write((const char*)&indexSize, 8);
-        out.write(index.data(), index.size());
-        for (size_t i = 0; i < files.size(); ++i) {
-            auto data = FileSystem::ReadBinary(files[i]);
-            if (encrypt) Crypt(s_Key, EntryNonce(salt, i), 0, data.data(), data.size());
-            out.write((const char*)data.data(), data.size());
+        const u32 flags=encrypt?1u:0u,count=(u32)files.size();const u64 check=encrypt?KeyCheck(s_Key,salt):0,indexSize=index.size();
+        if(encrypt)Crypt(s_Key,IndexNonce(salt),0,(u8*)index.data(),index.size());
+        if(!output.parent_path().empty())fs::create_directories(output.parent_path());
+        std::ofstream out(partial,std::ios::binary|std::ios::trunc);
+        out.write(kMagicV2,8);out.write((const char*)&flags,4);out.write((const char*)&count,4);out.write((const char*)&salt,8);out.write((const char*)&check,8);out.write((const char*)&indexSize,8);out.write(index.data(),index.size());
+        for(size_t i=0;i<files.size();++i){
+            auto hash=read(i,[&](u8* bytes,size_t size,u64 at){if(encrypt)Crypt(s_Key,EntryNonce(salt,i),at,bytes,size);out.write((const char*)bytes,size);if(!out)throw std::runtime_error("Cannot write archive (disk full?)");});
+            if(hash!=hashes[i])throw std::runtime_error("Asset changed during packaging: "+files[i]->path);
         }
-        out.flush();
-        return out.good();
-    } catch (const std::exception& e) { SD_ERROR("Pak build failed: {}", e.what()); return false; }
+        out.flush();if(!out)throw std::runtime_error("Cannot flush archive");out.close();
+#ifdef _WIN32
+        if(!MoveFileExW(partial.c_str(),output.c_str(),MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH))throw std::runtime_error("Cannot replace archive; it may be in use");
+#else
+        fs::rename(partial,output);
+#endif
+        if(progress)progress(1,FileSystem::Utf8(output.filename()));return true;
+    }catch(const std::exception& e){std::error_code ec;fs::remove(partial,ec);SD_ERROR("Pak build failed: {}",e.what());return false;}
 }
 bool Pak::Mount(const fs::path& archive, const fs::path& virtualRoot) {
     try {

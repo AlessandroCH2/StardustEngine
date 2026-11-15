@@ -90,7 +90,8 @@ const nlohmann::json& Material::PropertyLayout()const {
  {"name":"Absorption","label":"RGB Absorption","type":"vector3","default":[0.42,0.12,0.065]},
  {"name":"Roughness","label":"Surface Roughness","type":"float","default":0.09,"min":0.025,"max":1},
  {"name":"Refraction","label":"Refraction Strength","type":"float","default":0.018,"min":0,"max":0.1},
- {"name":"DirectionalSpread","label":"Wave Direction Spread","type":"float","default":0.75,"min":0,"max":1}
+ {"name":"DirectionalSpread","label":"Wave Direction Spread","type":"float","default":0.75,"min":0,"max":1},
+ {"name":"NightGlow","label":"Night Glow","type":"float","default":0,"min":0,"max":2}
  ]})water")["properties"];
  return water;
 }

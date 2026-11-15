@@ -494,12 +494,15 @@ static void TestCookingAndAsync(){
  auto root=TestRoot()/"CookTests";auto source=root/"Project",out=root/"Export";auto assets=source/"Assets";
  Scene scene;auto cube=scene.CreatePrimitive(PrimitiveType::Cube,"Cooked");scene.Reg().Get<MeshRendererComponent>(cube).materials={"Materials/Used.mat"};auto imported=scene.CreateEntity("External Model");scene.Reg().Add<MeshRendererComponent>(imported).mesh="Models/Test.gltf";FileSystem::WriteText(assets/"Models/Test.gltf",R"({"asset":{"version":"2.0"},"buffers":[{"uri":"geo.bin","byteLength":4}],"images":[{"uri":"albedo.png"}]})");FileSystem::WriteText(assets/"Models/geo.bin","data");FileSystem::WriteText(assets/"Models/albedo.png","model texture");FileSystem::WriteText(assets/"albedo.png","wrong sibling");auto input=scene.CreateEntity("Input");scene.Reg().Add<UIInputFieldComponent>(input).placeholder="Name";scene.Reg().Add<ScriptComponent>(input).fieldsJson=R"({"Future":{"asset":"DLC/Optional.png"}})";auto terrain=scene.CreateEntity("Terrain");auto& settings=scene.Reg().Add<TerrainComponent>(terrain).settings;for(int i=1;i<7;++i)settings.layers.push_back({"Custom "+std::to_string(i)});
  auto unicodeMaterial=std::filesystem::path(u8"Materials/日本語.mat");scene.Reg().Get<MeshRendererComponent>(cube).materials.push_back(FileSystem::Utf8(unicodeMaterial));FileSystem::WriteText(assets/unicodeMaterial,R"({"albedoMap":"Textures/Used.png"})");
+ auto obj=scene.CreateEntity("Windows OBJ");scene.Reg().Add<MeshRendererComponent>(obj).mesh="Models/Windows.obj";
+ FileSystem::WriteText(assets/"Models/Windows.obj","mtllib Windows.mtl\r\nv 0 0 0\r\n");FileSystem::WriteText(assets/"Models/Windows.mtl","newmtl Test\r\nmap_Kd ../Textures/Used.png\r\n");
  Check(SceneSerializer::Save(scene,assets/"Scenes/Main.scene"),"cook fixture scene save failed");
  FileSystem::WriteText(assets/"Materials/Used.mat",R"({"albedoMap":"Textures/Used.png","normalMap":"DLC/Required.png","customPixelShader":"Shaders/Custom.spv"})");FileSystem::WriteText(assets/"Textures/Used.png","used");FileSystem::WriteText(assets/"Textures/Unused.png","unused");FileSystem::WriteText(assets/"DLC/Required.png","required by included scene");FileSystem::WriteText(assets/"DLC/Optional.png","optional");FileSystem::WriteText(assets/"DLC/Editor/Secret.txt","editor");
  ProjectConfig config;config.name="Cook fixture";config.scenes={"Scenes/Main.scene"};config.scenesEnabled={true};config.contentPacks.push_back({"chapter2","DLC"});config.icon="DLC/GameIcon.png";
  std::filesystem::copy_file(FileSystem::EngineRoot()/"engineIcon.png",assets/config.icon,std::filesystem::copy_options::overwrite_existing);
  std::filesystem::create_directories(out);std::filesystem::copy_file(FileSystem::ExecutableDir()/"StardustPlayer.exe",out/"Cook fixture.exe",std::filesystem::copy_options::overwrite_existing);CookReport report;
  FileSystem::WriteText(assets/"Shaders/Custom.spv","test shader");FileSystem::WriteText(assets/"Shaders/Custom.spv.properties.json",R"({"properties":[{"name":"Pattern","type":"texture","default":"Textures/SchemaDefault.png"}]})");FileSystem::WriteText(assets/"Textures/SchemaDefault.png","default texture");Check(BuildCooker::Cook(source,out,config,&report),"dependency cooking failed");Check(report.mainAssets.contains("Shaders/Custom.spv.properties.json")&&report.mainAssets.contains("Textures/SchemaDefault.png"),"shader schema/default texture omitted from pak");Check(report.mainAssets.contains(config.icon),"game icon excluded from main pak");Check(report.mainAssets.contains(FileSystem::Utf8(unicodeMaterial))&&report.mainAssets.contains("Textures/Used.png")&&report.mainAssets.contains("DLC/Required.png")&&!report.mainAssets.contains("Textures/Unused.png")&&!report.mainAssets.contains("DLC/Optional.png")&&report.mainAssets.contains("Models/geo.bin")&&report.mainAssets.contains("Models/albedo.png")&&!report.mainAssets.contains("albedo.png"),"main pak dependency closure incorrect");
+ Check(report.mainAssets.contains("Models/Windows.mtl"),"CRLF OBJ material dependency lost");for(auto& path:report.mainAssets)Check(path.find('\r')==std::string::npos,"CR leaked into pak path");
  auto module=LoadLibraryExW((out/"Cook fixture.exe").c_str(),nullptr,LOAD_LIBRARY_AS_DATAFILE|LOAD_LIBRARY_AS_IMAGE_RESOURCE);
  Check(module!=nullptr,"cannot inspect exported executable icon");
  auto resource=FindResourceW(module,MAKEINTRESOURCEW(101),MAKEINTRESOURCEW(14));
@@ -675,6 +678,21 @@ static void BenchmarkProject(const std::filesystem::path& file){
  Check(Project::Load(file),"benchmark project missing");Tests::MemoryDevice device;AssetManager::Init(device,Project::AssetsDir());MeshLibrary::Init(device);auto scene=SceneSerializer::Load(Project::AssetsDir()/"Scenes/Portvale.scene");Check(bool(scene),"benchmark scene missing");scene->Reg().Each<TerrainComponent>([&](EntityID e,TerrainComponent&){scene->Reg().SetEnabled<TerrainComponent>(e,false);});SceneRenderer renderer(device);RenderCamera camera;camera.position={0,90,180};camera.view=glm::lookAt(camera.position,glm::vec3(0),glm::vec3(0,1,0));camera.projection=PerspectiveReverseZ(glm::radians(60.f),16.f/9,.1f,2000);auto pass=[&](){renderer.BeginScene(camera,scene->GatherEnvironment(),0);scene->SubmitToRenderer(renderer,device);};auto now=[](){return std::chrono::steady_clock::now();};auto start=now();pass();auto cold=std::chrono::duration<double,std::milli>(now()-start).count();AssetManager::WaitForTextures();start=now();for(int i=0;i<20;++i)pass();auto active=std::chrono::duration<double,std::milli>(now()-start).count()/20;auto draws=renderer.SubmittedDrawCount();auto city=scene->FindByName("City");Check(city!=0,"City root missing");scene->SetActive(city,false);start=now();for(int i=0;i<20;++i)pass();auto hidden=std::chrono::duration<double,std::milli>(now()-start).count()/20;std::cout<<"BENCHMARK cold submit "<<cold<<" ms; active city "<<active<<" ms ("<<draws<<" submitted); inactive city "<<hidden<<" ms ("<<renderer.SubmittedDrawCount()<<" submitted); OBJ cache hits "<<AssetManager::MeshCacheHits()<<"\n";scene.reset();MeshLibrary::Shutdown();AssetManager::Shutdown();
 }
 
+static void TestStreamingBuild(){
+ auto root=TestRoot()/"StreamingPak";std::filesystem::create_directories(root);auto source=root/"Source.bin",archive=root/"game.pak";
+ std::vector<u8> bytes(3*1024*1024+19);for(size_t i=0;i<bytes.size();++i)bytes[i]=(u8)(i*17);
+ {std::ofstream out(source,std::ios::binary);out.write((char*)bytes.data(),bytes.size());}
+ Pak::SetPassphrase("streamed-pak-test");float previous=0;int calls=0;
+ Check(Pak::BuildFiles({{"Large.bin",source},{"Runtime.bin",{},std::vector<u8>{1,2,3}},{"Empty.bin",{},std::vector<u8>{}}},archive,true,[&](float p,const std::string&){Check(p>=previous&&p<=1,"build progress not monotonic");previous=p;++calls;}),"streamed pak failed");
+ Check(previous==1&&calls>4,"byte progress was not reported");Check(Pak::Mount(archive,root/"Virtual"),"streamed encrypted pak mount failed");std::vector<u8> actual;
+ Check(Pak::ReadBinary(root/"Virtual/Large.bin",actual)&&actual==bytes,"encrypted chunk boundaries changed data/hash");Check(Pak::ReadBinary(root/"Virtual/Empty.bin",actual)&&actual.empty(),"empty streamed asset lost");Pak::UnmountAll();
+ auto before=FileSystem::ReadBinary(archive);bool mutated=false;
+ Check(!Pak::BuildFiles({{"Large.bin",source}},archive,false,[&](float p,const std::string&){if(p>=.5f&&!mutated){mutated=true;FileSystem::WriteText(source,"Changed during build");}}),"changing source was silently packaged");
+ Check(FileSystem::ReadBinary(archive)==before,"failed build replaced previous pak");
+ for(auto& entry:std::filesystem::directory_iterator(root))Check(entry.path().filename().string().find("partial-")==std::string::npos,"partial pak left after failure");
+ std::cout<<"Streamed encrypted packaging, progress and failure recovery passed\n";
+}
+
 int main() {
     // The fixtures live in the source tree: the first parent folder of the executable that has Tests/Fixtures
     for (auto dir = Stardust::FileSystem::ExecutableDir(); !dir.empty(); dir = dir.parent_path()) {
@@ -683,6 +701,8 @@ int main() {
     }
     try {
         TestWorkspace workspace;
+        if(auto project=std::getenv("STARDUST_TEST_COOK_PROJECT")){Check(Project::Load(std::filesystem::u8path(project)),"cook project missing");auto output=FileSystem::EngineRoot()/"build/PortvaleCook18";CookReport report;Check(BuildCooker::Cook(Project::Dir(),output,Project::Config(),&report),"full project cook failed");for(auto& item:std::filesystem::directory_iterator(output))Check(!item.path().filename().string().starts_with(".cook-"),"staged assets left in export");std::cout<<"Full project streamed cook passed: "<<report.mainAssets.size()<<" dependencies\n";return 0;}
+        if(std::getenv("STARDUST_TEST_BUILD")){TestStreamingBuild();TestPakEncryption();TestCookingAndAsync();std::cout<<"Build dependency tests passed\n";return 0;}
         if(std::getenv("STARDUST_TEST_CULLING")){PhysicsWorld::InitJolt();TestProjectCacheAndCulling();TestForces();TestHierarchyColliders();PhysicsWorld::ShutdownJolt();std::cout<<"Culling, starter cache and hierarchy tests passed\n";return 0;}
         if(auto project=std::getenv("STARDUST_BENCH_PROJECT")){BenchmarkProject(std::filesystem::u8path(project));return 0;}
         TestDefaultTerrainCollider();

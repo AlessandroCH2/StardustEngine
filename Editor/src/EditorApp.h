@@ -9,6 +9,7 @@
 #include <thread>
 #include <deque>
 #include <functional>
+#include <mutex>
 
 namespace Stardust {
 
@@ -179,6 +180,8 @@ private:
     void DrawBuildSettings();
     void DrawProjectSettings();
     void BuildPlayer(bool run);
+    void DrawBuildProgress();
+    void SetBuildProgress(float progress,const std::string& status,bool failed=false);
     void UpdateUndo();
     void Undo();
     void Redo();
@@ -249,6 +252,10 @@ private:
     void DrawPackageManager(); // PackageManagerWindow.cpp
     std::atomic<bool> m_Building{ false };
     std::thread m_PlayerBuildThread;
+    std::mutex m_BuildProgressMutex;
+    float m_BuildProgress=0;
+    std::string m_BuildStatus,m_BuildProduct;
+    bool m_ShowBuildProgress=false,m_BuildFailed=false;
     std::vector<std::string> m_Undo, m_Redo;
     std::string m_UndoSnapshot;
     float m_UndoTimer = 0.0f;

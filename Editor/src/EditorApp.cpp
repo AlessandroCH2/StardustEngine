@@ -428,6 +428,7 @@ void EditorApp::OnImGui() {
     SD_PROFILE("Editor UI");
     DrawDockspace();
     DrawBuildSettings();
+    DrawBuildProgress();
     DrawProjectSettings();
     DrawPackageManager();
     if (m_ShowHierarchy) DrawHierarchy();
