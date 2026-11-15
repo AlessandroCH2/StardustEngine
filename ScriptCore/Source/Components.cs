@@ -46,6 +46,7 @@ namespace Stardust
             if(t==typeof(WheelCollider))return 34;
             if(t==typeof(UI.ScrollView))return 35;
             if(t==typeof(UI.Dropdown))return 36;
+            if(t==typeof(TrailRenderer))return 37;
             if(t==typeof(Rigidbody2D))return 28;
             if(t==typeof(BoxCollider2D))return 29;
             if(t==typeof(CircleCollider2D))return 30;

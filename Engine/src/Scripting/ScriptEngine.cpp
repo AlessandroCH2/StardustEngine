@@ -3,6 +3,7 @@
 #include "Scene/ComponentState.h"
 #include "Scene/Scene.h"
 #include "Scene/ParticleSystem.h"
+#include "Scene/TrailRenderer.h"
 #include "UI/UIControls.h"
 #include "Physics/PhysicsWorld.h"
 #include "Assets/AssetManager.h"
@@ -45,7 +46,7 @@ struct RigidbodyNative { int type; float mass; float drag; float angularDrag; in
 
 enum class ComponentType : int {
     Transform = 0, MeshRenderer, Rigidbody, BoxCollider, SphereCollider, CapsuleCollider, Camera, Light, Script, MeshCollider,
-    AnyLight = 10, AudioSource = 11, Animator = 12, Canvas = 13, RectTransform = 14, UIImage = 15, UIText = 16, UIButton = 17, CanvasGroup = 18, RectMask = 19, UILayout = 20, UIInputField = 21, SpriteRenderer=22, Environment=23, Terrain=24, SpotLight=25, VideoPlayer=26, SpriteBatch=27, Rigidbody2D=28, BoxCollider2D=29, CircleCollider2D=30, CapsuleCollider2D=31, ParticleSystem=32, VehicleController=33, WheelCollider=34, UIScrollView=35, UIDropdown=36,
+    AnyLight = 10, AudioSource = 11, Animator = 12, Canvas = 13, RectTransform = 14, UIImage = 15, UIText = 16, UIButton = 17, CanvasGroup = 18, RectMask = 19, UILayout = 20, UIInputField = 21, SpriteRenderer=22, Environment=23, Terrain=24, SpotLight=25, VideoPlayer=26, SpriteBatch=27, Rigidbody2D=28, BoxCollider2D=29, CircleCollider2D=30, CapsuleCollider2D=31, ParticleSystem=32, VehicleController=33, WheelCollider=34, UIScrollView=35, UIDropdown=36, TrailRenderer=37,
 };
 
 struct NativeApi {
@@ -273,6 +274,7 @@ static void InitNativeApi() {
         switch ((ComponentType)t) {
         case ComponentType::SpriteBatch:return r.Has<SpriteBatchComponent>(e);
         case ComponentType::ParticleSystem:return r.Has<ParticleSystemComponent>(e);
+        case ComponentType::TrailRenderer:return r.Has<TrailRendererComponent>(e);
         case ComponentType::UIScrollView:return r.Has<UIScrollViewComponent>(e);
         case ComponentType::UIDropdown:return r.Has<UIDropdownComponent>(e);
         case ComponentType::VehicleController:return r.Has<VehicleControllerComponent>(e);
@@ -311,6 +313,7 @@ static void InitNativeApi() {
         switch ((ComponentType)t) {
         case ComponentType::SpriteBatch:if(!r.Has<SpriteBatchComponent>(e))r.Add<SpriteBatchComponent>(e);break;
         case ComponentType::ParticleSystem:if(!r.Has<ParticleSystemComponent>(e))r.Add<ParticleSystemComponent>(e);break;
+        case ComponentType::TrailRenderer:if(!r.Has<TrailRendererComponent>(e))r.Add<TrailRendererComponent>(e);break;
         case ComponentType::UIScrollView:if(!r.Has<UIScrollViewComponent>(e))r.Add<UIScrollViewComponent>(e);break;
         case ComponentType::UIDropdown:if(!r.Has<UIDropdownComponent>(e))r.Add<UIDropdownComponent>(e);break;
         case ComponentType::Rigidbody2D:if(!r.Has<Rigidbody2DComponent>(e))r.Add<Rigidbody2DComponent>(e);RebuildBody(e);break;
@@ -350,6 +353,7 @@ static void InitNativeApi() {
         case ComponentType::SpriteRenderer:r.Remove<SpriteRendererComponent>(e);break;
         case ComponentType::SpriteBatch:r.Remove<SpriteBatchComponent>(e);break;
         case ComponentType::ParticleSystem:r.Remove<ParticleSystemComponent>(e);break;
+        case ComponentType::TrailRenderer:r.Remove<TrailRendererComponent>(e);break;
         case ComponentType::UIScrollView:r.Remove<UIScrollViewComponent>(e);break;
         case ComponentType::UIDropdown:r.Remove<UIDropdownComponent>(e);break;
         case ComponentType::Rigidbody2D:r.Remove<Rigidbody2DComponent>(e);RebuildBody(e);break;
@@ -414,7 +418,7 @@ static void InitNativeApi() {
     a.IsKeyPressed = [](int k) -> int { return Input::RuntimeKeyboard && Input::IsKeyPressed((Key)k); };
     a.IsMouseDown = [](int b) -> int { return Input::RuntimeMouse && Input::IsMouseDown((MouseButton)b); };
     a.IsMousePressed = [](int b) -> int { return Input::RuntimeMouse && Input::IsMousePressed((MouseButton)b); };
-    a.GetMousePosition = [](glm::vec2* o) { *o = Input::MousePosition()-Input::RuntimeOrigin; };
+    a.GetMousePosition = [](glm::vec2* o) { *o = (Input::MousePosition()-Input::RuntimeOrigin)*Input::RuntimeScale; };
     a.GetMouseDelta = [](glm::vec2* o) { *o = Input::RuntimeMouse?Input::MouseDelta():glm::vec2(0); };
     a.GetScroll = []() -> float { return Input::RuntimeMouse?Input::ScrollDelta():0.f; };
     a.SetCursorLocked = [](int l) { if(Input::RuntimeMouse)Input::SetCursorMode(l ? CursorMode::Locked : CursorMode::Normal); };
@@ -584,6 +588,7 @@ static void InitNativeApi() {
                 {"brakeTorque",c->brakeTorque},{"handbrakeTorque",c->handbrakeTorque},{"forwardFriction",c->forwardFriction},{"sidewaysFriction",c->sidewaysFriction},{"steerAngle",c->steerAngle},{"rotationAngle",c->rotationAngle},{"suspensionLength",c->suspensionLength},{"compression",c->compression},{"isGrounded",c->grounded}};
             if(type==35)if(auto* c=r.TryGet<UIScrollViewComponent>(e)){UIControls::ToJson(*c,data);data["normalized"]=j::array({std::max(0.f,c->lastNormalized.x),c->lastNormalized.y<0?1.f:c->lastNormalized.y});data["velocity"]=j::array({c->velocity.x,c->velocity.y});}
             if(type==36)if(auto* c=r.TryGet<UIDropdownComponent>(e)){UIControls::ToJson(*c,data);data["open"]=c->open;}
+            if(type==37)if(auto* c=r.TryGet<TrailRendererComponent>(e)){TrailRenderers::ToJson(*c,data);data["positionCount"]=c->points.size();}
             if(type==32)if(auto* c=r.TryGet<ParticleSystemComponent>(e)){ParticleSystems::ToJson(*c,data);data["isPlaying"]=c->playing&&!c->paused;data["isPaused"]=c->paused;data["isEmitting"]=c->emitting;data["particleCount"]=c->particles.size();data["time"]=c->time;}
             // Quads are not in here (they can be megabytes): QueryJson "spriteBatchQuads" reads them
             if(type==27)if(auto* c=r.TryGet<SpriteBatchComponent>(e)){u64 v=c->version;for(u64 chunk:c->chunkVersions)v=v*1099511628211ull^chunk;data={{"textures",c->textures},{"count",c->quads.size()},{"material",c->material},{"color",vec4(c->color)},{"sortingOrder",c->sortingOrder},{"version",std::to_string(v)},{"animations",c->animations.size()}};}
@@ -692,6 +697,7 @@ static void InitNativeApi() {
                 if(data.contains("velocity")&&data["velocity"].is_array()&&data["velocity"].size()==2)c->velocity={data["velocity"][0].get<float>(),data["velocity"][1].get<float>()};
             }
             if(type==36)if(auto* c=r.TryGet<UIDropdownComponent>(e)){UIControls::FromJson(data,*c);if(data.contains("open")&&data["open"].is_boolean())c->open=data["open"].get<bool>()&&!c->options.empty();}
+            if(type==37)if(auto* c=r.TryGet<TrailRendererComponent>(e)){TrailRenderers::FromJson(data,*c);if(data.value("command",std::string())=="clear")TrailRenderers::Clear(*c);}
             if(type==32)if(auto* c=r.TryGet<ParticleSystemComponent>(e)){
                 ParticleSystems::FromJson(data,*c);
                 const std::string command=data.value("command",std::string());

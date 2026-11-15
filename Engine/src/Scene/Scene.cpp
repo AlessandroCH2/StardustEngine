@@ -19,6 +19,7 @@
 #include "Audio/AudioEngine.h"
 #include "Animation/AnimatorSystem.h"
 #include "Scene/ParticleSystem.h"
+#include "Scene/TrailRenderer.h"
 #include "Animation/ModelSkeleton.h"
 #include <glm/gtx/matrix_decompose.hpp>
 #include <random>
@@ -94,6 +95,7 @@ void Scene::CopyComponents(EntityID src, EntityID dst) {
     if (auto* c = m_Registry.TryGet<SpriteRendererComponent>(src)) m_Registry.Add<SpriteRendererComponent>(dst,*c);
     if (auto* c = m_Registry.TryGet<SpriteBatchComponent>(src)) { auto& copy = m_Registry.Add<SpriteBatchComponent>(dst,*c); copy.Touch(); }
     if (auto* c = m_Registry.TryGet<ParticleSystemComponent>(src)) { auto& copy = m_Registry.Add<ParticleSystemComponent>(dst,*c); ParticleSystems::ResetRuntime(copy); }
+    if (auto* c = m_Registry.TryGet<TrailRendererComponent>(src)) { auto& copy = m_Registry.Add<TrailRendererComponent>(dst,*c); TrailRenderers::Clear(copy); }
     if (auto* c = m_Registry.TryGet<MeshRendererComponent>(src)) m_Registry.Add<MeshRendererComponent>(dst, *c);
     if (auto* c = m_Registry.TryGet<CameraComponent>(src)) m_Registry.Add<CameraComponent>(dst, *c);
     if (auto* c = m_Registry.TryGet<DirectionalLightComponent>(src)) m_Registry.Add<DirectionalLightComponent>(dst, *c);
@@ -342,6 +344,7 @@ void Scene::OnRuntimeStart() {
     m_Registry.Each<VideoPlayerComponent>([](EntityID,VideoPlayerComponent& c){c.playing=c.playOnStart;c.time=0;});
     // Particle Systems start fresh (Play On Awake decides whether they play)
     m_Registry.Each<ParticleSystemComponent>([](EntityID,ParticleSystemComponent& c){ParticleSystems::ResetRuntime(c);});
+    m_Registry.Each<TrailRendererComponent>([](EntityID,TrailRendererComponent& c){TrailRenderers::Clear(c);c.clock=0;c.distance=0;});
     ComputeWorldMatrices();
     m_Physics = MakeScope<PhysicsWorld>(*this);
     timeScale = 1.0f;
@@ -386,6 +389,7 @@ void Scene::OnUpdate(float dt) {
     m_PendingDestroy.clear();
     for (EntityID e : pending) if (m_Registry.Valid(e)) DestroyEntity(e);
     ComputeWorldMatrices();
+    { SD_PROFILE("Trails"); TrailRenderers::Update(*this, dt); }
     AudioEngine::Update(*this);
 }
 
@@ -691,14 +695,9 @@ void Scene::SubmitToRenderer(SceneRenderer& renderer, RHI::Device& device,bool a
         for (const auto& chunk : cache.chunks) for (const auto& part : chunk.parts) submit(part);
         for (const auto& part : cache.animated) submit(part);
     });
-    // Particle Systems: camera-facing quads written into a vertex buffer the CPU maps, one draw per system
-    m_Registry.Each<ParticleSystemComponent>([&](EntityID e, ParticleSystemComponent& c) {
-        if (c.particles.empty() || !m_Registry.IsEnabled<ParticleSystemComponent>(e) || !m_SubmitActive[e]) return;
-        if (!(renderer.Camera().cullingMask & (1u << std::clamp(m_Registry.Get<NameComponent>(e).layer, 0, 31)))) return;
-        glm::vec3 boundsMin, boundsMax;
-        const u32 quads = ParticleSystems::BuildVertices(*this, e, c, renderer.Camera(), m_ParticleScratch, boundsMin, boundsMax);
-        if (!quads) return;
-        auto& slots = m_ParticleMeshes[m_Registry.Get<IDComponent>(e).uuid];
+    // Dynamic quad meshes (particles, trails): CPU-mapped vertex buffers reused once the GPU is done with them
+    auto dynamicSlot = [&](u64 key, u32 quads, const glm::vec3& boundsMin, const glm::vec3& boundsMax) -> ParticleMeshSlot* {
+        auto& slots = m_ParticleMeshes[key];
         const u64 frame = device.FrameNumber();
         ParticleMeshSlot* slot = nullptr;
         for (auto& s : slots) if (s.frame + RHI::kFramesInFlight + 1 <= frame && s.capacity >= quads) { slot = &s; break; }
@@ -718,6 +717,16 @@ void Scene::SubmitToRenderer(SceneRenderer& renderer, RHI::Device& device,bool a
         std::memcpy(slot->vertices->Mapped(), m_ParticleScratch.data(), (size_t)quads * 4 * sizeof(Vertex));
         slot->mesh->SetBounds({ boundsMin, boundsMax });
         slot->frame = frame;
+        return slot;
+    };
+    // Particle Systems: camera-facing quads written into a vertex buffer the CPU maps, one draw per system
+    m_Registry.Each<ParticleSystemComponent>([&](EntityID e, ParticleSystemComponent& c) {
+        if (c.particles.empty() || !m_Registry.IsEnabled<ParticleSystemComponent>(e) || !m_SubmitActive[e]) return;
+        if (!(renderer.Camera().cullingMask & (1u << std::clamp(m_Registry.Get<NameComponent>(e).layer, 0, 31)))) return;
+        glm::vec3 boundsMin, boundsMax;
+        const u32 quads = ParticleSystems::BuildVertices(*this, e, c, renderer.Camera(), m_ParticleScratch, boundsMin, boundsMax);
+        if (!quads) return;
+        ParticleMeshSlot* slot = dynamicSlot((u64)m_Registry.Get<IDComponent>(e).uuid, quads, boundsMin, boundsMax);
         Material material;
         if (auto custom = AssetManager::GetMaterial(c.material)) material = *custom; else material.shader = ShaderType::Unlit;
         Ref<RHI::Texture> texture = c.texture.empty() ? ParticleSystems::DefaultTexture(device) : AssetManager::GetTexture(c.texture, true);
@@ -725,6 +734,23 @@ void Scene::SubmitToRenderer(SceneRenderer& renderer, RHI::Device& device,bool a
         material.runtimeAlbedo = texture;
         material.doubleSided = true;
         if (material.customPixelShader.empty()) { material.metallic = c.texture.empty() ? 0.0f : 1.0f; material.albedoMap = c.texture; } // texture's own filtering
+        renderer.SubmitParticles(slot->mesh, material, e, quads * 6, c.blendMode == 1, c.sortingOrder);
+    });
+    // Trail Renderers: ribbons through the recorded points, one draw per trail
+    m_Registry.Each<TrailRendererComponent>([&](EntityID e, TrailRendererComponent& c) {
+        if (c.points.empty() || !m_Registry.IsEnabled<TrailRendererComponent>(e) || !m_SubmitActive[e]) return;
+        if (!(renderer.Camera().cullingMask & (1u << std::clamp(m_Registry.Get<NameComponent>(e).layer, 0, 31)))) return;
+        glm::vec3 boundsMin, boundsMax;
+        const u32 quads = TrailRenderers::BuildVertices(c, renderer.Camera(), m_ParticleScratch, boundsMin, boundsMax);
+        if (!quads) return;
+        ParticleMeshSlot* slot = dynamicSlot((u64)m_Registry.Get<IDComponent>(e).uuid ^ 0x9E3779B97F4A7C15ull, quads, boundsMin, boundsMax);
+        Material material;
+        if (auto custom = AssetManager::GetMaterial(c.material)) material = *custom; else material.shader = ShaderType::Unlit;
+        Ref<RHI::Texture> texture = c.texture.empty() ? TrailRenderers::DefaultTexture(device) : AssetManager::GetTexture(c.texture, true);
+        if (!texture) texture = TrailRenderers::DefaultTexture(device);
+        material.runtimeAlbedo = texture;
+        material.doubleSided = true;
+        if (material.customPixelShader.empty()) { material.metallic = c.texture.empty() ? 0.0f : 1.0f; material.albedoMap = c.texture; }
         renderer.SubmitParticles(slot->mesh, material, e, quads * 6, c.blendMode == 1, c.sortingOrder);
     });
     m_Registry.Each<PointLightComponent>([&](EntityID e, PointLightComponent& l) {

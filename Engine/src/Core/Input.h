@@ -40,6 +40,8 @@ public:
     // Runtime reads are routed independently from editor navigation.
     static inline bool RuntimeKeyboard=true,RuntimeMouse=true;
     static inline glm::vec2 RuntimeOrigin{0};
+    // Game pixels per window pixel: the editor shows the game view scaled (fixed resolutions); scripts get game pixels
+    static inline glm::vec2 RuntimeScale{1};
     // engine internal
     static void Attach(GLFWwindow* window);
     static void BeginFrame();

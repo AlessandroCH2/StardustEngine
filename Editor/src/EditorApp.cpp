@@ -23,6 +23,7 @@
 #include "Scene/SceneManager.h"
 #include "UI/CanvasRenderer.h"
 #include "ShaderAssets.h"
+#include "Scene/TrailRenderer.h"
 #include "ShaderGraphEditor.h"
 #include "ScriptEditor.h"
 #ifdef _WIN32
@@ -294,6 +295,7 @@ void EditorApp::OnUpdate(float dt) {
         Input::RuntimeMouse=gameplayPointer&&m_GamePointerOwned;Input::RuntimeKeyboard=gameplayPointer&&!io.WantTextInput;Input::RuntimeOrigin=m_GameView.min-glm::vec2(mainOrigin.x,mainOrigin.y);
         if(!gameplayPointer&&!m_Camera.IsFlying())Input::SetCursorMode(CursorMode::Normal);
         ScriptEngine::SetScreenSize(m_GameRenderSize.x, m_GameRenderSize.y);
+        Input::RuntimeScale=glm::vec2(m_GameView.size.x>0?m_GameRenderSize.x/m_GameView.size.x:1.f,m_GameView.size.y>0?m_GameRenderSize.y/m_GameView.size.y:1.f);
         m_ActiveScene->OnUpdate(dt);
         std::string load;
         SceneManager::UpdateAsync([&](Ref<Scene> next){GetDevice().WaitIdle();CanvasRenderer::Clear();m_ActiveScene->ReplaceContents(*next,GetDevice());SceneManager::SetActiveSceneName(next->Name());m_Selected=0;return true;});
@@ -303,6 +305,8 @@ void EditorApp::OnUpdate(float dt) {
     m_StepFrame = false;
     // Outside Play mode the selected Particle System (and its children) plays in the Scene view
     if (m_State == PlayState::Edit && !m_AnimationPreviewScene) UpdateParticlePreview(*m_ActiveScene, m_Selected, dt);
+    // Trails also record in edit mode, so moving an object in the Scene view shows its trail
+    if (m_State == PlayState::Edit && !m_AnimationPreviewScene) TrailRenderers::Update(*m_ActiveScene, dt);
     UpdateUndo();
     if (m_SceneDirty) { static bool shown = false; if (!shown) { UpdateTitle(); shown = true; } }
 

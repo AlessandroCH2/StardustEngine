@@ -718,6 +718,26 @@ void EditorApp::DrawInspector() {
         ImGui::TextDisabled("Wheels: the Wheel Colliders on child objects.");
         if (m_State != PlayState::Edit) ImGui::Text("Speed %.1f km/h   RPM %.0f   Gear %d", c.speed * 3.6f, c.rpm, c.gear);
     });
+    ComponentSection<TrailRendererComponent>(inspectScene, e, "Trail Renderer", true, [&](TrailRendererComponent& c) {
+        FloatProp("Time (s)", c.time, 0.05f, 0.01f, 600.0f);
+        FloatProp("Min Vertex Distance", c.minVertexDistance, 0.005f, 0.005f, 100.0f);
+        FloatProp("Start Width", c.startWidth, 0.01f, 0.0f, 100.0f);
+        FloatProp("End Width", c.endWidth, 0.01f, 0.0f, 100.0f);
+        Insp::ColorEdit4("Start Color", &c.startColor.x);
+        Insp::ColorEdit4("End Color", &c.endColor.x);
+        Insp::Combo("Alignment", &c.alignment, "View\0Flat (object up)\0");
+        Insp::Combo("Texture Mode", &c.textureMode, "Stretch\0Tile\0");
+        if (c.textureMode == 1) FloatProp("Tile Length", c.tileLength, 0.01f, 0.01f, 100.0f);
+        AssetUI::AssetField("Texture", c.texture, { ".png", ".jpg", ".tga" });
+        AssetUI::AssetField("Material", c.material, { ".mat" });
+        Insp::Combo("Blend Mode", &c.blendMode, "Alpha\0Additive\0");
+        FloatProp("Intensity", c.intensity, 0.01f, 0.0f, 50.0f);
+        BoolProp("Emitting", c.emitting);
+        Insp::InputInt("Max Points", &c.maxPoints); c.maxPoints = std::clamp(c.maxPoints, 2, 100000);
+        Insp::InputInt("Sorting Order", &c.sortingOrder);
+        { ImGui::Text("Points %d", (int)c.points.size()); ImGui::SameLine(); if (ImGui::SmallButton("Clear")) { c.points.clear(); c.open = false; } }
+        else ImGui::TextDisabled("Records the object's path in Play mode.");
+    });
     ComponentSection<WheelColliderComponent>(inspectScene, e, "Wheel Collider", true, [&](WheelColliderComponent& c) {
         FloatProp("Radius", c.radius, 0.005f, 0.05f, 3.0f);
         FloatProp("Width", c.width, 0.005f, 0.02f, 2.0f);
@@ -804,6 +824,7 @@ void EditorApp::DrawInspector() {
         if (!reg.Has<SpriteRendererComponent>(e) && item("Sprite Renderer")) reg.Add<SpriteRendererComponent>(e);
         if (!reg.Has<SpriteBatchComponent>(e) && item("Sprite Batch")) reg.Add<SpriteBatchComponent>(e);
         if (!reg.Has<ParticleSystemComponent>(e) && item("Particle System")) reg.Add<ParticleSystemComponent>(e);
+        if (!reg.Has<TrailRendererComponent>(e) && item("Trail Renderer")) reg.Add<TrailRendererComponent>(e);
         if (!reg.Has<LODGroupComponent>(e) && item("LOD Group")) reg.Add<LODGroupComponent>(e);
         if (!reg.Has<CameraComponent>(e) && item("Camera")) reg.Add<CameraComponent>(e);
         if (!reg.Has<DirectionalLightComponent>(e) && item("Directional Light")) reg.Add<DirectionalLightComponent>(e);
@@ -898,6 +919,7 @@ static bool MatchesReference(Registry& reg, EntityID e, const std::string& type)
     if (c == "MeshCollider") return reg.Has<MeshColliderComponent>(e);
     if (c == "VehicleController") return reg.Has<VehicleControllerComponent>(e);
     if (c == "WheelCollider") return reg.Has<WheelColliderComponent>(e);
+    if (c == "TrailRenderer") return reg.Has<TrailRendererComponent>(e);
     if (c == "DirectionalLight") return reg.Has<DirectionalLightComponent>(e);
     if (c == "Light") return reg.Has<DirectionalLightComponent>(e) || reg.Has<PointLightComponent>(e) || reg.Has<SpotLightComponent>(e);
     if (c == "AudioSource") return reg.Has<AudioSourceComponent>(e);

@@ -168,6 +168,38 @@ struct ParticleSystemComponent {
     u32 random = 1;
 };
 
+// ------------------------------------------------------------------ Trail Renderer
+struct TrailPoint {
+    glm::vec3 position{ 0 }, up{ 0, 1, 0 };   // world space; up = the object's up axis when it was recorded
+    float time = 0;                            // TrailRendererComponent::clock when it was recorded
+    float distance = 0;                        // metres travelled by the trail up to this point (tiling)
+    bool start = false;                        // first point of a strip (emission was off before it)
+};
+// A ribbon left behind by a moving object: points are recorded as it moves and fade out after `time`
+// seconds. Width and colour go from start (the object) to end (the oldest point). Turning `emitting`
+// off ends the current strip, turning it on again starts a new one (skid marks, contrails, sword swings).
+struct TrailRendererComponent {
+    float time = 5;                     // seconds a point lives
+    float minVertexDistance = 0.1f;     // metres between recorded points
+    float startWidth = 1, endWidth = 0;
+    glm::vec4 startColor{ 1 }, endColor{ 1, 1, 1, 0 };
+    int alignment = 0;                  // 0 View (faces the camera), 1 Flat (faces the object's up axis: marks on the ground)
+    int textureMode = 0;                // 0 Stretch (once along the trail), 1 Tile (every tileLength metres)
+    float tileLength = 1;
+    std::string texture, material;
+    int blendMode = 0;                  // 0 Alpha, 1 Additive
+    float intensity = 1;                // HDR colour multiplier
+    bool emitting = true;
+    int maxPoints = 1000;
+    int sortingOrder = 0;
+
+    // Runtime (not saved)
+    std::vector<TrailPoint> points;     // oldest first
+    float clock = 0, distance = 0;
+    bool open = false;                  // the last strip still follows the object
+    glm::vec3 headPosition{ 0 }, headUp{ 0, 1, 0 };
+};
+
 struct VideoPlayerComponent {
     std::string clip;
     int renderMode=0;          // 0 Render Texture, 1 Material Override (this object's mesh). A UI object always shows it in its Image.
