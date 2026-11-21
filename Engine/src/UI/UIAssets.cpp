@@ -6,6 +6,9 @@
 #define STB_TRUETYPE_IMPLEMENTATION
 #include <stb_truetype.h>
 #include <sstream>
+#include <algorithm>
+#include <cmath>
+#include <cstdlib>
 namespace Stardust {
 SpriteAsset SpriteAsset::Load(const std::string& path) {
     SpriteAsset s;
@@ -27,6 +30,54 @@ bool SpriteAsset::Save(const std::string& path) const {
     return FileSystem::WriteText(AssetManager::ToAbsolute(path),j.dump(2));
 }
 struct UIFont::Impl {std::vector<u8> bytes; stbtt_fontinfo info{}; float scale=1;};
+
+// The signed distance field of a glyph, laid out like stbtt_GetCodepointSDF (same size, offsets and value
+// scale) but measured on the glyph as stb's rasterizer fills it (non-zero winding, 8x supersampled).
+// stbtt_GetCodepointSDF decides inside/outside by counting crossings, which punches holes wherever a font
+// draws overlapping contours (common in display fonts); the filled bitmap has no such problem.
+namespace {
+void Edt1D(const double* f,double* d,int n,std::vector<int>& v,std::vector<double>& z){
+    // Felzenszwalb & Huttenlocher: the lower envelope of the parabolas rooted at each sample
+    int k=0;v[0]=0;z[0]=-1e30;z[1]=1e30;
+    auto cross=[&](int q,int p){return ((f[q]+double(q)*q)-(f[p]+double(p)*p))/(2.0*q-2.0*p);};
+    for(int q=1;q<n;++q){
+        double s=cross(q,v[k]);
+        while(s<=z[k]){--k;s=cross(q,v[k]);}
+        ++k;v[k]=q;z[k]=s;z[k+1]=1e30;
+    }
+    k=0;for(int q=0;q<n;++q){while(z[k+1]<q)++k;double dq=q-v[k];d[q]=dq*dq+f[v[k]];}
+}
+// squared distance of every pixel to the nearest pixel where `seed` is true
+std::vector<float> Edt(const std::vector<u8>& seed,int W,int H){
+    const double inf=1e20;std::vector<float> g(size_t(W)*H);
+    std::vector<double> col(size_t(W)*H);
+    for(size_t i=0;i<g.size();++i)col[i]=seed[i]?0.0:inf;
+    int n=std::max(W,H);std::vector<double> f(n),d(n),zf(n+1);std::vector<int> v(n);
+    for(int x=0;x<W;++x){for(int y=0;y<H;++y)f[y]=col[size_t(y)*W+x];Edt1D(f.data(),d.data(),H,v,zf);for(int y=0;y<H;++y)col[size_t(y)*W+x]=d[y];}
+    for(int y=0;y<H;++y){for(int x=0;x<W;++x)f[x]=col[size_t(y)*W+x];Edt1D(f.data(),d.data(),W,v,zf);for(int x=0;x<W;++x)g[size_t(y)*W+x]=(float)d[x];}
+    return g;
+}
+unsigned char* GlyphSdf(const stbtt_fontinfo* info,float scale,int codepoint,int padding,unsigned char onedge,float distanceScale,int* width,int* height,int* xoff,int* yoff){
+    int x0,y0,x1,y1;stbtt_GetCodepointBitmapBox(info,codepoint,scale,scale,&x0,&y0,&x1,&y1);
+    if(x0==x1||y0==y1)return nullptr;
+    x0-=padding;y0-=padding;x1+=padding;y1+=padding;
+    const int w=x1-x0,h=y1-y0,K=8,W=w*K,H=h*K;
+    // the filled glyph, K times larger, placed where the field's pixels are
+    int bw=0,bh=0,bx=0,by=0;unsigned char* bitmap=stbtt_GetCodepointBitmap(info,scale*K,scale*K,codepoint,&bw,&bh,&bx,&by);
+    std::vector<u8> inside(size_t(W)*H,0);
+    if(bitmap){for(int y=0;y<bh;++y)for(int x=0;x<bw;++x){int X=bx-x0*K+x,Y=by-y0*K+y;if(X>=0&&Y>=0&&X<W&&Y<H)inside[size_t(Y)*W+X]=bitmap[y*bw+x]>=128;}stbtt_FreeBitmap(bitmap,nullptr);}
+    std::vector<u8> outside(inside.size());for(size_t i=0;i<inside.size();++i)outside[i]=!inside[i];
+    auto toInside=Edt(inside,W,H),toOutside=Edt(outside,W,H);
+    auto* out=(unsigned char*)malloc(size_t(w)*h);
+    for(int y=0;y<h;++y)for(int x=0;x<w;++x){
+        size_t i=size_t(y*K+K/2)*W+(x*K+K/2);
+        float dist=inside[i]?(std::sqrt(toOutside[i])-.5f)/K:-(std::sqrt(toInside[i])-.5f)/K;   // pixels of the field, + inside
+        out[size_t(y)*w+x]=(unsigned char)std::clamp(onedge+dist*distanceScale,0.f,255.f);
+    }
+    *width=w;*height=h;*xoff=x0;*yoff=y0;
+    return out;
+}
+}
 static std::unordered_map<std::string,std::shared_ptr<UIFont>> fonts;
 std::shared_ptr<UIFont> UIFont::Get(RHI::Device& device,const std::string& asset) {
     auto path=asset.empty()?std::filesystem::path("C:/Windows/Fonts/segoeui.ttf"):AssetManager::ToAbsolute(asset);
@@ -53,7 +104,7 @@ const FontGlyph& UIFont::Glyph(RHI::Device& device,unsigned cp) {
     int advance,bearing;stbtt_GetCodepointHMetrics(&impl.info,actual,&advance,&bearing);
     FontGlyph g;g.advance=advance*impl.scale;
     int w=0,h=0,xoff=0,yoff=0;
-    auto* sdf=stbtt_GetCodepointSDF(&impl.info,impl.scale,actual,6,128,SdfDistanceScale,&w,&h,&xoff,&yoff);
+    auto* sdf=GlyphSdf(&impl.info,impl.scale,actual,6,128,SdfDistanceScale,&w,&h,&xoff,&yoff);
     if(sdf&&w>0&&h>0&&w<1022&&h<1022) {
         if(m_Pages.empty())m_Pages.push_back(std::make_shared<FontPage>());
         auto page=m_Pages.back();
@@ -69,7 +120,7 @@ const FontGlyph& UIFont::Glyph(RHI::Device& device,unsigned cp) {
         g.uv={page->x/1024.0f,page->y/1024.0f,(page->x+w)/1024.0f,(page->y+h)/1024.0f};
         page->x+=w+1;page->row=std::max(page->row,h);page->dirty=true;
     }
-    if(sdf)stbtt_FreeSDF(sdf,nullptr);
+    if(sdf)free(sdf);
     return m_Glyphs.emplace(cp,std::move(g)).first->second;
 }
 float UIFont::Kerning(unsigned a,unsigned b) const{return stbtt_GetCodepointKernAdvance(&m_Impl->info,a,b)*m_Impl->scale;}
