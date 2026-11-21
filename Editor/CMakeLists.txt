@@ -5,6 +5,8 @@ file(GLOB_RECURSE EDITOR_SOURCES CONFIGURE_DEPENDS
 add_executable(StardustEditor ${EDITOR_SOURCES})
 if(WIN32)
     target_sources(StardustEditor PRIVATE ${CMAKE_BINARY_DIR}/EngineIcon.rc)
+    # No console window in Release (the Console panel shows the log); Debug keeps it for printf debugging
+    target_link_options(StardustEditor PRIVATE $<$<NOT:$<CONFIG:Debug>>:/SUBSYSTEM:WINDOWS> /ENTRY:mainCRTStartup)
 endif()
 source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR}/src FILES ${EDITOR_SOURCES})
 target_include_directories(StardustEditor PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
