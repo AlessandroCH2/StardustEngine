@@ -12,6 +12,9 @@
     <GenerateRuntimeConfigurationFiles>true</GenerateRuntimeConfigurationFiles>
     <EnableDynamicLoading>true</EnableDynamicLoading>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <!-- Stardust.ScriptCore.xml: the /// summaries shown by the Script Editor when hovering a name -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591;CS1573;CS1572;CS1587;CS1574;CS1570;CS1734</NoWarn>
   </PropertyGroup>
 
 </Project>

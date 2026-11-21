@@ -58,10 +58,10 @@ struct Doc {
     float preferredX = -1;
 };
 
-struct Member { std::string name, kind, type, signature; };
-struct TypeInfo { std::string name, ns, kind, base; std::vector<Member> statics, instance; };
+struct Member { std::string name, kind, type, signature, doc; };
+struct TypeInfo { std::string name, ns, kind, base, doc; std::vector<Member> statics, instance; };
 
-struct Completion { std::string text, detail; char kind; std::string ns; }; // ns: namespace to import when a type is picked
+struct Completion { std::string text, detail; char kind; std::string ns; std::string doc; }; // ns: namespace to import when a type is picked
 
 // A compiler message for a line of a file (from the last script build)
 struct Diagnostic { int line = 0, col = 0; bool error = true; std::string code, message, symbol; };
@@ -237,8 +237,8 @@ void LoadSymbols() {
     s_Types.clear();
     for (auto& t : j["types"]) {
         TypeInfo info;
-        info.name = t.value("name", std::string()); info.ns = t.value("ns", std::string()); info.kind = t.value("kind", std::string()); info.base = t.value("base", std::string());
-        auto members = [](const json& list, std::vector<Member>& out) { for (auto& m : list) out.push_back({ m.value("n", std::string()), m.value("k", std::string()), m.value("t", std::string()), m.value("s", std::string()) }); };
+        info.name = t.value("name", std::string()); info.ns = t.value("ns", std::string()); info.kind = t.value("kind", std::string()); info.base = t.value("base", std::string()); info.doc = t.value("d", std::string());
+        auto members = [](const json& list, std::vector<Member>& out) { for (auto& m : list) out.push_back({ m.value("n", std::string()), m.value("k", std::string()), m.value("t", std::string()), m.value("s", std::string()), m.value("d", std::string()) }); };
         members(t.value("static", json::array()), info.statics);
         members(t.value("instance", json::array()), info.instance);
         if (info.name.empty()) continue;
@@ -345,11 +345,174 @@ void AddMembers(std::vector<Completion>& out, std::set<std::string>& seen, const
     for (const TypeInfo* t = FindType(type); t; t = FindType(t->base)) {
         for (auto& m : instance ? t->instance : t->statics) {
             if (!seen.insert(m.name).second) continue;
-            out.push_back({ m.name, m.signature, m.kind.empty() ? 'f' : m.kind[0] });
+            out.push_back({ m.name, m.signature, m.kind.empty() ? 'f' : m.kind[0], {}, m.doc });
         }
         if (t->base.empty() || t->base == t->name || t->base == "Object" || t->base == "ValueType") break;
     }
     (void)prefix;
+}
+
+// ---- hover and parameter help
+
+// Every member called `name` of the type and its bases (overloads included)
+std::vector<const Member*> MembersNamed(const std::string& type, const std::string& name, int access) { // 0 static, 1 instance, 2 both
+    std::vector<const Member*> out; std::set<std::string> seen;
+    for (const TypeInfo* t = FindType(type); t; t = FindType(t->base)) {
+        if (access != 1) for (auto& m : t->statics) if (m.name == name && seen.insert(m.signature).second) out.push_back(&m);
+        if (access != 0) for (auto& m : t->instance) if (m.name == name && seen.insert(m.signature).second) out.push_back(&m);
+        if (t->base.empty() || t->base == t->name || t->base == "Object" || t->base == "ValueType") break;
+    }
+    return out;
+}
+
+// Type of the expression that ends just before `dot` ("InputSystem.actions", "GetComponent<Rigidbody>()", "player.transform")
+bool ResolveExpression(const Doc& d, int line, int dot, std::string& type, bool& isStatic) {
+    const std::string& t = d.lines[line];
+    std::vector<std::string> tokens;
+    int i = dot;
+    for (;;) {
+        // Skip a call / index / generic argument list
+        std::string generic;
+        while (i > 0 && (t[i - 1] == ')' || t[i - 1] == ']' || t[i - 1] == '>')) {
+            const char close = t[i - 1], open = close == ')' ? '(' : close == ']' ? '[' : '<';
+            int depth = 0, j = i - 1;
+            for (; j >= 0; --j) { if (t[j] == close) ++depth; else if (t[j] == open && --depth == 0) break; }
+            if (j < 0) return false;
+            if (close == '>') generic = t.substr(j + 1, i - 2 - j);
+            i = j;
+        }
+        int b = i;
+        while (b > 0 && IsIdent((unsigned char)t[b - 1])) --b;
+        if (b == i) return false;
+        std::string name = t.substr(b, i - b);
+        // GetComponent<T>() / AddComponent<T>() give a T
+        if ((name == "GetComponent" || name == "AddComponent" || name == "As") && !generic.empty()) name = "\x01" + generic;
+        tokens.insert(tokens.begin(), name);
+        i = b;
+        if (i > 0 && t[i - 1] == '.') { --i; continue; }
+        break;
+    }
+    if (tokens.empty()) return false;
+    const std::string& first = tokens[0];
+    if (first[0] == '\x01') { type = first.substr(1); isStatic = false; }
+    else if (first == "this" || first == "base") { type = "ScriptBehaviour"; isStatic = false; }
+    else if (FindType(first)) { type = FindType(first)->name; isStatic = true; }
+    else {
+        type = TypeOfIdentifier(d, first, line); isStatic = false;
+        if (type.empty()) if (const Member* m = FindMember("ScriptBehaviour", first, true)) type = m->type;
+        if (type.empty()) return false;
+    }
+    for (size_t k = 1; k < tokens.size(); ++k) {
+        if (tokens[k][0] == '\x01') { type = tokens[k].substr(1); isStatic = false; continue; }
+        // A nested type (Http.Request) or a member
+        if (isStatic && FindType(tokens[k])) { type = tokens[k]; continue; }
+        auto members = MembersNamed(type, tokens[k], 2);
+        if (members.empty()) return false;
+        type = members[0]->type; isStatic = false;
+    }
+    return !type.empty();
+}
+
+struct SymbolHelp { std::string title; std::vector<const Member*> members; std::string doc; };
+
+// What is known about the identifier at line/col: overloads with their parameters, or the type
+bool HelpAt(const Doc& d, int line, int col, SymbolHelp& help) {
+    if (line < 0 || line >= (int)d.lines.size()) return false;
+    const std::string& t = d.lines[line];
+    if (col > (int)t.size()) return false;
+    int a = col, b = col;
+    while (a > 0 && IsIdent((unsigned char)t[a - 1])) --a;
+    while (b < (int)t.size() && IsIdent((unsigned char)t[b])) ++b;
+    if (a == b || std::isdigit((unsigned char)t[a])) return false;
+    const std::string name = t.substr(a, b - a);
+    if (Keywords(Lang::CSharp).count(name)) return false;
+    if (!s_SymbolsLoaded) LoadSymbols();
+    if (a > 0 && t[a - 1] == '.') {
+        std::string type; bool isStatic = false;
+        if (!ResolveExpression(d, line, a - 1, type, isStatic)) return false;
+        help.members = MembersNamed(type, name, isStatic ? 0 : 1);
+        if (help.members.empty()) help.members = MembersNamed(type, name, 2);
+        if (help.members.empty()) { if (const TypeInfo* nested = FindType(name)) { help.title = nested->kind + " " + nested->name; help.doc = nested->doc; return true; } return false; }
+        help.title = type + "." + name;
+        return true;
+    }
+    if (const TypeInfo* type = FindType(name)) {
+        help.title = type->kind + " " + (type->ns.empty() ? "" : type->ns + ".") + type->name + (type->base.empty() || type->base == "Object" || type->base == "ValueType" ? "" : " : " + type->base);
+        help.doc = type->doc;
+        return true;
+    }
+    help.members = MembersNamed("ScriptBehaviour", name, 2);
+    if (!help.members.empty()) { help.title = name; return true; }
+    // A method or field of this file
+    const std::regex method("(?:\\b(?:public|private|protected|internal|static|override|virtual|async)\\s+)*\\b([A-Za-z_][\\w<>\\[\\],. ]*?)\\s+" + name + "\\s*\\(([^)]*)\\)");
+    std::smatch m;
+    for (int l = 0; l < (int)d.lines.size(); ++l) {
+        const std::string& s = d.lines[l];
+        if (s.find(name) == std::string::npos || s.find(';') != std::string::npos && s.find('{') == std::string::npos && s.find(name + "(") == std::string::npos) continue;
+        if (std::regex_search(s, m, method) && m[1].str() != "new" && m[1].str() != "return" && m[1].str() != "else") {
+            static Member local; local = { name, "m", m[1].str(), m[1].str() + " " + name + "(" + m[2].str() + ")", "Defined at line " + std::to_string(l + 1) };
+            help.title = name; help.members = { &local };
+            return true;
+        }
+    }
+    const std::string type = TypeOfIdentifier(d, name, line);
+    if (!type.empty()) { help.title = type + " " + name; if (const TypeInfo* ti = FindType(type)) help.doc = ti->doc; return true; }
+    return false;
+}
+
+// The call the cursor is inside: the method name position and which argument (0-based)
+bool CallAtCursor(const Doc& d, int& nameCol, int& argument) {
+    const std::string& t = d.lines[d.cursor.line];
+    int depth = 0; argument = 0; bool inString = false;
+    for (int i = std::min(d.cursor.col, (int)t.size()) - 1; i >= 0; --i) {
+        const char c = t[i];
+        if (c == '"' && (i == 0 || t[i - 1] != '\\')) inString = !inString;
+        if (inString) continue;
+        if (c == ')' || c == ']' || c == '}') ++depth;
+        else if (c == '(' || c == '[' || c == '{') {
+            if (depth > 0) { --depth; continue; }
+            if (c != '(') return false;
+            int e = i; while (e > 0 && t[e - 1] == ' ') --e;
+            if (e > 0 && t[e - 1] == '>') { int g = 1, j = e - 2; for (; j >= 0 && g > 0; --j) { if (t[j] == '>') ++g; else if (t[j] == '<') --g; } e = j + 1; } // Method<T>(
+            if (e == 0 || !IsIdent((unsigned char)t[e - 1])) return false;
+            nameCol = e - 1;
+            return true;
+        } else if (c == ',' && depth == 0) ++argument;
+    }
+    return false;
+}
+
+// Draws "Type Name(int a, string b)" with one parameter highlighted
+void SignatureText(const std::string& signature, int highlight) {
+    const size_t open = signature.find('('), close = signature.rfind(')');
+    if (open == std::string::npos || close == std::string::npos || highlight < 0) { ImGui::TextUnformatted(signature.c_str()); return; }
+    ImGui::TextUnformatted(signature.substr(0, open + 1).c_str());
+    int index = 0; size_t start = open + 1;
+    for (size_t i = open + 1; i <= close; ++i) {
+        if (i == close || signature[i] == ',') {
+            ImGui::SameLine(0, 0);
+            const std::string part = signature.substr(start, i - start);
+            if (index == highlight) ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.35f, 1), "%s", part.c_str()); else ImGui::TextUnformatted(part.c_str());
+            if (i < close) { ImGui::SameLine(0, 0); ImGui::TextUnformatted(","); }
+            start = i + 1; ++index;
+        }
+    }
+    ImGui::SameLine(0, 0); ImGui::TextUnformatted(")");
+}
+
+void DrawHelp(const SymbolHelp& help, int argument) {
+    ImGui::PushTextWrapPos(ImGui::GetFontSize() * 36);
+    if (help.members.empty()) ImGui::TextColored(ImVec4(0.55f, 0.8f, 1, 1), "%s", help.title.c_str());
+    std::string doc = help.doc;
+    for (const Member* m : help.members) {
+        const char* kind = m->kind == "m" ? "method" : m->kind == "p" ? "property" : m->kind == "f" ? "field" : m->kind == "e" ? "enum value" : m->kind == "v" ? "event" : "";
+        ImGui::TextDisabled("%s", kind); ImGui::SameLine();
+        SignatureText(m->signature, m->kind == "m" ? argument : -1);
+        if (doc.empty()) doc = m->doc;
+    }
+    if (help.members.size() > 1) ImGui::TextDisabled("%d overloads", (int)help.members.size());
+    if (!doc.empty()) { ImGui::Separator(); ImGui::TextUnformatted(doc.c_str()); }
+    ImGui::PopTextWrapPos();
 }
 
 void UpdateCompletions(Doc& d, bool force) {
@@ -961,6 +1124,41 @@ void DrawDocument(Doc& d, const std::vector<Diagnostic>& diags, float bottom) {
     }
     (void)scrollX;
 
+    // C#: what the name under the mouse is (signature, parameters, summary), and the parameters of the call being typed
+    if (d.lang == Lang::CSharp && ScriptEngine::IsReady()) {
+        static Pos s_HoverPos{ -1, -1 }; static double s_HoverSince = 0;
+        const Pos hp = overText ? posAt(io.MousePos) : Pos{ -1, -1 };
+        if (hp.line != s_HoverPos.line || hp.col != s_HoverPos.col) { s_HoverPos = hp; s_HoverSince = ImGui::GetTime(); }
+        const bool onText = hp.line >= 0 && hp.col < (int)d.lines[hp.line].size() &&
+            io.MousePos.x < origin.x + gutter + (VisualCol(d.lines[hp.line], (int)d.lines[hp.line].size()) + 1) * charW;
+        SymbolHelp help;
+        if (onText && !ImGui::IsMouseDown(ImGuiMouseButton_Left) && ImGui::GetTime() - s_HoverSince > 0.35 && !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopup) &&
+            HelpAt(d, hp.line, hp.col, help)) {
+            ImGui::BeginTooltip();
+            if (code) ImGui::PushFont(ImGui::GetIO().FontDefault);
+            DrawHelp(help, -1);
+            if (code) ImGui::PopFont();
+            ImGui::EndTooltip();
+        } else if (focused && !s_CompletionOpen) {
+            int nameCol = 0, argument = 0;
+            SymbolHelp call;
+            if (CallAtCursor(d, nameCol, argument) && HelpAt(d, d.cursor.line, nameCol, call) && !call.members.empty()) {
+                const std::string& t = d.lines[d.cursor.line];
+                ImGui::SetNextWindowPos({ origin.x + gutter + VisualCol(t, nameCol) * charW, origin.y + d.cursor.line * lineH - 4 }, ImGuiCond_Always, { 0, 1 });
+                ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(37, 37, 38, 245));
+                if (ImGui::Begin("##signatureHelp", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
+                                 ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoInputs)) {
+                    ImGui::BringWindowToDisplayFront(ImGui::GetCurrentWindow());
+                    if (code) ImGui::PushFont(ImGui::GetIO().FontDefault);
+                    DrawHelp(call, argument);
+                    if (code) ImGui::PopFont();
+                }
+                ImGui::End();
+                ImGui::PopStyleColor();
+            }
+        }
+    }
+
     // Completion list under the cursor
     static bool completionHovered = false;
     if (s_CompletionOpen && (focused || completionHovered)) {
@@ -991,7 +1189,10 @@ void DrawDocument(Doc& d, const std::vector<Diagnostic>& diags, float bottom) {
             }
             if (s_CompletionIndex < (int)s_Completions.size() && !s_Completions[s_CompletionIndex].detail.empty()) {
                 ImGui::Separator();
+                ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 500);
                 ImGui::TextDisabled("%s", s_Completions[s_CompletionIndex].detail.c_str());
+                if (!s_Completions[s_CompletionIndex].doc.empty()) ImGui::TextUnformatted(s_Completions[s_CompletionIndex].doc.c_str());
+                ImGui::PopTextWrapPos();
             }
         }
         ImGui::End();

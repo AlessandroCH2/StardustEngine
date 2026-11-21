@@ -261,6 +261,11 @@ public class TestGameplay : ScriptBehaviour {
     Check(!ScriptEngine::FindClass("EditorBehaviour"),"Editor Only class leaked into runtime behaviours");
     Check(ScriptEngine::EditorCommands().size()==2,"Editor Only menu discovery failed");
     ScriptEngine::RunEditorCommand("Tests/Editor command");
+    {   // Script Editor hover help: signatures with parameters and /// summaries
+        auto symbols=nlohmann::json::parse(ScriptEngine::DrawEditorUI(R"({"kind":"symbols"})"));bool signature=false,summary=false;
+        for(auto& t:symbols["types"])if(t.value("name","")=="CharacterController")for(auto& m:t["instance"])if(m.value("n","")=="Move"){signature=m.value("s","")=="CollisionFlags Move(Vector3 motion)";summary=m.value("d","").find("Moves by")!=std::string::npos;}
+        Check(signature&&summary,"script editor symbols lack signatures or summaries");
+    }
     auto custom=nlohmann::json::parse(ScriptEngine::DrawEditorUI(R"({"kind":"inspector","class":"TestA","entity":"0000000000000001","fields":{"Number":7},"events":{"0":11}})"));Check(custom.value("handled",false)&&custom["fields"]["Number"]==11,"custom inspector field edit failed");
     custom=nlohmann::json::parse(ScriptEngine::DrawEditorUI(R"({"kind":"inspector","class":"TestA","entity":"0000000000000001","fields":{"Number":11},"events":{"1":true}})"));Check(custom["fields"]["Number"]==42,"custom inspector button failed");
     ScriptEngine::RunEditorCommand("Tests/Open Window");auto windows=nlohmann::json::parse(ScriptEngine::DrawEditorUI(R"({"kind":"windows"})"));Check(windows["windows"].size()==1,"custom editor window did not open");

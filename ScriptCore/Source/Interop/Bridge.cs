@@ -345,11 +345,43 @@ namespace Stardust.Interop
             if(t.IsGenericType){var name=t.Name;var tick=name.IndexOf('`');if(tick>0)name=name.Substring(0,tick);return name+"<"+string.Join(", ",t.GetGenericArguments().Select(ShortName))+">";}
             return t.Name.TrimEnd('&');
         }
+        // Summaries from Stardust.ScriptCore.xml, by documentation id ("M:Stardust.Rigidbody.AddForce(Stardust.Vector3,Stardust.ForceMode)")
+        static Dictionary<string,string> s_Docs;
+        static Dictionary<string,string> Docs(){
+            if(s_Docs!=null)return s_Docs;
+            s_Docs=new();
+            try{
+                var path=Path.ChangeExtension(typeof(Native).Assembly.Location,".xml");
+                if(!File.Exists(path))return s_Docs;
+                foreach(var member in System.Xml.Linq.XDocument.Load(path).Descendants("member")){
+                    var name=member.Attribute("name")?.Value;var summary=member.Element("summary");
+                    if(name==null||summary==null)continue;
+                    var text=string.Concat(summary.Nodes().Select(n=>n is System.Xml.Linq.XElement e?(e.Attribute("cref")?.Value is string c?c.Substring(c.IndexOf(':')+1).Split('.').Last():e.Value):n.ToString()));
+                    s_Docs[name]=System.Text.RegularExpressions.Regex.Replace(System.Net.WebUtility.HtmlDecode(text),@"\s+"," ").Trim();
+                }
+            }catch{}
+            return s_Docs;
+        }
+        static string DocTypeName(Type t)=>t.IsGenericType?(t.GetGenericTypeDefinition().FullName??t.Name).Split('`')[0].Replace('+','.')+"{"+string.Join(",",t.GetGenericArguments().Select(DocTypeName))+"}":t.IsGenericParameter?"`"+t.GenericParameterPosition:(t.FullName??t.Name).Replace('+','.');
+        static string DocOf(MemberInfo m){
+            var docs=Docs();if(docs.Count==0||m.DeclaringType==null)return null;
+            string owner=(m.DeclaringType.FullName??m.DeclaringType.Name).Replace('+','.');
+            string id=m switch{
+                MethodInfo mi=>"M:"+owner+"."+mi.Name+(mi.IsGenericMethod?"``"+mi.GetGenericArguments().Length:"")+(mi.GetParameters().Length>0?"("+string.Join(",",mi.GetParameters().Select(p=>p.ParameterType.IsByRef?DocTypeName(p.ParameterType.GetElementType())+"@":DocTypeName(p.ParameterType)))+")":""),
+                PropertyInfo=>"P:"+owner+"."+m.Name,FieldInfo=>"F:"+owner+"."+m.Name,EventInfo=>"E:"+owner+"."+m.Name,_=>null};
+            if(id!=null&&docs.TryGetValue(id,out var doc))return doc;
+            // Overloads documented once, generic signatures: same name
+            var prefix=(m is MethodInfo?"M:":m is PropertyInfo?"P:":"F:")+owner+"."+m.Name;
+            foreach(var pair in docs)if(pair.Key==prefix||pair.Key.StartsWith(prefix+"(")||pair.Key.StartsWith(prefix+"``"))return pair.Value;
+            return null;
+        }
         static JsonArray Symbols(){
             var types=new JsonArray();
             var list=new List<Type>();
             foreach(var t in typeof(Native).Assembly.GetExportedTypes())if(!t.Namespace?.Contains("Interop")??true)list.Add(t);
             foreach(var pair in s_Types)if(!list.Contains(pair.Value.Type))list.Add(pair.Value.Type);
+            // Every public class of the game scripts (static helpers too), so the Script Editor knows their members
+            if(s_Context!=null)foreach(var asm in s_Context.Assemblies)foreach(var t in SafeTypes(asm))if(t.IsPublic&&!list.Contains(t))list.Add(t);
             list.AddRange(new[]{typeof(Math),typeof(MathF),typeof(string),typeof(List<int>).GetGenericTypeDefinition(),typeof(Dictionary<int,int>).GetGenericTypeDefinition(),typeof(Console),typeof(DateTime),typeof(TimeSpan),typeof(Random),typeof(Array),typeof(Enumerable)});
             foreach(var t in list){
                 if(t.IsNested&&!t.IsNestedPublic)continue;
@@ -365,10 +397,14 @@ namespace Stardust.Interop
                     else if(m is EventInfo ev){kindName="v";typeName=ShortName(ev.EventHandlerType);isStatic=false;signature="event "+typeName+" "+ev.Name;}
                     else continue;
                     if(!seen.Add((isStatic?"s":"i")+m.Name+signature))continue;
-                    (isStatic?statics:instance).Add(new JsonObject{["n"]=m.Name,["k"]=kindName,["t"]=typeName,["s"]=signature});
+                    var entry=new JsonObject{["n"]=m.Name,["k"]=kindName,["t"]=typeName,["s"]=signature};
+                    if(DocOf(m) is string doc&&doc.Length>0)entry["d"]=doc;
+                    (isStatic?statics:instance).Add(entry);
                 }
                 var tn=t.Name;var tick=tn.IndexOf('`');if(tick>0)tn=tn.Substring(0,tick);
-                types.Add(new JsonObject{["name"]=tn,["ns"]=t.Namespace??"",["kind"]=t.IsEnum?"enum":t.IsInterface?"interface":t.IsValueType?"struct":"class",["base"]=t.BaseType!=null?ShortName(t.BaseType):"",["static"]=statics,["instance"]=instance});
+                var typeEntry=new JsonObject{["name"]=tn,["ns"]=t.Namespace??"",["kind"]=t.IsEnum?"enum":t.IsInterface?"interface":t.IsValueType?"struct":"class",["base"]=t.BaseType!=null?ShortName(t.BaseType):"",["static"]=statics,["instance"]=instance};
+                if(Docs().TryGetValue("T:"+(t.FullName??t.Name).Replace('+','.'),out var typeDoc))typeEntry["d"]=typeDoc;
+                types.Add(typeEntry);
             }
             return types;
         }
