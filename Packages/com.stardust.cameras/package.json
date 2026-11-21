@@ -1,0 +1,9 @@
+{
+  "name": "com.stardust.cameras",
+  "displayName": "Virtual Cameras",
+  "version": "1.0.0",
+  "description": "Game cameras without camera code: virtual cameras that follow, orbit (third person with collision), ride a spline rail or aim at targets, a Camera Director that picks the one with the highest priority and blends between them, and camera shake.",
+  "dependencies": {
+    "com.stardust.core": "*"
+  }
+}
