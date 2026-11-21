@@ -53,7 +53,7 @@ const FontGlyph& UIFont::Glyph(RHI::Device& device,unsigned cp) {
     int advance,bearing;stbtt_GetCodepointHMetrics(&impl.info,actual,&advance,&bearing);
     FontGlyph g;g.advance=advance*impl.scale;
     int w=0,h=0,xoff=0,yoff=0;
-    auto* sdf=stbtt_GetCodepointSDF(&impl.info,impl.scale,actual,6,128,24,&w,&h,&xoff,&yoff);
+    auto* sdf=stbtt_GetCodepointSDF(&impl.info,impl.scale,actual,6,128,SdfDistanceScale,&w,&h,&xoff,&yoff);
     if(sdf&&w>0&&h>0&&w<1022&&h<1022) {
         if(m_Pages.empty())m_Pages.push_back(std::make_shared<FontPage>());
         auto page=m_Pages.back();

@@ -27,7 +27,7 @@ std::string MaterialKey(const Material& m){nlohmann::json j;m.ToJson(j);return j
 Material BaseMaterial(const std::string& path,glm::vec4 color){Material m;if(!path.empty())if(auto loaded=AssetManager::GetMaterial(path))m=*loaded;m.shader=ShaderType::UI;m.doubleSided=true;m.color*=color;m.normalStrength=0;m.roughness=0;m.alphaCutoff=0;return m;}
 struct V {glm::vec2 position,uv;};
 // A convex polygon in the rect's local space, clipped to the rect (clip) and to the masks
-void Poly(std::vector<Batch>& batches,const Material& material,const UIRect& rect,std::vector<V> polygon,bool clip=false) {
+void Poly(std::vector<Batch>& batches,const Material& material,const UIRect& rect,std::vector<V> polygon,bool clip=false,float clipPadding=0) {
     auto trim=[&](const std::array<glm::vec2,4>& mask){
         float area=0;for(int i=0;i<4;++i){auto a=mask[i],b=mask[(i+1)%4];area+=a.x*b.y-a.y*b.x;}
         float sign=area>=0?1.f:-1.f;
@@ -36,7 +36,7 @@ void Poly(std::vector<Batch>& batches,const Material& material,const UIRect& rec
             for(auto current:polygon){float cs=side(current.position);if((ps>=0)!=(cs>=0)){float t=ps/(ps-cs);next.push_back({glm::mix(previous.position,current.position,t),glm::mix(previous.uv,current.uv,t)});}if(cs>=0)next.push_back(current);previous=current;ps=cs;}polygon=std::move(next);
         }
     };
-    if(clip)trim({glm::vec2(0),glm::vec2(rect.size.x,0),rect.size,glm::vec2(0,rect.size.y)});
+    if(clip)trim({glm::vec2(-clipPadding),glm::vec2(rect.size.x+clipPadding,-clipPadding),rect.size+clipPadding,glm::vec2(-clipPadding,rect.size.y+clipPadding)});
     for(auto& v:polygon)v.position=Point(rect.localToCanvas,v.position);
     for(const auto& mask:rect.masks)trim(mask);
     if(polygon.size()<3)return;
@@ -44,9 +44,9 @@ void Poly(std::vector<Batch>& batches,const Material& material,const UIRect& rec
     for(auto& v:polygon){glm::vec3 maskCoord(0);if(rect.maskTexture){auto t=glm::vec2(rect.maskFromCanvas*glm::vec4(v.position,0,1))/glm::max(rect.maskSize,glm::vec2(1e-3f));maskCoord={glm::mix(rect.maskUv.x,rect.maskUv.z,t.x),glm::mix(rect.maskUv.w,rect.maskUv.y,t.y),1};}batch.vertices.push_back({{v.position.x,v.position.y,0},maskCoord,v.uv,{1,0,0,1}});}
     for(u32 i=1;i+1<polygon.size();++i)batch.indices.insert(batch.indices.end(),{base,base+i,base+i+1});
 }
-void Quad(std::vector<Batch>& batches,const Material& material,const UIRect& rect,glm::vec2 min,glm::vec2 size,glm::vec4 uv,bool clip=false,float italic=0) {
+void Quad(std::vector<Batch>& batches,const Material& material,const UIRect& rect,glm::vec2 min,glm::vec2 size,glm::vec4 uv,bool clip=false,float italic=0,float clipPadding=0) {
     if(size.x<=0||size.y<=0)return;
-    Poly(batches,material,rect,{{{min.x,min.y},{uv.x,uv.w}},{{min.x+size.x,min.y},{uv.z,uv.w}},{{min.x+size.x+italic,min.y+size.y},{uv.z,uv.y}},{{min.x+italic,min.y+size.y},{uv.x,uv.y}}},clip);
+    Poly(batches,material,rect,{{{min.x,min.y},{uv.x,uv.w}},{{min.x+size.x,min.y},{uv.z,uv.w}},{{min.x+size.x+italic,min.y+size.y},{uv.z,uv.y}},{{min.x+italic,min.y+size.y},{uv.x,uv.y}}},clip,clipPadding);
 }
 void Image(std::vector<Batch>& batches,const UIRect& r,const UIImageComponent& image,RHI::Device& device,glm::vec2 position=glm::vec2(0),glm::vec2 overrideSize=glm::vec2(-1),glm::vec4 multiply=glm::vec4(1)) {
     auto sprite=SpriteAsset::Load(image.sprite.empty()?image.texture:image.sprite);
@@ -68,6 +68,9 @@ void Image(std::vector<Batch>& batches,const UIRect& r,const UIImageComponent& i
     Quad(batches,material,r,position,size,uv);
 }
 void Text(std::vector<Batch>& batches,const UIRect& r,const UITextComponent& text,RHI::Device& device) {
+    // Composite effects for the whole label before its fill. Per-glyph compositing
+    // lets the outline/shadow of a later letter cover the face of an earlier one.
+    std::vector<Batch> shadows,outlines,foreground;
     TextStyle base;base.color=text.color*glm::vec4(1,1,1,r.alpha);base.size=text.fontSize;base.font=text.font;
     auto tokens=ParseRichText(text.text,base,text.richText);
     struct Letter{TextToken token;std::shared_ptr<UIFont> font;FontGlyph glyph;float advance;};
@@ -95,17 +98,23 @@ void Text(std::vector<Batch>& batches,const UIRect& r,const UITextComponent& tex
     float top=r.size.y;if(text.verticalAlignment==1)top+=(height-r.size.y)*.5f;else if(text.verticalAlignment==2)top=height;
     for(auto& line:lines){float x=text.alignment==1?(r.size.x-line.width)*.5f:text.alignment==2?r.size.x-line.width:0;
         for(auto index:line.chars){auto& l=letters[index];auto& style=l.token.style;float factor=style.size*scale/48.f;float baseline=top-l.font->Ascent()*factor;
-            if(!l.token.sprite.empty()){UIImageComponent image;image.sprite=l.token.sprite;image.color=style.color;Image(batches,r,image,device,{x,baseline},{style.size*scale,style.size*scale});}
+            if(!l.token.sprite.empty()){UIImageComponent image;image.sprite=l.token.sprite;image.color=style.color;Image(foreground,r,image,device,{x,baseline},{style.size*scale,style.size*scale});}
             else if(l.glyph.page){
-                auto material=BaseMaterial(text.material,style.color);material.runtimeAlbedo=l.glyph.page->texture;material.normalStrength=1;material.roughness=text.outlineWidth;material.alphaCutoff=style.bold?.43f:.5f;material.emissive=glm::vec3(text.outlineColor);material.emissiveIntensity=1;
+                auto material=BaseMaterial(text.material,style.color);material.runtimeAlbedo=l.glyph.page->texture;material.normalStrength=1;material.roughness=0;material.alphaCutoff=style.bold?.43f:.5f;material.emissive=glm::vec3(style.color);material.emissiveIntensity=1;
                 glm::vec2 p={x+l.glyph.offset.x*factor,baseline-(l.glyph.offset.y+l.glyph.size.y)*factor};auto size=l.glyph.size*factor;
-                if(text.shadowColor.a>0){auto shadow=material;shadow.color=text.shadowColor;shadow.color.a*=r.alpha;shadow.roughness=0;Quad(batches,shadow,r,p+text.shadowOffset,size,l.glyph.uv,text.overflow!=1,style.italic?size.y*.18f:0);}
-                Quad(batches,material,r,p,size,l.glyph.uv,text.overflow!=1,style.italic?size.y*.18f:0);
-                if(style.underline||style.strike){auto decoration=BaseMaterial("",style.color);if(style.underline)Quad(batches,decoration,r,{x,baseline-style.size*scale*.1f},{l.advance*scale,std::max(1.f,style.size*scale*.055f)},{0,0,1,1},text.overflow!=1);if(style.strike)Quad(batches,decoration,r,{x,baseline+style.size*scale*.3f},{l.advance*scale,std::max(1.f,style.size*scale*.055f)},{0,0,1,1},text.overflow!=1);}
+                if(text.shadowColor.a>0){auto shadow=material;shadow.color=text.shadowColor;shadow.color.a*=r.alpha;shadow.emissive=glm::vec3(text.shadowColor);Quad(shadows,shadow,r,p+text.shadowOffset,size,l.glyph.uv,text.overflow!=1,style.italic?size.y*.18f:0);}
+                // Outline width is an SDF threshold delta. Convert it to local units,
+                // including the antialias fringe. Only expand the label's own clip;
+                // ancestor masks and scroll views must still crop the entire effect.
+                float outlinePadding=text.outlineWidth>0?(text.outlineWidth*255.f/UIFont::SdfDistanceScale+1.f)*factor:0;
+                if(text.outlineWidth>0&&text.outlineColor.a>0){auto outline=material;outline.color=text.outlineColor;outline.color.a*=style.color.a;outline.emissive=glm::vec3(text.outlineColor);outline.alphaCutoff-=text.outlineWidth;Quad(outlines,outline,r,p,size,l.glyph.uv,text.overflow!=1,style.italic?size.y*.18f:0,outlinePadding);}
+                Quad(foreground,material,r,p,size,l.glyph.uv,text.overflow!=1,style.italic?size.y*.18f:0,outlinePadding);
+                if(style.underline||style.strike){auto decoration=BaseMaterial("",style.color);if(style.underline)Quad(foreground,decoration,r,{x,baseline-style.size*scale*.1f},{l.advance*scale,std::max(1.f,style.size*scale*.055f)},{0,0,1,1},text.overflow!=1);if(style.strike)Quad(foreground,decoration,r,{x,baseline+style.size*scale*.3f},{l.advance*scale,std::max(1.f,style.size*scale*.055f)},{0,0,1,1},text.overflow!=1);}
             }
             x+=l.advance*scale;
         }top-=line.height;
     }
+    for(auto* pass:{&shadows,&outlines,&foreground})for(auto& batch:*pass)batches.push_back(std::move(batch));
 }
 }
 namespace {

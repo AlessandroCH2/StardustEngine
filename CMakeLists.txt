@@ -48,6 +48,8 @@ add_executable(StardustPacker Tools/AssetPacker.cpp)
 # Test programs: off by default, turn on with -DSTARDUST_BUILD_TESTS=ON
 option(STARDUST_BUILD_TESTS "Build the test programs" OFF)
 if(STARDUST_BUILD_TESTS)
+add_executable(StardustTextOutlineTests EXCLUDE_FROM_ALL Tests/TextOutlineTests.cpp)
+target_link_libraries(StardustTextOutlineTests PRIVATE StardustEngine)
 if(WIN32)
 add_executable(StardustRuntimeTests EXCLUDE_FROM_ALL Tests/RuntimeTests.cpp)
 target_link_libraries(StardustRuntimeTests PRIVATE StardustEngine)

@@ -15,6 +15,7 @@ struct FontPage { Ref<RHI::Texture> texture; std::vector<u8> pixels; int x=1,y=1
 struct FontGlyph { std::shared_ptr<FontPage> page; glm::vec4 uv{0}; glm::vec2 offset{0},size{0}; float advance=0; };
 class UIFont {
 public:
+    static constexpr float SdfDistanceScale = 24.f;
     static std::shared_ptr<UIFont> Get(RHI::Device& device,const std::string& asset);
     static void Flush(RHI::Device& device);
     static void Clear();
