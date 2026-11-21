@@ -25,6 +25,7 @@
 #include "ShaderAssets.h"
 #include "Scene/TrailRenderer.h"
 #include "Renderer/ReflectionProbes.h"
+#include "Scene/GpuParticles.h"
 #include "ShaderGraphEditor.h"
 #include "ScriptEditor.h"
 #ifdef _WIN32
@@ -119,7 +120,7 @@ void EditorApp::OnShutdown() {
     TerrainData::ClearCache();
     AssetManager::Shutdown();
     PhysicsWorld::ShutdownJolt();
-    ReflectionProbes::Shutdown();MeshLibrary::Shutdown();Pak::UnmountAll();
+    ReflectionProbes::Shutdown();GpuParticles::Shutdown();MeshLibrary::Shutdown();Pak::UnmountAll();
 }
 
 void EditorApp::NewScene() {

@@ -112,7 +112,7 @@ void SampleShape(ParticleSystemComponent& c, glm::vec3& position, glm::vec3& dir
 }
 
 void Spawn(ParticleSystemComponent& c, const glm::mat4& world, int count) {
-    count = std::min(count, std::max(0, c.maxParticles) - (int)c.particles.size());
+    count = std::min(count, std::max(0, c.maxParticles) - (c.gpu ? (int)c.gpuPending.size() : (int)c.particles.size()));
     for (int i = 0; i < count; ++i) {
         Particle p;
         glm::vec3 position, direction;
@@ -132,7 +132,8 @@ void Spawn(ParticleSystemComponent& c, const glm::mat4& world, int count) {
         p.angularVelocity = glm::radians(Range(c, c.angularVelocity));
         p.lifetime = std::max(0.001f, Range(c, c.startLifetime));
         p.seed = Random(c);
-        c.particles.push_back(p);
+        if (c.gpu) { c.gpuPending.push_back(p); c.gpuLastDeath = std::max(c.gpuLastDeath, c.gpuClock + p.lifetime); ++c.gpuSpawned; }
+        else c.particles.push_back(p);
     }
 }
 
@@ -151,6 +152,7 @@ void FireBursts(ParticleSystemComponent& c, const glm::mat4& world, float from, 
 void Start(ParticleSystemComponent& c) {
     c.started = true;
     c.particles.clear();
+    c.gpuPending.clear(); c.gpuClear = true; c.gpuClock = c.gpuLastDeath = 0; c.gpuSpawned = 0;
     c.time = 0; c.emitAccumulator = 0; c.hasLastPosition = false;
     c.random = c.seed ? c.seed : (u32)std::random_device{}() | 1u;
     c.playing = c.emitting = c.playOnAwake;
@@ -188,6 +190,14 @@ void Step(Scene& scene, EntityID e, ParticleSystemComponent& c, float dt) {
         if (c.time >= c.duration) { if (c.looping) c.time = std::fmod(c.time, std::max(0.05f, c.duration)); else c.emitting = false; }
     }
     c.lastPosition = emitterPosition; c.hasLastPosition = true;
+
+    // GPU: the compute shader moves the particles (GpuParticles.cpp); here only the time they need
+    if (c.gpu) {
+        c.particles.clear();
+        c.gpuDt += dt; c.gpuClock += dt;
+        if (!c.emitting && c.gpuClock >= c.gpuLastDeath) c.playing = false;
+        return;
+    }
 
     // Forces in simulation space
     glm::vec3 gravity(0, -9.81f * c.gravityModifier, 0);
@@ -233,6 +243,7 @@ void Step(Scene& scene, EntityID e, ParticleSystemComponent& c, float dt) {
 
 void ResetRuntime(ParticleSystemComponent& c) {
     c.particles.clear();
+    c.gpuPending.clear(); c.gpuClear = true; c.gpuClock = c.gpuLastDeath = 0; c.gpuSpawned = 0;
     c.started = false; c.playing = c.paused = c.emitting = false;
     c.time = c.emitAccumulator = c.delayLeft = 0;
     c.hasLastPosition = false;
@@ -272,7 +283,7 @@ void Stop(ParticleSystemComponent& c, bool clear) {
     c.emitting = false; c.paused = false;
     if (clear) { c.particles.clear(); c.playing = false; }
 }
-void Clear(ParticleSystemComponent& c) { c.particles.clear(); }
+void Clear(ParticleSystemComponent& c) { c.particles.clear(); c.gpuPending.clear(); c.gpuClear = true; c.gpuLastDeath = c.gpuClock; }
 void Emit(Scene& scene, EntityID e, ParticleSystemComponent& c, int count) {
     if (!c.started) { Start(c); c.playing = c.emitting = false; }
     Spawn(c, scene.GetWorldMatrix(e), std::max(0, count));
@@ -441,7 +452,7 @@ void ToJson(const ParticleSystemComponent& c, json& j) {
     j["textureSheet"] = c.textureSheet; j["tilesX"] = c.tilesX; j["tilesY"] = c.tilesY; j["sheetFps"] = c.sheetFps; j["sheetCycles"] = c.sheetCycles; j["randomStartFrame"] = c.randomStartFrame;
     j["texture"] = c.texture; j["material"] = c.material; j["blendMode"] = c.blendMode; j["renderMode"] = c.renderMode;
     j["lengthScale"] = c.lengthScale; j["speedScale"] = c.speedScale; j["intensity"] = c.intensity; j["sortByDistance"] = c.sortByDistance;
-    j["sortingOrder"] = c.sortingOrder; j["seed"] = c.seed;
+    j["sortingOrder"] = c.sortingOrder; j["seed"] = c.seed; j["gpu"] = c.gpu;
 }
 
 void FromJson(const json& j, ParticleSystemComponent& c) {
@@ -486,6 +497,7 @@ void FromJson(const json& j, ParticleSystemComponent& c) {
     Read(j, "texture", c.texture); Read(j, "material", c.material); Read(j, "blendMode", c.blendMode); Read(j, "renderMode", c.renderMode);
     Read(j, "lengthScale", c.lengthScale); Read(j, "speedScale", c.speedScale); Read(j, "intensity", c.intensity); Read(j, "sortByDistance", c.sortByDistance);
     Read(j, "sortingOrder", c.sortingOrder); Read(j, "seed", c.seed);
+    if (auto it = j.find("gpu"); it != j.end() && it->is_boolean() && it->get<bool>() != c.gpu) { c.gpu = it->get<bool>(); c.particles.clear(); c.gpuPending.clear(); c.gpuClear = true; }
     c.maxParticles = std::clamp(c.maxParticles, 0, 100000);
     c.tilesX = std::clamp(c.tilesX, 1, 64); c.tilesY = std::clamp(c.tilesY, 1, 64);
     c.blendMode = std::clamp(c.blendMode, 0, 1); c.renderMode = std::clamp(c.renderMode, 0, 3); c.simulationSpace = std::clamp(c.simulationSpace, 0, 1);

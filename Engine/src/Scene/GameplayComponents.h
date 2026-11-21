@@ -176,4 +176,28 @@ struct DecalComponent {
     int sortingOrder = 0;
 };
 
+// ------------------------------------------------------------------ Inverse kinematics
+// Bends bones after the animation, every frame in play mode (the animation itself is not changed).
+// Two Bone: a limb (upper arm, forearm, hand) reaches the target; the hint (an object near the elbow or
+// knee) chooses the bend direction. Look At: a bone (head, spine, turret) turns towards the target.
+// Foot Placement: a leg's foot is put on the ground under it (ray cast), on slopes and steps.
+enum class IKType : int { TwoBone = 0, LookAt = 1, FootPlacement = 2 };
+struct IKConstraintComponent {
+    int type = (int)IKType::TwoBone;
+    float weight = 1.0f;
+    u64 root = 0, mid = 0, tip = 0;   // Two Bone / Foot: upper bone, middle (elbow/knee), end (hand/foot). Look At: tip only
+    u64 target = 0, hint = 0;         // objects; Foot: no target (the ground)
+    bool matchTargetRotation = false; // Two Bone: the end bone takes the target's rotation
+    // Look At
+    int aimAxis = 4;                  // 0 +X, 1 -X, 2 +Y, 3 -Y, 4 +Z, 5 -Z (bone local axis that points at the target)
+    float maxAngle = 80.0f;           // degrees from the animated direction
+    // Foot Placement
+    float footOffset = 0.08f;         // ankle height above the ground
+    float maxStep = 0.5f;             // how far up or down the foot may move
+    bool alignToGround = true;        // the foot follows the slope
+    u64 ignore = 0;                   // object (and its colliders) the ray cast ignores: the character
+    // runtime
+    glm::vec3 lastTarget{ 0.0f }; bool grounded = false;
+};
+
 } // namespace Stardust

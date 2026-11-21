@@ -151,5 +151,7 @@ public sealed class ParticleSystem : Component {
     /// <summary>Colour multiplier; above 1 the particles glow with bloom.</summary>
     public float intensity { get => F("intensity", 1); set => Set("intensity", value); }
     public bool sortByDistance { get => P.Value(this, T, "sortByDistance", false); set => Set("sortByDistance", value); }
+    /// <summary>A compute shader simulates and draws the particles (hundreds of thousands); they are not sorted.</summary>
+    public bool simulateOnGpu { get => P.Value(this, T, "gpu", false); set => Set("gpu", value); }
     public int sortingOrder { get => P.Value(this, T, "sortingOrder", 0); set => Set("sortingOrder", value); }
 }

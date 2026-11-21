@@ -55,6 +55,7 @@ namespace Stardust
             if(t==typeof(Spline))return 43;
             if(t==typeof(ReflectionProbe))return 44;
             if(t==typeof(Decal))return 45;
+            if(t==typeof(IKConstraint))return 46;
             if(t==typeof(Rigidbody2D))return 28;
             if(t==typeof(BoxCollider2D))return 29;
             if(t==typeof(CircleCollider2D))return 30;

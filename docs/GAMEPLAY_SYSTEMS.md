@@ -1,4 +1,4 @@
-# Gameplay and rendering systems (0.7)
+# Gameplay and rendering systems
 
 Character movement, joints, navigation, coroutines, HTTP, input actions, audio mixing, line renderers,
 splines, reflection probes, decals and the new post effects. Every component has an Inspector, is saved
@@ -213,3 +213,57 @@ In the **Environment** component (Lighting window):
 The same values are on the C# `Environment` component (`ambientOcclusion`, `temporalAntiAliasing`,
 `depthOfField`, `focusDistance`, `motionBlur`...). **Project Settings > Quality** can turn ambient occlusion,
 temporal anti-aliasing and depth of field / motion blur off for slower machines (`QualitySettings` from C#).
+
+## Save data
+
+`SaveData` keeps values by key (settings, best score, unlocked levels) and whole objects in named slots
+(save games), as JSON files in `Application.GetPersistentDataPath()/SaveData`.
+
+```csharp
+SaveData.SetInt("bestScore", 1200);
+SaveData.SetFloat("musicVolume", 0.8f);
+int best = SaveData.GetInt("bestScore");
+SaveData.Save();                                   // also automatic when play stops or the game quits
+
+public class Progress { public int level; public Vector3 position; public List<string> items; }
+SaveData.Save("slot1", new Progress { level = 3, position = player.transform.position });
+var progress = SaveData.Load<Progress>("slot1");   // null (or a fallback) when the slot does not exist
+foreach (var slot in SaveData.slots) Debug.Log(slot); // newest first
+```
+
+Files are replaced in one step, so a crash while saving keeps the previous save.
+
+## Inverse kinematics
+
+**Add Component > Physics > IK Constraint**, usually on a helper object of the character. It bends bones
+after the animation every frame in play mode; the animation clips are not changed, and **Weight** blends it
+in and out.
+
+- **Two Bone**: a limb (upper arm, forearm, hand) reaches a **Target**. The optional **Hint** (an object
+  near the elbow or knee) chooses the bend direction; **Match Target Rotation** turns the hand like the target.
+- **Look At**: a bone (head, spine, turret) turns towards the target along its **Aim Axis**, at most
+  **Max Angle** from the animated direction.
+- **Foot Placement**: a foot is put on the ground under it (ray cast), on slopes and steps up to
+  **Max Step**. Set **Ignore** to the character, so the ray does not hit its own collider.
+
+```csharp
+var ik = GetComponent<IKConstraint>();
+ik.target = Entity.Find("Door handle");
+ik.weight = Mathf.Lerp(ik.weight, reaching ? 1 : 0, dt * 8);
+```
+
+## Occlusion culling
+
+Objects hidden behind big meshes (buildings, walls, cliffs) are not drawn. Each frame the largest
+opaque meshes on screen are drawn into a small depth buffer on the CPU and the boxes of the other objects
+are tested against it (at most 16 simple occluders, 8000 triangles: about 0.1 ms in the city). When it hides almost nothing, as in open views, it pauses for a few frames. It is conservative, so the image does not change, only the work: the Stats show the
+hidden draws. It is on by default; **Project Settings > Quality > Occlusion Culling** (or
+`QualitySettings.occlusionCulling`) turns it off.
+
+## GPU particles
+
+**Simulate on GPU** in the renderer section of a Particle System moves the particles in a compute shader:
+hundreds of thousands per system (Max Particles up to about a million). Emission, shapes, bursts, the
+modules over lifetime, noise, collision with the ground plane and texture sheets work as on the CPU. GPU
+particles are not sorted by distance (additive blending hides it), and `particleCount` from scripts counts
+only CPU particles.

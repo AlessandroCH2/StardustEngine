@@ -4,6 +4,7 @@
 #include "Renderer/Camera.h"
 #include "Renderer/Mesh.h"
 #include "Renderer/PostProcess.h"
+#include "Renderer/OcclusionCulling.h"
 #include "Renderer/Material.h"
 #include "Renderer/Nature/TerrainData.h"
 #include <array>
@@ -128,6 +129,7 @@ struct RenderStats {
     u32 shadowDraws = 0, shadowCulled = 0;
     u32 instancedObjects=0,shadowInstances=0;
     u32 culledDraws = 0;   // mesh draws skipped because they are outside the camera's view
+    u32 occludedDraws = 0, occluders = 0; // draws hidden behind the biggest meshes (occlusion culling)
 };
 
 // Renders a scene view (editor scene view, game view, or the player) into its own set of targets.
@@ -146,7 +148,7 @@ public:
     const RenderCamera& Camera()const{return m_Camera;}
     void SubmitUI(const Ref<Mesh>& mesh, const glm::mat4& transform, const Material& material, u32 entityId, bool overlay);
     // Particle quads (world space, colour in the vertex tangent): drawn with the transparent objects, alpha or additive
-    void SubmitParticles(const Ref<Mesh>& mesh, const Material& material, u32 entityId, u32 indexCount, bool additive, int sortingOrder);
+    void SubmitParticles(const Ref<Mesh>& mesh, const Material& material, u32 entityId, u32 indexCount, bool additive, int sortingOrder, bool gpu = false);
     size_t TerrainCount()const{return m_ActiveTerrains.size();}
     size_t SubmittedDrawCount()const{return m_Draws.size();}
     void SetTerrain(const Ref<TerrainData>& terrain, const glm::vec3& origin, u32 entityId);
@@ -208,6 +210,7 @@ private:
     Ref<RHI::Texture> m_Display; // display-size image when it differs from the render size
     u32 m_DisplayWidth = 0, m_DisplayHeight = 0;
     Ref<RHI::Pipeline> m_ParticlePipelines[2]; // alpha, additive
+    Ref<RHI::Pipeline> m_GpuParticlePipelines[2]; // GPU-simulated particles (GpuParticle.vs)
     std::array<Ref<RHI::Buffer>, RHI::kFramesInFlight> m_DrawBuffers;
     std::array<Ref<RHI::Buffer>, RHI::kFramesInFlight> m_InstanceBuffers;
     u32 m_InstanceOffset=0;
@@ -225,6 +228,10 @@ private:
     u64 m_FrameCounter = 0;
     bool m_HasHistory = false;
     void RenderDecals(RHI::CommandList& cmd, RHI::Buffer* frameBuf);
+    void CullOccluded(const glm::mat4& viewProj);
+    OcclusionBuffer m_Occlusion;
+    std::vector<char> m_Occluded;
+    u32 m_OcclusionSkip = 0;   // frames left before trying again, when the last run hid almost nothing
     void RenderSSAO(RHI::CommandList& cmd, RHI::Buffer* frameBuf);
     std::array<Ref<RHI::Buffer>, RHI::kFramesInFlight> m_LightBuffers;
     Ref<RHI::Pipeline> m_OutlinePipeline;

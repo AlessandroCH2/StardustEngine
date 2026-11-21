@@ -41,6 +41,8 @@
 #include "Scene/Navigation.h"
 #include "Scene/Splines.h"
 #include "Scene/GameplaySerialization.h"
+#include "Scene/InverseKinematics.h"
+#include "Renderer/OcclusionCulling.h"
 #include "Renderer/Camera.h"
 
 using namespace Stardust;
@@ -229,6 +231,8 @@ public class TestWindow : EditorWindow {public int Count;public override void On
 using System.Collections;
 using Stardust.InputSystem;
 public class TestGameplay : ScriptBehaviour {
+ public int Saved;
+ public class Progress { public int level; public string name; public float[] scores; }
  public int CoroutineSteps; public int Invoked; public int Repeats; public int AwaitOnMain; public int HttpDone; public int HttpOnMain; public int Actions; public int Grounded; public int Nested; public int Stopped=1;
  Coroutine endless;
  IEnumerator Steps(){CoroutineSteps=1;yield return null;CoroutineSteps=2;yield return new WaitForSeconds(0.05f);CoroutineSteps=3;yield return Inner();CoroutineSteps=4;yield return new WaitUntil(()=>Invoked>0);CoroutineSteps=5;}
@@ -245,10 +249,17 @@ public class TestGameplay : ScriptBehaviour {
   jump.ApplyBindingOverride(0,"<Keyboard>/e");var saved=asset.SaveBindingOverridesAsJson();asset.RemoveAllBindingOverrides();asset.LoadBindingOverridesFromJson(saved);
   Actions=move!=null&&move.ReadValue<Vector2>().magnitude==0&&jump.bindings[0].effectivePath=="<Keyboard>/e"&&move.GetBindingDisplayString(0)=="W/A/S/D"&&jump.enabled?1:0;
   var cc=AddComponent<CharacterController>();cc.stepOffset=0.4f;
+  SaveData.SetInt("best",1200);SaveData.SetString("player","Ada");SaveData.Save();SaveData.Save("slot1",new Progress{level=3,name="Ada",scores=new[]{1f,2f}});
+  var loaded=SaveData.Load<Progress>("slot1");
+  Saved=SaveData.GetInt("best")==1200&&SaveData.GetString("player")=="Ada"&&SaveData.HasKey("best")&&loaded!=null&&loaded.level==3&&loaded.scores.Length==2&&System.IO.File.Exists(System.IO.Path.Combine(SaveData.folder,"values.json"))&&SaveData.SlotExists("slot1")?1:0;
+  SaveData.DeleteSlot("slot1");
  }
  void OnUpdate(float dt){var cc=GetComponent<CharacterController>();if(cc!=null&&cc.SimpleMove(new Vector3(0,0,0)))Grounded++;}
 }
 )");
+    // The Virtual Cameras package scripts, compiled with the fixture
+    for(auto& f:std::filesystem::directory_iterator(FileSystem::EngineRoot()/"Packages/com.stardust.cameras/Scripts"))std::filesystem::copy_file(f.path(),root/"Assets/Scripts"/("Cameras"+f.path().filename().string()),std::filesystem::copy_options::overwrite_existing);
+    FileSystem::WriteText(root/"Assets/Scripts/CameraShakeProbe.cs",R"(using Stardust; public class CameraShakeProbe : ScriptBehaviour { public int Go; void OnUpdate(float dt){ if(Go==1){ Stardust.Cameras.CameraShake.Shake(2f,1f); Go=2; } } })");
     auto build=[&](const std::filesystem::path& project) {
         return RunProcess(L"dotnet build \""+project.wstring()+L"\" -c Release -o \""+(root/"bin").wstring()+L"\" -p:StardustBin=\""+FileSystem::ExecutableDir().wstring()+L"\" --nologo -v:q",root,[](const std::string& line){std::cout<<line<<'\n';});
     };
@@ -313,7 +324,36 @@ public class TestGameplay : ScriptBehaviour {
       Check(f["HttpDone"]==1&&f["HttpOnMain"]==1,"HTTP error callback not delivered on the main thread");
       Check(f["Actions"]==1,"input actions (composites, overrides, display) failed");
       Check(f["Grounded"].get<int>()>5,"C# CharacterController.SimpleMove never grounded");
+      Check(f["Saved"]==1,"SaveData values or slots failed");
       gameplay.OnRuntimeStop();
+    }
+    {   // Virtual Cameras package: follow, priority blend, shake
+      Scene shots;auto hex=[&](EntityID e){return std::format("{:016x}",shots.Reg().Get<IDComponent>(e).uuid);};
+      auto target=shots.CreateEntity("Target");
+      auto camera=shots.CreateEntity("Main Camera");shots.Reg().Add<CameraComponent>(camera);auto& director=shots.Reg().Add<ScriptComponent>(camera,"Stardust.Cameras.CameraDirector");director.fieldsJson=R"({"DefaultBlend":0.5})";
+      director.additional.push_back({"CameraShakeProbe","{}"});
+      auto follow=shots.CreateEntity("Follow Cam");shots.Reg().Add<ScriptComponent>(follow,"Stardust.Cameras.VirtualCamera").fieldsJson=nlohmann::json({{"Priority",10},{"Body",1},{"Aim",1},{"Follow",hex(target)},{"LookAt",hex(target)},{"FollowOffset",{0,3,6}},{"OffsetSpace",0},{"PositionDamping",0},{"AimDamping",0},{"LookAtOffset",{0,0,0}}}).dump();
+      auto fixedShot=shots.CreateEntity("Fixed Cam");shots.Reg().Get<TransformComponent>(fixedShot).position={20,5,0};shots.Reg().Add<ScriptComponent>(fixedShot,"Stardust.Cameras.VirtualCamera").fieldsJson=R"({"Priority":5,"Body":0,"Aim":0,"FieldOfView":40})";
+      shots.OnRuntimeStart();
+      auto camPos=[&]{return glm::vec3(shots.GetWorldMatrix(camera)[3]);};
+      for(int i=0;i<10;++i)shots.OnUpdate(1.f/60);
+      Check(glm::length(camPos()-glm::vec3(0,3,6))<0.05f,"virtual camera did not place the camera at the follow offset");
+      glm::vec3 lookDir=glm::normalize(glm::vec3(shots.GetWorldMatrix(camera)*glm::vec4(0,0,-1,0)));Check(glm::dot(lookDir,glm::normalize(glm::vec3(0,-3,-6)))>0.99f,"virtual camera does not look at its target");
+      shots.Reg().Get<TransformComponent>(target).position={10,0,0};
+      for(int i=0;i<10;++i)shots.OnUpdate(1.f/60);
+      Check(glm::length(camPos()-glm::vec3(10,3,6))<0.05f,"virtual camera did not follow the target");
+      ScriptEngine::SetInstanceField(fixedShot,"Priority","20");
+      for(int i=0;i<15;++i)shots.OnUpdate(1.f/60);
+      const glm::vec3 mid=camPos();Check(glm::length(mid-glm::vec3(10,3,6))>0.5f&&glm::length(mid-glm::vec3(20,5,0))>0.5f,"priority change did not blend");
+      for(int i=0;i<40;++i)shots.OnUpdate(1.f/60);
+      Check(glm::length(camPos()-glm::vec3(20,5,0))<0.05f&&std::abs(shots.Reg().Get<CameraComponent>(camera).fovDegrees-40)<0.1f,"blend did not reach the higher priority camera and its field of view");
+      ScriptEngine::SetInstanceField(camera,"Go","1",1);
+      shots.OnUpdate(1.f/60);for(int i=0;i<5;++i)shots.OnUpdate(1.f/60);
+      Check(glm::length(camPos()-glm::vec3(20,5,0))>0.005f,"camera shake did not move the camera");
+      for(int i=0;i<90;++i)shots.OnUpdate(1.f/60);
+      Check(glm::length(camPos()-glm::vec3(20,5,0))<0.01f,"camera shake did not settle");
+      shots.OnRuntimeStop();
+      std::cout<<"Virtual cameras package: follow, blend, field of view and shake passed\n";
     }
     {
       Tests::MemoryDevice device;
@@ -773,6 +813,56 @@ static void TestGameplaySystems() {
     std::cout << "Character controller, joints, nav mesh, splines and line renderer passed\n";
 }
 
+// IK constraints and the occlusion buffer
+static void TestIKAndOcclusion() {
+    Tests::MemoryDevice device;
+    auto root = TestRoot() / "IKTests"; std::filesystem::create_directories(root);
+    AssetManager::Init(device, root); MeshLibrary::Init(device);
+    Scene scene;
+    auto bone = [&](const char* name, EntityID parent, glm::vec3 local) { auto e = scene.CreateEntity(name); if (parent) scene.SetParent(e, parent, false); scene.Reg().Get<TransformComponent>(e).position = local; return e; };
+    auto uuid = [&](EntityID e) { return scene.Reg().Get<IDComponent>(e).uuid; };
+    // Arm: shoulder at (0,2,0), two bones of 1 m along +X
+    auto shoulder = bone("Shoulder", kNullEntity, { 0, 2, 0 }), elbow = bone("Elbow", shoulder, { 1, 0, 0 }), hand = bone("Hand", elbow, { 1, 0, 0 });
+    auto target = bone("Target", kNullEntity, { 1, 2.5f, 1 }), hint = bone("Hint", kNullEntity, { 1, 4, 0 });
+    auto ik = scene.CreateEntity("Arm IK"); auto& arm = scene.Reg().Add<IKConstraintComponent>(ik);
+    arm.type = (int)IKType::TwoBone; arm.root = uuid(shoulder); arm.mid = uuid(elbow); arm.tip = uuid(hand); arm.target = uuid(target); arm.hint = uuid(hint);
+    // Head: looks along +Z, target on +X
+    auto head = bone("Head", kNullEntity, { 0, 0, 0 }), focus = bone("Focus", kNullEntity, { 5, 0, 0 });
+    auto look = scene.CreateEntity("Look IK"); auto& lookAt = scene.Reg().Add<IKConstraintComponent>(look);
+    lookAt.type = (int)IKType::LookAt; lookAt.tip = uuid(head); lookAt.target = uuid(focus); lookAt.aimAxis = 4; lookAt.maxAngle = 180;
+    // Leg above a floor: hip (10,1,0), knee and foot below, the foot 0.3 m above the ground
+    auto floor = scene.CreatePrimitive(PrimitiveType::Cube, "Floor"); scene.Reg().Get<TransformComponent>(floor).position = { 10, -0.5f, 0 }; scene.Reg().Get<TransformComponent>(floor).scale = { 4, 1, 4 }; scene.Reg().Add<BoxColliderComponent>(floor);
+    auto hip = bone("Hip", kNullEntity, { 10, 1.2f, 0 }), knee = bone("Knee", hip, { 0, -0.55f, 0.1f }), foot = bone("Foot", knee, { 0, -0.55f, -0.1f }); // foot 0.1 m above the ground, leg long enough to reach it
+    auto legIK = scene.CreateEntity("Foot IK"); auto& leg = scene.Reg().Add<IKConstraintComponent>(legIK);
+    leg.type = (int)IKType::FootPlacement; leg.root = uuid(hip); leg.mid = uuid(knee); leg.tip = uuid(foot); leg.footOffset = 0.08f; leg.maxStep = 0.5f;
+    scene.OnRuntimeStart();
+    InverseKinematics::Update(scene);
+    scene.PrepareRenderFrame();
+    const glm::vec3 handPos = glm::vec3(scene.GetWorldMatrix(hand)[3]);
+    Check(glm::length(handPos - glm::vec3(1, 2.5f, 1)) < 0.01f, "two-bone IK did not reach the target");
+    Check(glm::vec3(scene.GetWorldMatrix(elbow)[3]).y > 2.4f, "two-bone IK ignored the hint");
+    const glm::vec3 headForward = glm::normalize(glm::vec3(scene.GetWorldMatrix(head) * glm::vec4(0, 0, 1, 0)));
+    Check(headForward.x > 0.99f, "look-at IK did not turn the bone");
+    const float footY = scene.GetWorldMatrix(foot)[3].y;
+    Check(scene.Reg().Get<IKConstraintComponent>(legIK).grounded && std::abs(footY - 0.08f) < 0.02f, "foot placement did not put the foot on the ground");
+    scene.OnRuntimeStop();
+    MeshLibrary::Shutdown(); AssetManager::Shutdown();
+
+    // Occlusion: a wall hides what is behind it, not what is beside or in front
+    RenderCamera camera; camera.position = { 0, 1, 10 };
+    camera.view = glm::lookAt(camera.position, glm::vec3(0, 1, 0), glm::vec3(0, 1, 0));
+    camera.projection = PerspectiveReverseZ(glm::radians(60.0f), 16.0f / 9, 0.1f);
+    OcclusionBuffer buffer; buffer.Begin(camera.projection * camera.view);
+    const std::vector<glm::vec3> wall{ { -5, -2, 0 }, { 5, -2, 0 }, { 5, 6, 0 }, { -5, 6, 0 } };
+    const std::vector<u32> quad{ 0, 1, 2, 0, 2, 3 };
+    buffer.AddOccluder(wall, quad, 0, 6, glm::mat4(1));
+    Check(!buffer.IsVisible({ -0.5f, 0, -5.5f }, { 0.5f, 1, -4.5f }), "box behind the wall not occluded");
+    Check(buffer.IsVisible({ 8, 0, -5 }, { 9, 1, -4 }), "box beside the wall occluded");
+    Check(buffer.IsVisible({ -0.5f, 0, 2 }, { 0.5f, 1, 3 }), "box in front of the wall occluded");
+    Check(buffer.IsVisible({ -0.5f, 5.5f, -5 }, { 0.5f, 9, -4 }), "box rising above the wall occluded");
+    std::cout << "IK (two bone, look at, foot placement) and occlusion culling passed\n";
+}
+
 static void TestComponentEnableAndMouse(){
     Input::ResetMouseTracking();Input::SampleMousePosition({100,100});Check(Input::MouseDelta()==glm::vec2(0),"first mouse sample jumped");Input::SampleMousePosition({104,98});Check(Input::MouseDelta()==glm::vec2(4,-2),"mouse movement lost");Input::ResetMouseTracking();Input::SampleMousePosition({-10000,3000});Check(Input::MouseDelta()==glm::vec2(0),"cursor mode warp leaked into look delta");Input::SampleMousePosition({-9997,3001});Check(Input::MouseDelta()==glm::vec2(3,1),"locked mouse delta rebounded");
     Tests::MemoryDevice device;AssetManager::Init(device,TestRoot());MeshLibrary::Init(device);Scene scene;auto object=scene.CreatePrimitive(PrimitiveType::Cube,"Disabled Renderer");scene.Reg().Add<BoxColliderComponent>(object);auto camera=scene.CreateEntity("Camera");scene.Reg().Add<CameraComponent>(camera);RenderCamera view;scene.GetCamera(camera,view,1);SceneRenderer renderer(device);scene.Reg().SetEnabled<MeshRendererComponent>(object,false);renderer.BeginScene(view,{},0);scene.SubmitToRenderer(renderer,device);Check(renderer.SubmittedDrawCount()==0,"disabled mesh renderer still rendered");scene.Reg().SetEnabled<CameraComponent>(camera,false);Check(!scene.GetPrimaryCamera(view,1),"disabled camera remained primary");Registry copied=scene.Reg();Check(!copied.IsEnabled<MeshRendererComponent>(object),"registry copy lost disabled state");auto duplicate=scene.DuplicateEntity(object);Check(!scene.Reg().IsEnabled<MeshRendererComponent>(duplicate),"duplicate lost disabled component state");auto saved=SceneSerializer::FromJson(SceneSerializer::ToJson(scene));auto loaded=saved->FindByName("Disabled Renderer");Check(!saved->Reg().IsEnabled<MeshRendererComponent>(loaded),"component enabled state lost in scene serialization");scene.Reg().SetEnabled<MeshRendererComponent>(object,true);renderer.BeginScene(view,{},0);scene.SubmitToRenderer(renderer,device);Check(renderer.SubmittedDrawCount()==1,"renderer did not re-enable");scene.Reg().SetEnabled<BoxColliderComponent>(object,false);scene.OnRuntimeStart();Check(!scene.Physics()->HasBody(object),"disabled collider created physics body");scene.Reg().SetEnabled<BoxColliderComponent>(object,true);scene.RefreshComponentState(object,3);Check(scene.Physics()->HasBody(object),"collider did not re-enable");scene.Reg().SetEnabled<BoxColliderComponent>(object,false);scene.RefreshComponentState(object,3);Check(!scene.Physics()->HasBody(object),"disabled collider retained physics body");scene.OnRuntimeStop();MeshLibrary::Shutdown();AssetManager::Shutdown();
@@ -852,8 +942,9 @@ int main() {
         if(std::getenv("STARDUST_TEST_BUILD")){TestStreamingBuild();TestPakEncryption();TestCookingAndAsync();std::cout<<"Build dependency tests passed\n";return 0;}
         if(std::getenv("STARDUST_TEST_CULLING")){PhysicsWorld::InitJolt();TestProjectCacheAndCulling();TestForces();TestHierarchyColliders();PhysicsWorld::ShutdownJolt();std::cout<<"Culling, starter cache and hierarchy tests passed\n";return 0;}
         if(auto project=std::getenv("STARDUST_BENCH_PROJECT")){BenchmarkProject(std::filesystem::u8path(project));return 0;}
-        if(std::getenv("STARDUST_TEST_GAMEPLAY")){TestGameplaySystems();return 0;}
+        if(std::getenv("STARDUST_TEST_GAMEPLAY")){TestGameplaySystems();TestIKAndOcclusion();return 0;}
         TestGameplaySystems();
+        TestIKAndOcclusion();
         TestDefaultTerrainCollider();
         TestScenes();
         TestForces();

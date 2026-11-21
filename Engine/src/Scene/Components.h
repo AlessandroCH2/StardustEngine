@@ -159,9 +159,14 @@ struct ParticleSystemComponent {
     bool sortByDistance = false;
     int sortingOrder = 0;
     u32 seed = 0;           // 0 = different every run
+    // GPU simulation: particles live and move in a compute shader (hundreds of thousands); emission stays the
+    // same. Not sorted by distance; noise, collision and the modules over lifetime are supported.
+    bool gpu = false;
 
     // Runtime (not saved)
     std::vector<Particle> particles;
+    std::vector<Particle> gpuPending;   // GPU: spawned this frame, uploaded by GpuParticles::Simulate
+    float gpuDt = 0, gpuClock = 0, gpuLastDeath = 0; bool gpuClear = false; u32 gpuSpawned = 0;
     float time = 0, emitAccumulator = 0, delayLeft = 0;
     bool started = false, playing = false, paused = false, emitting = false;
     glm::vec3 lastPosition{ 0 }; bool hasLastPosition = false;

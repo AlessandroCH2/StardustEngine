@@ -23,6 +23,8 @@
 #include "Scene/Navigation.h"
 #include "Renderer/ReflectionProbes.h"
 #include "Scene/Splines.h"
+#include "Scene/InverseKinematics.h"
+#include "Scene/GpuParticles.h"
 #include "Animation/ModelSkeleton.h"
 #include <glm/gtx/matrix_decompose.hpp>
 #include <random>
@@ -51,7 +53,7 @@ static void DecomposeWorld(const glm::mat4& m, glm::vec3& pos, glm::quat& rot, g
 }
 
 Scene::Scene() = default;
-Scene::~Scene() { for(auto& [uuid,path]:m_CameraTexturePaths)AssetManager::SetRuntimeTexture(path,nullptr);VideoPlayerSystem::Clear(*this);if (m_Running) OnRuntimeStop();Navigation::Release(*this);ReflectionProbes::Release(*this); }
+Scene::~Scene() { for(auto& [uuid,path]:m_CameraTexturePaths)AssetManager::SetRuntimeTexture(path,nullptr);VideoPlayerSystem::Clear(*this);if (m_Running) OnRuntimeStop();Navigation::Release(*this);ReflectionProbes::Release(*this);GpuParticles::Release(*this); }
 
 // ------------------------------------------------------------------------------------------------ entities
 
@@ -107,6 +109,7 @@ void Scene::CopyComponents(EntityID src, EntityID dst) {
     if (auto* c = m_Registry.TryGet<SplineComponent>(src)) { auto& copy = m_Registry.Add<SplineComponent>(dst, *c); (void)copy; }
     if (auto* c = m_Registry.TryGet<ReflectionProbeComponent>(src)) { auto& copy = m_Registry.Add<ReflectionProbeComponent>(dst, *c); copy.slot=~0u;copy.dirty=true;(void)copy; }
     if (auto* c = m_Registry.TryGet<DecalComponent>(src)) { auto& copy = m_Registry.Add<DecalComponent>(dst, *c); (void)copy; }
+    if (auto* c = m_Registry.TryGet<IKConstraintComponent>(src)) m_Registry.Add<IKConstraintComponent>(dst, *c);
     if (auto* c = m_Registry.TryGet<MeshRendererComponent>(src)) m_Registry.Add<MeshRendererComponent>(dst, *c);
     if (auto* c = m_Registry.TryGet<CameraComponent>(src)) m_Registry.Add<CameraComponent>(dst, *c);
     if (auto* c = m_Registry.TryGet<DirectionalLightComponent>(src)) m_Registry.Add<DirectionalLightComponent>(dst, *c);
@@ -381,6 +384,7 @@ void Scene::OnUpdate(float dt) {
     dt *= std::max(timeScale, 0.0f);
     { SD_PROFILE("Video"); VideoPlayerSystem::Update(*this,dt); }
     { SD_PROFILE("Animation"); AnimatorSystem::Update(*this, dt); }
+    { SD_PROFILE("IK"); InverseKinematics::Update(*this); }
     { SD_PROFILE("Particles"); ParticleSystems::Update(*this, dt); }
     const float fixedDt = 1.0f / 60.0f;
     m_FixedAccumulator = std::min(m_FixedAccumulator + dt, fixedDt * 5.0f);
@@ -486,6 +490,7 @@ void Scene::RenderCameraTargets(RHI::Device& device,RHI::CommandList& cmd,float 
         AssetManager::SetRuntimeTexture(c.targetTexture,renderer->OutputRef());
     });
     ReflectionProbes::Render(*this,device,cmd,time);
+    GpuParticles::Simulate(*this,device,cmd);
     std::erase_if(m_CameraTexturePaths,[&](auto& item){return !live.contains(item.first);});
     std::erase_if(m_CameraTargets,[&](auto& item){return !live.contains(item.first);});
 }
@@ -739,6 +744,7 @@ void Scene::SubmitToRenderer(SceneRenderer& renderer, RHI::Device& device,bool a
     };
     // Particle Systems: camera-facing quads written into a vertex buffer the CPU maps, one draw per system
     m_Registry.Each<ParticleSystemComponent>([&](EntityID e, ParticleSystemComponent& c) {
+        if (c.gpu) { if (m_Registry.IsEnabled<ParticleSystemComponent>(e) && m_SubmitActive[e] && (renderer.Camera().cullingMask & (1u << std::clamp(m_Registry.Get<NameComponent>(e).layer, 0, 31)))) GpuParticles::Submit(*this, e, c, renderer, device); return; }
         if (c.particles.empty() || !m_Registry.IsEnabled<ParticleSystemComponent>(e) || !m_SubmitActive[e]) return;
         if (!(renderer.Camera().cullingMask & (1u << std::clamp(m_Registry.Get<NameComponent>(e).layer, 0, 31)))) return;
         glm::vec3 boundsMin, boundsMax;

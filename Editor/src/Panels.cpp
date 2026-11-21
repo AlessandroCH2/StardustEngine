@@ -157,6 +157,7 @@ static void DrawGameplayInspectors(Scene& scene, EntityID e, bool playing) {
     ComponentSection<SplineComponent>(scene, e, "Spline", true, [&](auto& c) { GameplayInspector::Draw(scene, e, c, playing); });
     ComponentSection<ReflectionProbeComponent>(scene, e, "Reflection Probe", true, [&](auto& c) { GameplayInspector::Draw(scene, e, c, playing); });
     ComponentSection<DecalComponent>(scene, e, "Decal", true, [&](auto& c) { GameplayInspector::Draw(scene, e, c, playing); });
+    ComponentSection<IKConstraintComponent>(scene, e, "IK Constraint", true, [&](auto& c) { GameplayInspector::Draw(scene, e, c, playing); });
 }
 
 void EditorApp::DrawEntityContextItems() {
@@ -878,6 +879,7 @@ void EditorApp::DrawInspector() {
         if (!reg.Has<MeshColliderComponent>(e) && item("Mesh Collider")) reg.Add<MeshColliderComponent>(e);
         if (!reg.Has<VehicleControllerComponent>(e) && item("Vehicle Controller")) reg.Add<VehicleControllerComponent>(e);
         if (!reg.Has<WheelColliderComponent>(e) && item("Wheel Collider")) reg.Add<WheelColliderComponent>(e);
+        if (!reg.Has<IKConstraintComponent>(e) && item("IK Constraint")) reg.Add<IKConstraintComponent>(e);
         if (!reg.Has<CharacterControllerComponent>(e) && item("Character Controller")) reg.Add<CharacterControllerComponent>(e);
         if (!reg.Has<JointComponent>(e) && item("Joint")) reg.Add<JointComponent>(e);
         section("Navigation");
@@ -954,6 +956,7 @@ static bool MatchesReference(Registry& reg, EntityID e, const std::string& type)
     if (c == "VehicleController") return reg.Has<VehicleControllerComponent>(e);
     if (c == "WheelCollider") return reg.Has<WheelColliderComponent>(e);
     if (c == "TrailRenderer") return reg.Has<TrailRendererComponent>(e);
+    if (c == "IKConstraint") return reg.Has<IKConstraintComponent>(e);
     if (c == "CharacterController") return reg.Has<CharacterControllerComponent>(e);
     if (c == "Joint") return reg.Has<JointComponent>(e);
     if (c == "NavMeshSurface") return reg.Has<NavMeshSurfaceComponent>(e);

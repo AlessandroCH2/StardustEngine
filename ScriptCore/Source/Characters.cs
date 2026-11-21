@@ -102,6 +102,31 @@ namespace Stardust
         public Vector3 currentTorque => V(P.Get(this, T)["currentTorque"]);
     }
 
+    public enum IKType { TwoBone, LookAt, FootPlacement }
+
+    /// <summary>
+    /// Bends bones after the animation: a limb reaching a target (Two Bone), a bone turning towards a target
+    /// (Look At), or a foot put on the ground (Foot Placement). Change weight to blend it in and out.
+    /// </summary>
+    public sealed class IKConstraint : Component
+    {
+        const int T = 46;
+        void Set(string name, JsonNode value) => P.Property(this, T, name, value);
+        Entity Ref(string name) { var id = JsonVec.Id(P.Value(this, T, name, "0")); return id == 0 ? null : new Entity(id); }
+        void SetRef(string name, Entity value) => Set(name, JsonVec.Id(value?.ID ?? 0));
+        public IKType type { get => (IKType)P.Value(this, T, "type", 0); set => Set("type", (int)value); }
+        public float weight { get => P.Value(this, T, "weight", 1f); set => Set("weight", value); }
+        public Entity rootBone { get => Ref("root"); set => SetRef("root", value); }
+        public Entity midBone { get => Ref("mid"); set => SetRef("mid", value); }
+        public Entity tipBone { get => Ref("tip"); set => SetRef("tip", value); }
+        public Entity target { get => Ref("target"); set => SetRef("target", value); }
+        public Entity hint { get => Ref("hint"); set => SetRef("hint", value); }
+        public bool matchTargetRotation { get => P.Value(this, T, "matchTargetRotation", false); set => Set("matchTargetRotation", value); }
+        public float maxAngle { get => P.Value(this, T, "maxAngle", 80f); set => Set("maxAngle", value); }
+        public float footOffset { get => P.Value(this, T, "footOffset", .08f); set => Set("footOffset", value); }
+        public bool isGrounded => P.Value(this, T, "grounded", false);
+    }
+
     public static unsafe partial class Physics
     {
         /// <summary>Gravity of the running scene (metres per second squared).</summary>

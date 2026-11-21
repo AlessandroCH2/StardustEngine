@@ -20,4 +20,6 @@ void ToJson(const ReflectionProbeComponent& c, nlohmann::json& j);
 void FromJson(const nlohmann::json& j, ReflectionProbeComponent& c);
 void ToJson(const DecalComponent& c, nlohmann::json& j);
 void FromJson(const nlohmann::json& j, DecalComponent& c);
+void ToJson(const IKConstraintComponent& c, nlohmann::json& j);
+void FromJson(const nlohmann::json& j, IKConstraintComponent& c);
 }

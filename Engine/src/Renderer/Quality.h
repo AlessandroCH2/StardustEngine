@@ -22,6 +22,7 @@ struct GraphicsQuality {
     bool ambientOcclusion = true; // screen-space ambient occlusion (when the Environment turns it on)
     bool temporalAA = true;       // temporal anti-aliasing (when the Environment turns it on)
     bool postEffects = true;      // depth of field and motion blur
+    bool occlusionCulling = true; // skips objects hidden behind big meshes (CPU, small depth buffer)
 
     static GraphicsQuality& Current() { static GraphicsQuality quality; return quality; }
     static GraphicsQuality Preset(int level) {

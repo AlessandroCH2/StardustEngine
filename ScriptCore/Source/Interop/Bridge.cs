@@ -224,7 +224,7 @@ namespace Stardust.Interop
                     case 0: Stardust.InputSystem.InputSystem.Update(); MainThread.Pump(); break;
                     case 1: Coroutines.Tick(CoroutinePhase.Update); MainThread.Pump(); break;
                     case 2: Coroutines.Tick(CoroutinePhase.FixedUpdate); break;
-                    case 3: Coroutines.Clear(); Stardust.InputSystem.InputSystem.Reset(); break;
+                    case 3: Coroutines.Clear(); Stardust.InputSystem.InputSystem.Reset(); SaveData.Reset(); break;
                 }
             }
             catch (Exception e) { Native.Log(3, "Runtime: " + e); }

@@ -334,7 +334,9 @@ void DrawParticleSystemInspector(Scene& scene, EntityID e, ParticleSystemCompone
         }
         Insp::DragFloat("Intensity", &c.intensity, 0.01f, 0.0f, 100.0f, "%.2f");
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Colour multiplier: above 1 the particles glow with bloom");
-        Insp::Checkbox("Sort by Distance", &c.sortByDistance);
+        if (Insp::Checkbox("Simulate on GPU", &c.gpu)) { c.particles.clear(); c.gpuPending.clear(); c.gpuClear = true; }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Hundreds of thousands of particles: a compute shader moves them.\nThey are not sorted by distance.");
+        if (!c.gpu) Insp::Checkbox("Sort by Distance", &c.sortByDistance);
         Insp::InputInt("Sorting Order", &c.sortingOrder);
         EndModule();
     }

@@ -220,4 +220,29 @@ void Draw(Scene&, EntityID, DecalComponent& c, bool) {
     ImGui::TextDisabled("Projects along the object's -Z axis onto opaque surfaces.");
 }
 
+void Draw(Scene& scene, EntityID, IKConstraintComponent& c, bool playing) {
+    Insp::Combo("Type", &c.type, "Two Bone (arm, leg)\0Look At (head, turret)\0Foot Placement\0");
+    Insp::SliderFloat("Weight", &c.weight, 0.0f, 1.0f);
+    if (c.type == 1) {
+        EntityRef(scene, "Bone", c.tip);
+        EntityRef(scene, "Target", c.target);
+        Insp::Combo("Aim Axis (bone local)", &c.aimAxis, "+X\0-X\0+Y\0-Y\0+Z\0-Z\0");
+        Float("Max Angle", c.maxAngle, 0.5f, 0.0f, 180.0f);
+    } else {
+        EntityRef(scene, "Root Bone (upper arm / thigh)", c.root);
+        EntityRef(scene, "Mid Bone (forearm / shin)", c.mid);
+        EntityRef(scene, "Tip Bone (hand / foot)", c.tip);
+        EntityRef(scene, "Hint (elbow / knee direction, optional)", c.hint);
+        if (c.type == 0) { EntityRef(scene, "Target", c.target); Bool("Match Target Rotation", c.matchTargetRotation); }
+        else {
+            Float("Foot Offset", c.footOffset, 0.005f, 0.0f, 1.0f);
+            Float("Max Step", c.maxStep, 0.01f, 0.01f, 3.0f);
+            Bool("Align To Ground", c.alignToGround);
+            EntityRef(scene, "Ignore (the character)", c.ignore);
+            if (playing) ImGui::Text("Grounded %s", c.grounded ? "yes" : "no");
+        }
+    }
+    ImGui::TextDisabled("Applied after the animation, in play mode.");
+}
+
 } // namespace Stardust::GameplayInspector

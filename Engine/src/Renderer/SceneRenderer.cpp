@@ -8,6 +8,7 @@
 #include "Renderer/Nature/GrassRenderer.h"
 #include "Renderer/Nature/TreeRenderer.h"
 #include "Core/Log.h"
+#include "Core/Profiler.h"
 #include "Assets/AssetManager.h"
 #include "Assets/Pak.h"
 #include "Core/FileSystem.h"
@@ -67,6 +68,8 @@ SceneRenderer::SceneRenderer(Device& device) : m_Device(device) {
         particles.cull = CullMode::None;
         particles.blend = additive ? BlendMode::Additive : BlendMode::Alpha;
         m_ParticlePipelines[additive] = device.CreateGraphicsPipeline(particles);
+        particles.name = additive ? "GPU Particles (additive)" : "GPU Particles"; particles.vs = "GpuParticle.vs";
+        m_GpuParticlePipelines[additive] = device.CreateGraphicsPipeline(particles);
     }
 
     GraphicsPipelineDesc sky;
@@ -333,16 +336,16 @@ void SceneRenderer::SubmitUI(const Ref<Mesh>& mesh, const glm::mat4& transform, 
     }
 }
 
-void SceneRenderer::SubmitParticles(const Ref<Mesh>& mesh, const Material& material, u32 entityId, u32 indexCount, bool additive, int sortingOrder) {
+void SceneRenderer::SubmitParticles(const Ref<Mesh>& mesh, const Material& material, u32 entityId, u32 indexCount, bool additive, int sortingOrder, bool gpu) {
     Material m = material;
-    const bool custom = !m.customPixelShader.empty();
-    if (!custom) { m.shader = ShaderType::Transparent; }
+    const bool custom = !gpu && !m.customPixelShader.empty();
+    if (!custom || gpu) { m.shader = ShaderType::Transparent; m.customPixelShader.clear(); }
     size_t previous = m_Draws.size();
     Submit(mesh, glm::mat4(1), m, entityId, false, 0, indexCount, false, sortingOrder,false);
     if (m_Draws.size() == previous) return;
     m_Draws.back().cullable = false;
     if (!custom) {
-        m_Draws.back().customPipeline = m_ParticlePipelines[additive ? 1 : 0];
+        m_Draws.back().customPipeline = gpu ? m_GpuParticlePipelines[additive ? 1 : 0] : m_ParticlePipelines[additive ? 1 : 0];
         m_DrawData.back().params.z = additive ? 1.0f : 0.0f;
     }
 }
@@ -356,6 +359,7 @@ void SceneRenderer::DrawMeshes(CommandList& cmd, Buffer* frameBuf, bool transpar
         // Test the transformed box, not a sphere that becomes enormous for long roads.
         // Water can displace outside its source bounds.
         if (d.cullable && d.shader!=ShaderType::Water && !m_ViewFrustum.Box(d.boundsCenter-d.boundsExtents,d.boundsCenter+d.boundsExtents)) { m_Stats.culledDraws++; continue; }
+        if (i < m_Occluded.size() && m_Occluded[i]) { m_Stats.occludedDraws++; continue; }
         order.push_back(i);
     }
     if (transparent) {
@@ -490,6 +494,10 @@ void SceneRenderer::Render(CommandList& cmd) {
     if (shadows) RenderShadows(cmd, frameBuf);
     cmd.Barrier(m_ShadowMap.get(), ResourceState::DepthRead);
 
+    // ---------------------------------------------------------------- occlusion culling
+    m_Occluded.assign(m_Draws.size(), 0);
+    if (GraphicsQuality::Current().occlusionCulling && m_Draws.size() >= 3) { SD_PROFILE("Occlusion culling"); CullOccluded(fc.viewProj); }
+
     // ---------------------------------------------------------------- opaque + sky
     {
         ScopedGpuTimer t(m_Device, "Opaque");
@@ -596,6 +604,48 @@ void SceneRenderer::Render(CommandList& cmd) {
     }
     cmd.Barrier(target, ResourceState::ShaderRead);
     if (target != m_Output.get()) cmd.Barrier(m_Output.get(), ResourceState::ShaderRead);
+}
+
+// Occluders: opaque meshes that are large in the world and on screen, with CPU geometry; the rest is tested
+void SceneRenderer::CullOccluded(const glm::mat4& viewProj) {
+    // When it hid next to nothing last time (open views, the sky), it rests for a while: the test costs
+    // more than it saves there
+    if (m_OcclusionSkip > 0) { --m_OcclusionSkip; return; }
+    struct Candidate { u32 draw; float score; };
+    std::vector<Candidate> candidates;
+    for (u32 i = 0; i < (u32)m_Draws.size(); ++i) {
+        const DrawItem& d = m_Draws[i];
+        if (d.uiOverlay || !d.mesh || d.customPipeline) continue;
+        if (d.shader != ShaderType::Standard && d.shader != ShaderType::Unlit && d.shader != ShaderType::Toon) continue;
+        const float radius = glm::length(d.boundsExtents);
+        if (radius < 2.0f || d.mesh->Positions().empty()) continue;                 // characters and props do not hide much
+        if (!m_ViewFrustum.Box(d.boundsCenter - d.boundsExtents, d.boundsCenter + d.boundsExtents)) continue;
+        const float distance = std::max(0.5f, glm::length(d.boundsCenter - m_Camera.position) - radius);
+        const float score = radius / distance;
+        // Simple, big meshes: a detailed one costs many triangles for the same coverage
+        if (score > 0.15f && d.indexCount / 3 <= 2500) candidates.push_back({ i, score });
+    }
+    if (candidates.empty()) return;
+    std::sort(candidates.begin(), candidates.end(), [](auto& a, auto& b) { return a.score > b.score; });
+    m_Occlusion.Begin(viewProj);
+    std::vector<char> occluder(m_Draws.size(), 0);
+    u32 triangles = 0, count = 0;
+    for (auto& c : candidates) {
+        const DrawItem& d = m_Draws[c.draw];
+        if (count >= 16 || triangles + d.indexCount / 3 > 8000) continue;
+        m_Occlusion.AddOccluder(d.mesh->Positions(), d.mesh->Indices(), d.firstIndex, d.indexCount, m_DrawData[c.draw].model);
+        occluder[c.draw] = 1; triangles += d.indexCount / 3; ++count;
+    }
+    m_Stats.occluders = count;
+    if (m_Occlusion.Triangles() == 0) { m_OcclusionSkip = 15; return; }
+    u32 tested = 0, hidden = 0;
+    for (u32 i = 0; i < (u32)m_Draws.size(); ++i) {
+        const DrawItem& d = m_Draws[i];
+        if (occluder[i] || d.uiOverlay || !d.cullable || d.shader == ShaderType::UI || d.shader == ShaderType::Water) continue;
+        ++tested;
+        if (!m_Occlusion.IsVisible(d.boundsCenter - d.boundsExtents, d.boundsCenter + d.boundsExtents)) { m_Occluded[i] = 1; ++hidden; }
+    }
+    if (hidden * 20 < tested) m_OcclusionSkip = 15;
 }
 
 void SceneRenderer::RenderDecals(CommandList& cmd, Buffer* frameBuf) {

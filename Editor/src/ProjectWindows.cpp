@@ -925,6 +925,8 @@ void EditorApp::DrawProjectSettings() {
         edited |= Insp::Checkbox("Ambient Occlusion", &q.ambientOcclusion);
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Allowed when the scene's Environment turns it on.");
         edited |= Insp::Checkbox("Depth of Field / Motion Blur", &q.postEffects);
+        edited |= Insp::Checkbox("Occlusion Culling", &q.occlusionCulling);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Skips objects hidden behind big meshes such as buildings and walls.");
         SettingsUI::Section("Shadows");
         edited |= Insp::Checkbox("Shadows", &q.shadows);
         ImGui::BeginDisabled(!q.shadows);

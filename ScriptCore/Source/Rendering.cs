@@ -194,6 +194,8 @@ public static unsafe class QualitySettings {
     public static bool ambientOcclusion {get=>Value("ambientOcclusion",true);set=>Property("ambientOcclusion",JsonValue.Create(value));}
     /// <summary>Allows depth of field and motion blur.</summary>
     public static bool postEffects {get=>Value("postEffects",true);set=>Property("postEffects",JsonValue.Create(value));}
+    /// <summary>Skips objects hidden behind big meshes (buildings, walls).</summary>
+    public static bool occlusionCulling {get=>Value("occlusionCulling",true);set=>Property("occlusionCulling",JsonValue.Create(value));}
     public static bool bloom {get=>Value("bloom",true);set=>Property("bloom",JsonValue.Create(value));}
     public static bool antiAliasing {get=>Value("fxaa",true);set=>Property("fxaa",JsonValue.Create(value));}
     public static bool vSync {get=>Value("vSync",true);set=>Property("vSync",JsonValue.Create(value));}

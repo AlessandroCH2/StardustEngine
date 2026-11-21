@@ -49,7 +49,7 @@ struct RigidbodyNative { int type; float mass; float drag; float angularDrag; in
 
 enum class ComponentType : int {
     Transform = 0, MeshRenderer, Rigidbody, BoxCollider, SphereCollider, CapsuleCollider, Camera, Light, Script, MeshCollider,
-    AnyLight = 10, AudioSource = 11, Animator = 12, Canvas = 13, RectTransform = 14, UIImage = 15, UIText = 16, UIButton = 17, CanvasGroup = 18, RectMask = 19, UILayout = 20, UIInputField = 21, SpriteRenderer=22, Environment=23, Terrain=24, SpotLight=25, VideoPlayer=26, SpriteBatch=27, Rigidbody2D=28, BoxCollider2D=29, CircleCollider2D=30, CapsuleCollider2D=31, ParticleSystem=32, VehicleController=33, WheelCollider=34, UIScrollView=35, UIDropdown=36, TrailRenderer=37, CharacterController=38, Joint=39, NavMeshSurface=40, NavMeshAgent=41, LineRenderer=42, Spline=43, ReflectionProbe=44, Decal=45,
+    AnyLight = 10, AudioSource = 11, Animator = 12, Canvas = 13, RectTransform = 14, UIImage = 15, UIText = 16, UIButton = 17, CanvasGroup = 18, RectMask = 19, UILayout = 20, UIInputField = 21, SpriteRenderer=22, Environment=23, Terrain=24, SpotLight=25, VideoPlayer=26, SpriteBatch=27, Rigidbody2D=28, BoxCollider2D=29, CircleCollider2D=30, CapsuleCollider2D=31, ParticleSystem=32, VehicleController=33, WheelCollider=34, UIScrollView=35, UIDropdown=36, TrailRenderer=37, CharacterController=38, Joint=39, NavMeshSurface=40, NavMeshAgent=41, LineRenderer=42, Spline=43, ReflectionProbe=44, Decal=45, IKConstraint=46,
 };
 
 struct NativeApi {
@@ -287,6 +287,7 @@ static void InitNativeApi() {
         case ComponentType::Spline:return r.Has<SplineComponent>(e);
         case ComponentType::ReflectionProbe:return r.Has<ReflectionProbeComponent>(e);
         case ComponentType::Decal:return r.Has<DecalComponent>(e);
+        case ComponentType::IKConstraint:return r.Has<IKConstraintComponent>(e);
         case ComponentType::UIScrollView:return r.Has<UIScrollViewComponent>(e);
         case ComponentType::UIDropdown:return r.Has<UIDropdownComponent>(e);
         case ComponentType::VehicleController:return r.Has<VehicleControllerComponent>(e);
@@ -334,6 +335,7 @@ static void InitNativeApi() {
         case ComponentType::Spline:if(!r.Has<SplineComponent>(e))r.Add<SplineComponent>(e);break;
         case ComponentType::ReflectionProbe:if(!r.Has<ReflectionProbeComponent>(e))r.Add<ReflectionProbeComponent>(e);break;
         case ComponentType::Decal:if(!r.Has<DecalComponent>(e))r.Add<DecalComponent>(e);break;
+        case ComponentType::IKConstraint:if(!r.Has<IKConstraintComponent>(e))r.Add<IKConstraintComponent>(e);break;
         case ComponentType::UIScrollView:if(!r.Has<UIScrollViewComponent>(e))r.Add<UIScrollViewComponent>(e);break;
         case ComponentType::UIDropdown:if(!r.Has<UIDropdownComponent>(e))r.Add<UIDropdownComponent>(e);break;
         case ComponentType::Rigidbody2D:if(!r.Has<Rigidbody2DComponent>(e))r.Add<Rigidbody2DComponent>(e);RebuildBody(e);break;
@@ -382,6 +384,7 @@ static void InitNativeApi() {
         case ComponentType::Spline:r.Remove<SplineComponent>(e);break;
         case ComponentType::ReflectionProbe:r.Remove<ReflectionProbeComponent>(e);break;
         case ComponentType::Decal:r.Remove<DecalComponent>(e);break;
+        case ComponentType::IKConstraint:r.Remove<IKConstraintComponent>(e);break;
         case ComponentType::UIScrollView:r.Remove<UIScrollViewComponent>(e);break;
         case ComponentType::UIDropdown:r.Remove<UIDropdownComponent>(e);break;
         case ComponentType::Rigidbody2D:r.Remove<Rigidbody2DComponent>(e);RebuildBody(e);break;
@@ -625,6 +628,7 @@ static void InitNativeApi() {
             if(type==43)if(auto* c=r.TryGet<SplineComponent>(e)){GameplayJson::ToJson(*c,data);}
             if(type==44)if(auto* c=r.TryGet<ReflectionProbeComponent>(e)){GameplayJson::ToJson(*c,data);}
             if(type==45)if(auto* c=r.TryGet<DecalComponent>(e)){GameplayJson::ToJson(*c,data);}
+            if(type==46)if(auto* c=r.TryGet<IKConstraintComponent>(e)){GameplayJson::ToJson(*c,data);data["grounded"]=c->grounded;}
             if(type==32)if(auto* c=r.TryGet<ParticleSystemComponent>(e)){ParticleSystems::ToJson(*c,data);data["isPlaying"]=c->playing&&!c->paused;data["isPaused"]=c->paused;data["isEmitting"]=c->emitting;data["particleCount"]=c->particles.size();data["time"]=c->time;}
             // Quads are not in here (they can be megabytes): QueryJson "spriteBatchQuads" reads them
             if(type==27)if(auto* c=r.TryGet<SpriteBatchComponent>(e)){u64 v=c->version;for(u64 chunk:c->chunkVersions)v=v*1099511628211ull^chunk;data={{"textures",c->textures},{"count",c->quads.size()},{"material",c->material},{"color",vec4(c->color)},{"sortingOrder",c->sortingOrder},{"version",std::to_string(v)},{"animations",c->animations.size()}};}
@@ -742,6 +746,7 @@ static void InitNativeApi() {
             if(type==43)if(auto* c=r.TryGet<SplineComponent>(e)){GameplayJson::FromJson(data,*c);}
             if(type==44)if(auto* c=r.TryGet<ReflectionProbeComponent>(e)){GameplayJson::FromJson(data,*c);c->dirty=true;}
             if(type==45)if(auto* c=r.TryGet<DecalComponent>(e)){GameplayJson::FromJson(data,*c);}
+            if(type==46)if(auto* c=r.TryGet<IKConstraintComponent>(e)){GameplayJson::FromJson(data,*c);}
             if(type==32)if(auto* c=r.TryGet<ParticleSystemComponent>(e)){
                 ParticleSystems::FromJson(data,*c);
                 const std::string command=data.value("command",std::string());

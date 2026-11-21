@@ -11,4 +11,5 @@ void Draw(Scene& scene, EntityID e, LineRendererComponent& c, bool playing);
 void Draw(Scene& scene, EntityID e, SplineComponent& c, bool playing);
 void Draw(Scene& scene, EntityID e, ReflectionProbeComponent& c, bool playing);
 void Draw(Scene& scene, EntityID e, DecalComponent& c, bool playing);
+void Draw(Scene& scene, EntityID e, IKConstraintComponent& c, bool playing);
 }

@@ -6,6 +6,7 @@
 #include "Core/Log.h"
 #include "Scene/Scene.h"
 #include "Renderer/ReflectionProbes.h"
+#include "Scene/GpuParticles.h"
 #include "Renderer/SceneRenderer.h"
 #include "Assets/AssetManager.h"
 #include "Scene/SceneSerializer.h"
@@ -97,6 +98,7 @@ protected:
         AssetManager::Shutdown();
         PhysicsWorld::ShutdownJolt();
         ReflectionProbes::Shutdown();
+        GpuParticles::Shutdown();
         MeshLibrary::Shutdown();
         Pak::UnmountAll();
     }

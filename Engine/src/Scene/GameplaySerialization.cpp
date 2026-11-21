@@ -80,6 +80,12 @@ template<typename A> void Fields(A& a, DecalComponent& c) {
     a("tilingOffset", c.tilingOffset); a("emission", c.emission); a("sortingOrder", c.sortingOrder);
 }
 
+template<typename A> void Fields(A& a, IKConstraintComponent& c) {
+    a("type", c.type); a("weight", c.weight); a.Ref("root", c.root); a.Ref("mid", c.mid); a.Ref("tip", c.tip); a.Ref("target", c.target); a.Ref("hint", c.hint);
+    a("matchTargetRotation", c.matchTargetRotation); a("aimAxis", c.aimAxis); a("maxAngle", c.maxAngle);
+    a("footOffset", c.footOffset); a("maxStep", c.maxStep); a("alignToGround", c.alignToGround); a.Ref("ignore", c.ignore);
+}
+
 template<typename C> void Write(const C& c, json& j) { if (!j.is_object()) j = json::object(); Writer w{ j }; Fields(w, const_cast<C&>(c)); }
 template<typename C> void Read(const json& j, C& c) { if (!j.is_object()) return; Reader r{ j }; Fields(r, c); }
 
@@ -141,6 +147,8 @@ void FromJson(const json& j, ReflectionProbeComponent& c) {
     c.resolution = c.resolution <= 64 ? 64 : c.resolution <= 128 ? 128 : c.resolution <= 256 ? 256 : 512;
     c.size = glm::max(c.size, glm::vec3(0.01f));
 }
+void ToJson(const IKConstraintComponent& c, json& j) { Write(c, j); }
+void FromJson(const json& j, IKConstraintComponent& c) { Read(j, c); c.type = std::clamp(c.type, 0, 2); c.weight = std::clamp(c.weight, 0.0f, 1.0f); c.aimAxis = std::clamp(c.aimAxis, 0, 5); }
 void ToJson(const DecalComponent& c, json& j) { Write(c, j); }
 void FromJson(const json& j, DecalComponent& c) { Read(j, c); c.size = glm::max(c.size, glm::vec3(0.001f)); }
 
