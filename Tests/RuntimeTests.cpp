@@ -38,6 +38,10 @@
 #include <fstream>
 #include <chrono>
 #include <ufbx.h>
+#include "Scene/Navigation.h"
+#include "Scene/Splines.h"
+#include "Scene/GameplaySerialization.h"
+#include "Renderer/Camera.h"
 
 using namespace Stardust;
 
@@ -220,6 +224,31 @@ public class EditorBehaviour : Stardust.ScriptBehaviour { }
 public class TestWindow : EditorWindow {public int Count;public override void OnGUI(){Count=EditorGUILayout.IntField("Count",Count);if(GUILayout.Button("Increment"))Count++;} [MenuItem("Tests/Open Window")] static void OpenTool()=>GetWindow<TestWindow>("Test Tool");}
 
 )");
+    // Coroutines, Invoke, await on the main thread, HTTP callbacks, input actions, character controller (0.7)
+    FileSystem::WriteText(root/"Assets/Scripts/Gameplay.cs",R"(using Stardust;
+using System.Collections;
+using Stardust.InputSystem;
+public class TestGameplay : ScriptBehaviour {
+ public int CoroutineSteps; public int Invoked; public int Repeats; public int AwaitOnMain; public int HttpDone; public int HttpOnMain; public int Actions; public int Grounded; public int Nested; public int Stopped=1;
+ Coroutine endless;
+ IEnumerator Steps(){CoroutineSteps=1;yield return null;CoroutineSteps=2;yield return new WaitForSeconds(0.05f);CoroutineSteps=3;yield return Inner();CoroutineSteps=4;yield return new WaitUntil(()=>Invoked>0);CoroutineSteps=5;}
+ IEnumerator Inner(){yield return null;Nested=1;}
+ IEnumerator Endless(){while(true){Stopped=0;yield return null;}}
+ void Once(){Invoked++;} void Tick(){Repeats++;if(Repeats>=3)CancelInvoke("Tick");}
+ async void Waiter(){await System.Threading.Tasks.Task.Delay(20);AwaitOnMain=MainThread.IsMainThread?1:2;}
+ void OnCreate(){
+  StartCoroutine(Steps());Invoke("Once",0.03f);InvokeRepeating("Tick",0.01f,0.01f);Waiter();
+  endless=StartCoroutine(Endless());StopCoroutine(endless);Stopped=1;
+  Http.Get("http://127.0.0.1:9/unreachable",r=>{HttpDone=r.success?2:1;HttpOnMain=MainThread.IsMainThread?1:0;});
+  var asset=InputActionAsset.FromJson("{\"maps\":[{\"name\":\"Player\",\"actions\":[{\"name\":\"Move\",\"type\":\"Value\",\"valueType\":\"Vector2\",\"bindings\":[{\"composite\":\"2DVector\",\"up\":\"<Keyboard>/w\",\"down\":\"<Keyboard>/s\",\"left\":\"<Keyboard>/a\",\"right\":\"<Keyboard>/d\"}]},{\"name\":\"Jump\",\"type\":\"Button\",\"bindings\":[{\"path\":\"<Keyboard>/space\"}]}]}]}");
+  asset.Enable();var move=asset["Player/Move"];var jump=asset.FindAction("Jump");
+  jump.ApplyBindingOverride(0,"<Keyboard>/e");var saved=asset.SaveBindingOverridesAsJson();asset.RemoveAllBindingOverrides();asset.LoadBindingOverridesFromJson(saved);
+  Actions=move!=null&&move.ReadValue<Vector2>().magnitude==0&&jump.bindings[0].effectivePath=="<Keyboard>/e"&&move.GetBindingDisplayString(0)=="W/A/S/D"&&jump.enabled?1:0;
+  var cc=AddComponent<CharacterController>();cc.stepOffset=0.4f;
+ }
+ void OnUpdate(float dt){var cc=GetComponent<CharacterController>();if(cc!=null&&cc.SimpleMove(new Vector3(0,0,0)))Grounded++;}
+}
+)");
     auto build=[&](const std::filesystem::path& project) {
         return RunProcess(L"dotnet build \""+project.wstring()+L"\" -c Release -o \""+(root/"bin").wstring()+L"\" -p:StardustBin=\""+FileSystem::ExecutableDir().wstring()+L"\" --nologo -v:q",root,[](const std::string& line){std::cout<<line<<'\n';});
     };
@@ -265,6 +294,22 @@ public class TestWindow : EditorWindow {public int Count;public override void On
     auto saved=SceneSerializer::FromJson(SceneSerializer::ToJson(scene));Check(saved->Reg().Get<UIButtonComponent>(saved->FindByName("Scripted UI")).actions.size()==3,"persistent button actions lost");
     auto legacyImage=scene.CreateEntity("Legacy sprite action");scene.Reg().Add<UIImageComponent>(legacyImage);auto& legacyButton=scene.Reg().Add<UIButtonComponent>(legacyImage);UIButtonAction legacyAction;legacyAction.component="Image";legacyAction.method="set_sprite(System.String)";legacyAction.argumentsJson=R"(["UI/Future.sprite"])";legacyButton.actions.push_back(legacyAction);ScriptEngine::OnUIButton(legacyImage);Check(scene.Reg().Get<UIImageComponent>(legacyImage).sprite=="UI/Future.sprite","legacy string sprite action broke after introducing Sprite");
     scene.OnRuntimeStop();
+    {
+      Scene gameplay;auto ground=gameplay.CreateEntity("Ground");gameplay.Reg().Get<TransformComponent>(ground).position={0,-0.5f,0};gameplay.Reg().Add<BoxColliderComponent>(ground).size={20,1,20};
+      auto runner=gameplay.CreateEntity("Gameplay");gameplay.Reg().Get<TransformComponent>(runner).position={0,1.2f,0};gameplay.Reg().Add<ScriptComponent>(runner).className="TestGameplay";
+      gameplay.OnRuntimeStart();
+      for(int i=0;i<200;++i){gameplay.OnUpdate(1.f/60);auto f=nlohmann::json::parse(ScriptEngine::GetInstanceFields(runner));if(f["CoroutineSteps"]==5&&f["Repeats"]==3&&f["AwaitOnMain"]!=0&&f["HttpDone"]!=0&&i>30)break;std::this_thread::sleep_for(std::chrono::milliseconds(5));}
+      auto f=nlohmann::json::parse(ScriptEngine::GetInstanceFields(runner));
+      std::cout<<"C# gameplay: "<<f.dump()<<"\n";
+      Check(f["CoroutineSteps"]==5&&f["Nested"]==1,"coroutine steps (null, WaitForSeconds, nested, WaitUntil) failed");
+      Check(f["Invoked"]==1&&f["Repeats"]==3,"Invoke / InvokeRepeating / CancelInvoke failed");
+      Check(f["Stopped"]==1,"StopCoroutine did not stop");
+      Check(f["AwaitOnMain"]==1,"await did not resume on the main thread");
+      Check(f["HttpDone"]==1&&f["HttpOnMain"]==1,"HTTP error callback not delivered on the main thread");
+      Check(f["Actions"]==1,"input actions (composites, overrides, display) failed");
+      Check(f["Grounded"].get<int>()>5,"C# CharacterController.SimpleMove never grounded");
+      gameplay.OnRuntimeStop();
+    }
     {
       Tests::MemoryDevice device;
       Scene templateScene;auto templateRoot=templateScene.CreateEntity("EnemyTemplate");auto& slot=templateScene.Reg().Add<ScriptComponent>(templateRoot);slot.className="TestA";slot.fieldsJson=R"({"Number":42})";auto prefab=root/"Assets/Prefabs/Enemy.prefab";Check(SceneSerializer::SavePrefab(templateScene,templateRoot,prefab),"typed prefab fixture failed");
@@ -626,6 +671,103 @@ static void TestDefaultTerrainCollider() {
     scene.OnRuntimeStop();TerrainData::ClearCache();MeshLibrary::Shutdown();AssetManager::Shutdown();
 }
 
+// Character Controller, joints, nav mesh, splines and line renderers (0.7)
+static void TestGameplaySystems() {
+    Tests::MemoryDevice device;
+    auto root = TestRoot() / "GameplayTests";
+    std::filesystem::create_directories(root);
+    AssetManager::Init(device, root); MeshLibrary::Init(device);
+    Scene scene;
+    auto box = [&](const char* name, glm::vec3 position, glm::vec3 size) {
+        auto e = scene.CreatePrimitive(PrimitiveType::Cube, name);
+        auto& t = scene.Reg().Get<TransformComponent>(e); t.position = position; t.scale = size;
+        scene.Reg().Add<BoxColliderComponent>(e);
+        return e;
+    };
+    box("Ground", { 0, -0.5f, 0 }, { 60, 1, 60 });
+    box("Step", { 0, 0.125f, -6 }, { 4, 0.25f, 2 });       // 25 cm: climbable
+    box("Wall", { 0, 1.5f, 6 }, { 4, 3, 0.5f });            // 3 m: blocks
+    auto player = scene.CreateEntity("Player");
+    scene.Reg().Get<TransformComponent>(player).position = { 0, 1.5f, 0 };
+    scene.Reg().Add<CharacterControllerComponent>(player);
+    // Hinge to the world, and a fixed joint that breaks under the weight
+    auto door = box("Door", { 10, 3, 0 }, { 1, 2, 0.2f });
+    scene.Reg().Add<RigidbodyComponent>(door).mass = 20;
+    auto& hinge = scene.Reg().Add<JointComponent>(door);
+    hinge.type = (int)JointType::Hinge; hinge.anchor = { -0.5f, 0, 0 }; hinge.axis = { 0, 1, 0 };
+    auto weak = box("Weak", { -10, 4, 0 }, { 1, 1, 1 });
+    scene.Reg().Add<RigidbodyComponent>(weak).mass = 500;
+    auto& fixed = scene.Reg().Add<JointComponent>(weak);
+    fixed.type = (int)JointType::Fixed; fixed.breakForce = 100;
+    // Nav mesh over the ground, and an agent walking across it
+    auto surface = scene.CreateEntity("Nav Mesh"); scene.Reg().Add<NavMeshSurfaceComponent>(surface);
+    auto agent = scene.CreateEntity("Agent");
+    scene.Reg().Get<TransformComponent>(agent).position = { -15, 0, 15 };
+    scene.Reg().Add<NavMeshAgentComponent>(agent).speed = 6;
+    scene.PrepareRenderFrame();
+    std::string error;
+    Check(Navigation::BakeRuntime(scene, surface, &error), ("nav mesh bake failed: " + error).c_str());
+    std::vector<glm::vec3> corners; int status = 2;
+    Check(Navigation::CalculatePath(scene, { -15, 0, 15 }, { 15, 0, 15 }, corners, status) && status == 0 && corners.size() >= 2, "nav mesh path not found");
+    glm::vec3 sampled;
+    Check(Navigation::SamplePosition(scene, { 3, 1, 3 }, 2, sampled) && std::abs(sampled.y) < 0.4f, "nav mesh sample off the ground");
+
+    scene.OnRuntimeStart();
+    auto* physics = scene.Physics();
+    Check(physics->HasCharacter(player), "character controller has no character");
+    for (int i = 0; i < 60; ++i) physics->MoveCharacter(player, { 0, -0.2f, 0 }, 1.0f / 60);
+    auto& cc = scene.Reg().Get<CharacterControllerComponent>(player);
+    const float standY = scene.GetWorldMatrix(player)[3].y;
+    Check(cc.grounded && std::abs(standY - 1.0f) < 0.1f, "character did not land on the ground");
+    for (int i = 0; i < 120; ++i) { physics->MoveCharacter(player, { 0, -0.05f, -0.05f }, 1.0f / 60); }
+    const glm::vec3 onStep = glm::vec3(scene.GetWorldMatrix(player)[3]);
+    Check(onStep.z < -5.0f && onStep.y > 1.15f, "character did not climb the step");
+    scene.SetWorldMatrix(player, glm::translate(glm::mat4(1), glm::vec3(0, 1.2f, 3)));
+    for (int i = 0; i < 120; ++i) physics->MoveCharacter(player, { 0, -0.05f, 0.08f }, 1.0f / 60);
+    Check(scene.GetWorldMatrix(player)[3].z < 5.8f, "character walked through the wall");
+
+    scene.Reg().Get<NavMeshAgentComponent>(agent);
+    Navigation::AgentCommand(scene, agent, scene.Reg().Get<NavMeshAgentComponent>(agent), nlohmann::json{ { "setDestination", { 15, 0, 15 } } });
+    const glm::vec3 doorStart = glm::vec3(scene.GetWorldMatrix(door) * glm::vec4(-0.5f, 0, 0, 1));
+    for (int i = 0; i < 60 * 10; ++i) scene.OnUpdate(1.0f / 60);
+    const glm::vec3 doorAnchor = glm::vec3(scene.GetWorldMatrix(door) * glm::vec4(-0.5f, 0, 0, 1));
+    Check(glm::length(doorAnchor - doorStart) < 0.1f, "hinge joint let the door fall");
+    Check(scene.Reg().Get<JointComponent>(weak).broken, "fixed joint did not break over its break force");
+    const glm::vec3 agentEnd = glm::vec3(scene.GetWorldMatrix(agent)[3]);
+    Check(glm::length(glm::vec2(agentEnd.x - 15, agentEnd.z - 15)) < 1.0f, "nav mesh agent did not reach its destination");
+    scene.OnRuntimeStop();
+
+    // Splines and line renderers
+    SplineComponent spline; spline.mode = 2; spline.knots = { { { 0, 0, 0 } }, { { 0, 0, 10 } } };
+    Check(std::abs(Splines::Length(spline) - 10.0f) < 0.01f, "linear spline length");
+    Check(glm::length(Splines::Position(spline, Splines::ParameterAtDistance(spline, 2.5f)) - glm::vec3(0, 0, 2.5f)) < 0.01f, "spline distance lookup");
+    spline.mode = 0; spline.knots = { { { 0, 0, 0 } }, { { 5, 0, 5 } }, { { 10, 0, 0 } } };
+    Check(glm::length(Splines::Position(spline, 0.5f) - glm::vec3(5, 0, 5)) < 0.01f, "auto spline does not pass through its knots");
+    glm::vec3 nearest; Splines::Nearest(spline, { 5, 3, 5 }, &nearest);
+    Check(glm::length(nearest - glm::vec3(5, 0, 5)) < 0.05f, "spline nearest point");
+    LineRendererComponent line; line.positions = { { 0, 0, 0 }, { 1, 0, 0 }, { 1, 0, 1 } };
+    RenderCamera camera; camera.position = { 0, 5, 5 }; camera.view = glm::lookAt(camera.position, glm::vec3(0), glm::vec3(0, 1, 0));
+    std::vector<Vertex> vertices; glm::vec3 bmin, bmax;
+    Check(LineRenderers::BuildVertices(line, glm::mat4(1), camera, vertices, bmin, bmax) == 2, "line renderer quads");
+    // The new components survive a scene save and load
+    Scene saved; auto s = saved.CreateEntity("Saved");
+    saved.Reg().Add<JointComponent>(s).breakForce = 42; saved.Reg().Add<SplineComponent>(s).closed = true; saved.Reg().Add<DecalComponent>(s).opacity = 0.25f;
+    saved.Reg().Add<ReflectionProbeComponent>(s).resolution = 256; saved.Reg().Add<LineRendererComponent>(s).loop = true; saved.Reg().Add<CharacterControllerComponent>(s).stepOffset = 0.5f;
+    auto loaded = SceneSerializer::FromJson(SceneSerializer::ToJson(saved));
+    auto l = loaded->FindByName("Saved");
+    Check(loaded->Reg().Get<JointComponent>(l).breakForce == 42 && loaded->Reg().Get<SplineComponent>(l).closed && loaded->Reg().Get<DecalComponent>(l).opacity == 0.25f &&
+          loaded->Reg().Get<ReflectionProbeComponent>(l).resolution == 256 && loaded->Reg().Get<LineRendererComponent>(l).loop && loaded->Reg().Get<CharacterControllerComponent>(l).stepOffset == 0.5f,
+          "new components lost in scene serialization");
+    // A duplicated ragdoll keeps its joints inside the copy
+    auto body = saved.CreateEntity("Ragdoll"); auto limb = saved.CreateEntity("Limb"); saved.SetParent(limb, body, false);
+    saved.Reg().Add<JointComponent>(limb).connectedBody = saved.Reg().Get<IDComponent>(body).uuid;
+    auto copy = saved.DuplicateEntity(body);
+    auto copyLimb = saved.GetChildren(copy).at(0);
+    Check(saved.Reg().Get<JointComponent>(copyLimb).connectedBody == saved.Reg().Get<IDComponent>(copy).uuid, "duplicated joint still points at the original body");
+    MeshLibrary::Shutdown(); AssetManager::Shutdown();
+    std::cout << "Character controller, joints, nav mesh, splines and line renderer passed\n";
+}
+
 static void TestComponentEnableAndMouse(){
     Input::ResetMouseTracking();Input::SampleMousePosition({100,100});Check(Input::MouseDelta()==glm::vec2(0),"first mouse sample jumped");Input::SampleMousePosition({104,98});Check(Input::MouseDelta()==glm::vec2(4,-2),"mouse movement lost");Input::ResetMouseTracking();Input::SampleMousePosition({-10000,3000});Check(Input::MouseDelta()==glm::vec2(0),"cursor mode warp leaked into look delta");Input::SampleMousePosition({-9997,3001});Check(Input::MouseDelta()==glm::vec2(3,1),"locked mouse delta rebounded");
     Tests::MemoryDevice device;AssetManager::Init(device,TestRoot());MeshLibrary::Init(device);Scene scene;auto object=scene.CreatePrimitive(PrimitiveType::Cube,"Disabled Renderer");scene.Reg().Add<BoxColliderComponent>(object);auto camera=scene.CreateEntity("Camera");scene.Reg().Add<CameraComponent>(camera);RenderCamera view;scene.GetCamera(camera,view,1);SceneRenderer renderer(device);scene.Reg().SetEnabled<MeshRendererComponent>(object,false);renderer.BeginScene(view,{},0);scene.SubmitToRenderer(renderer,device);Check(renderer.SubmittedDrawCount()==0,"disabled mesh renderer still rendered");scene.Reg().SetEnabled<CameraComponent>(camera,false);Check(!scene.GetPrimaryCamera(view,1),"disabled camera remained primary");Registry copied=scene.Reg();Check(!copied.IsEnabled<MeshRendererComponent>(object),"registry copy lost disabled state");auto duplicate=scene.DuplicateEntity(object);Check(!scene.Reg().IsEnabled<MeshRendererComponent>(duplicate),"duplicate lost disabled component state");auto saved=SceneSerializer::FromJson(SceneSerializer::ToJson(scene));auto loaded=saved->FindByName("Disabled Renderer");Check(!saved->Reg().IsEnabled<MeshRendererComponent>(loaded),"component enabled state lost in scene serialization");scene.Reg().SetEnabled<MeshRendererComponent>(object,true);renderer.BeginScene(view,{},0);scene.SubmitToRenderer(renderer,device);Check(renderer.SubmittedDrawCount()==1,"renderer did not re-enable");scene.Reg().SetEnabled<BoxColliderComponent>(object,false);scene.OnRuntimeStart();Check(!scene.Physics()->HasBody(object),"disabled collider created physics body");scene.Reg().SetEnabled<BoxColliderComponent>(object,true);scene.RefreshComponentState(object,3);Check(scene.Physics()->HasBody(object),"collider did not re-enable");scene.Reg().SetEnabled<BoxColliderComponent>(object,false);scene.RefreshComponentState(object,3);Check(!scene.Physics()->HasBody(object),"disabled collider retained physics body");scene.OnRuntimeStop();MeshLibrary::Shutdown();AssetManager::Shutdown();
@@ -662,7 +804,7 @@ static void TestRenderingSystems(){
     std::filesystem::copy_file(FileSystem::EngineRoot()/"engineIcon.png",root/"Image.png",std::filesystem::copy_options::overwrite_existing);
     TextureImportSettings settings;settings.maxSize=64;settings.srgb=false;settings.mipmaps=false;settings.filter=0;settings.wrap=0;Check(settings.Save("Image.png"),"texture import save failed");auto texture=AssetManager::GetTexture("Image.png",true);Check(texture&&texture->Desc().width==64&&texture->Desc().height==64&&texture->Desc().mipLevels==1&&texture->Desc().format==RHI::Format::RGBA8_UNORM,"texture import settings ignored");Check(TextureImportSettings::Load("Image.png").Sampler()==RHI::SamplerIndex::PointClamp,"point/clamp import ignored");
     FileSystem::WriteText(root/"Custom.spv.properties.json",R"({"properties":[{"name":"Amount","type":"float","default":2},{"name":"Tint","type":"color","default":[1,0,0,1]},{"name":"Pattern","type":"texture","default":"Image.png"}]})");
-    Material custom;custom.customPixelShader="Custom.spv";custom.propertiesJson=R"({"Amount":3.5,"Tint":[0.1,0.6,0.9,1]})";auto propertyValues=custom.PropertyValues();Check(propertyValues.size()==3&&propertyValues[0].x==3.5f&&propertyValues[1].y==.6f&&propertyValues[2].y==(float)RHI::SamplerIndex::PointClamp,"custom material property slots/defaults ignored");nlohmann::json serialized;custom.ToJson(serialized);Material restoredMaterial;restoredMaterial.FromJson(serialized);Check(nlohmann::json::parse(restoredMaterial.propertiesJson)["Amount"]==3.5f,"custom material properties lost in serialization");Material water;water.shader=ShaderType::Water;water.propertiesJson=R"({"WaveSpeed":0,"WindDirection":[-1,0]})";auto waterValues=water.PropertyValues();Check(waterValues.size()==14&&waterValues[2].x==0&&waterValues[3].x==-1,"water speed/direction overrides ignored");
+    Material custom;custom.customPixelShader="Custom.spv";custom.propertiesJson=R"({"Amount":3.5,"Tint":[0.1,0.6,0.9,1]})";auto propertyValues=custom.PropertyValues();Check(propertyValues.size()==3&&propertyValues[0].x==3.5f&&propertyValues[1].y==.6f&&propertyValues[2].y==(float)RHI::SamplerIndex::PointClamp,"custom material property slots/defaults ignored");nlohmann::json serialized;custom.ToJson(serialized);Material restoredMaterial;restoredMaterial.FromJson(serialized);Check(nlohmann::json::parse(restoredMaterial.propertiesJson)["Amount"]==3.5f,"custom material properties lost in serialization");Material water;water.shader=ShaderType::Water;water.propertiesJson=R"({"WaveSpeed":0,"WindDirection":[-1,0]})";auto waterValues=water.PropertyValues();Check(waterValues.size()==15&&waterValues[2].x==0&&waterValues[3].x==-1,"water speed/direction overrides ignored");
     Scene scene;auto camera=scene.CreateEntity("Map camera");auto& c=scene.Reg().Add<CameraComponent>(camera);c.orthographic=true;c.cullingMask=1;c.targetTexture="Map.rendertexture";c.targetWidth=256;c.targetHeight=128;
     auto visible=scene.CreatePrimitive(PrimitiveType::Cube,"Visible");auto hidden=scene.CreatePrimitive(PrimitiveType::Cube,"Hidden");scene.Reg().Get<NameComponent>(hidden).layer=3;
     RenderCamera view;Check(scene.GetCamera(camera,view,2)&&view.cullingMask==1,"camera layer mask not carried to renderer");SceneRenderer renderer(device);renderer.BeginScene(view,{},0);scene.SubmitToRenderer(renderer,device);Check(renderer.SubmittedDrawCount()==1,"camera culling mask did not filter objects");
@@ -705,6 +847,8 @@ int main() {
         if(std::getenv("STARDUST_TEST_BUILD")){TestStreamingBuild();TestPakEncryption();TestCookingAndAsync();std::cout<<"Build dependency tests passed\n";return 0;}
         if(std::getenv("STARDUST_TEST_CULLING")){PhysicsWorld::InitJolt();TestProjectCacheAndCulling();TestForces();TestHierarchyColliders();PhysicsWorld::ShutdownJolt();std::cout<<"Culling, starter cache and hierarchy tests passed\n";return 0;}
         if(auto project=std::getenv("STARDUST_BENCH_PROJECT")){BenchmarkProject(std::filesystem::u8path(project));return 0;}
+        if(std::getenv("STARDUST_TEST_GAMEPLAY")){TestGameplaySystems();return 0;}
+        TestGameplaySystems();
         TestDefaultTerrainCollider();
         TestScenes();
         TestForces();

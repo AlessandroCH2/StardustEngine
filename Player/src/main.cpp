@@ -5,6 +5,7 @@
 #include "Core/Application.h"
 #include "Core/Log.h"
 #include "Scene/Scene.h"
+#include "Renderer/ReflectionProbes.h"
 #include "Renderer/SceneRenderer.h"
 #include "Assets/AssetManager.h"
 #include "Scene/SceneSerializer.h"
@@ -95,6 +96,7 @@ protected:
         TerrainData::ClearCache();
         AssetManager::Shutdown();
         PhysicsWorld::ShutdownJolt();
+        ReflectionProbes::Shutdown();
         MeshLibrary::Shutdown();
         Pak::UnmountAll();
     }

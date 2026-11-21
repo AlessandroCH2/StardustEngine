@@ -20,6 +20,9 @@
 #include "Animation/AnimatorSystem.h"
 #include "Scene/ParticleSystem.h"
 #include "Scene/TrailRenderer.h"
+#include "Scene/Navigation.h"
+#include "Renderer/ReflectionProbes.h"
+#include "Scene/Splines.h"
 #include "Animation/ModelSkeleton.h"
 #include <glm/gtx/matrix_decompose.hpp>
 #include <random>
@@ -48,7 +51,7 @@ static void DecomposeWorld(const glm::mat4& m, glm::vec3& pos, glm::quat& rot, g
 }
 
 Scene::Scene() = default;
-Scene::~Scene() { for(auto& [uuid,path]:m_CameraTexturePaths)AssetManager::SetRuntimeTexture(path,nullptr);VideoPlayerSystem::Clear(*this);if (m_Running) OnRuntimeStop(); }
+Scene::~Scene() { for(auto& [uuid,path]:m_CameraTexturePaths)AssetManager::SetRuntimeTexture(path,nullptr);VideoPlayerSystem::Clear(*this);if (m_Running) OnRuntimeStop();Navigation::Release(*this);ReflectionProbes::Release(*this); }
 
 // ------------------------------------------------------------------------------------------------ entities
 
@@ -96,6 +99,14 @@ void Scene::CopyComponents(EntityID src, EntityID dst) {
     if (auto* c = m_Registry.TryGet<SpriteBatchComponent>(src)) { auto& copy = m_Registry.Add<SpriteBatchComponent>(dst,*c); copy.Touch(); }
     if (auto* c = m_Registry.TryGet<ParticleSystemComponent>(src)) { auto& copy = m_Registry.Add<ParticleSystemComponent>(dst,*c); ParticleSystems::ResetRuntime(copy); }
     if (auto* c = m_Registry.TryGet<TrailRendererComponent>(src)) { auto& copy = m_Registry.Add<TrailRendererComponent>(dst,*c); TrailRenderers::Clear(copy); }
+    if (auto* c = m_Registry.TryGet<CharacterControllerComponent>(src)) { auto& copy = m_Registry.Add<CharacterControllerComponent>(dst, *c); (void)copy; }
+    if (auto* c = m_Registry.TryGet<JointComponent>(src)) { auto& copy = m_Registry.Add<JointComponent>(dst, *c); copy.broken=false;(void)copy; }
+    if (auto* c = m_Registry.TryGet<NavMeshSurfaceComponent>(src)) { auto& copy = m_Registry.Add<NavMeshSurfaceComponent>(dst, *c); copy.loadedVersion=0;(void)copy; }
+    if (auto* c = m_Registry.TryGet<NavMeshAgentComponent>(src)) { auto& copy = m_Registry.Add<NavMeshAgentComponent>(dst, *c); copy.crowdIndex=-1;copy.corners.clear();copy.hasDestination=false;(void)copy; }
+    if (auto* c = m_Registry.TryGet<LineRendererComponent>(src)) { auto& copy = m_Registry.Add<LineRendererComponent>(dst, *c); (void)copy; }
+    if (auto* c = m_Registry.TryGet<SplineComponent>(src)) { auto& copy = m_Registry.Add<SplineComponent>(dst, *c); (void)copy; }
+    if (auto* c = m_Registry.TryGet<ReflectionProbeComponent>(src)) { auto& copy = m_Registry.Add<ReflectionProbeComponent>(dst, *c); copy.slot=~0u;copy.dirty=true;(void)copy; }
+    if (auto* c = m_Registry.TryGet<DecalComponent>(src)) { auto& copy = m_Registry.Add<DecalComponent>(dst, *c); (void)copy; }
     if (auto* c = m_Registry.TryGet<MeshRendererComponent>(src)) m_Registry.Add<MeshRendererComponent>(dst, *c);
     if (auto* c = m_Registry.TryGet<CameraComponent>(src)) m_Registry.Add<CameraComponent>(dst, *c);
     if (auto* c = m_Registry.TryGet<DirectionalLightComponent>(src)) m_Registry.Add<DirectionalLightComponent>(dst, *c);
@@ -189,7 +200,8 @@ EntityID Scene::FindWithTag(const std::string& tag) {
 void Scene::RefreshComponentState(EntityID e,int type){
  if(!m_Registry.Valid(e))return;
  if(type==24&&m_Registry.IsEnabled<TerrainComponent>(e))if(auto* device=AssetManager::Device())PrepareTerrains(*device);
- if(m_Physics&&(type==2||type==3||type==4||type==5||type==9||type==24)){m_Physics->DestroyBody(e);if(IsActiveInHierarchy(e))m_Physics->CreateBody(e);}
+ if(m_Physics&&(type==2||type==3||type==4||type==5||type==9||type==24||type==38)){m_Physics->DestroyBody(e);if(IsActiveInHierarchy(e))m_Physics->CreateBody(e);}
+ if(m_Physics&&type==39)m_Physics->RebuildJoint(e);
  if(m_Running&&type==11){AudioEngine::Stop(e);if(auto* audio=m_Registry.TryGetEnabled<AudioSourceComponent>(e);audio&&audio->playOnStart&&IsActiveInHierarchy(e))AudioEngine::Play(e);}
 }
 
@@ -358,6 +370,7 @@ void Scene::OnRuntimeStop() {
     VideoPlayerSystem::Clear(*this);
     AudioEngine::OnRuntimeStop();
     ScriptEngine::OnRuntimeStop();
+    Navigation::OnRuntimeStop(*this);
     m_Physics.reset();
     m_Running = false;m_PersistentRoots.clear();
 }
@@ -382,6 +395,8 @@ void Scene::OnUpdate(float dt) {
         m_FixedAccumulator -= fixedDt;
     }
     { SD_PROFILE("Scripts (Update)"); ScriptEngine::Update(dt); }
+    { SD_PROFILE("Navigation"); Navigation::Update(*this, dt); }
+    { SD_PROFILE("Splines"); Splines::Update(*this, dt); }
     SD_PROFILE("Scene upkeep");
 
     // Entities created by scripts this frame get their bodies / instances; destroyed ones are removed
@@ -424,6 +439,9 @@ EnvironmentSettings Scene::GatherEnvironment() {
         env.contrast = c.contrast;
         env.saturation = c.saturation;
         env.vignette = c.vignette;
+        env.aoIntensity = c.aoIntensity; env.aoRadius = c.aoRadius; env.taa = c.taa;
+        env.depthOfField = c.depthOfField; env.focusDistance = c.focusDistance; env.focusRange = c.focusRange; env.bokehRadius = c.bokehRadius;
+        env.motionBlur = c.motionBlur;
         env.fxaa = c.fxaa;
     });
     return env;
@@ -467,7 +485,7 @@ void Scene::RenderCameraTargets(RHI::Device& device,RHI::CommandList& cmd,float 
         auto old=m_CameraTexturePaths.find(uuid);if(old!=m_CameraTexturePaths.end()&&old->second!=c.targetTexture)AssetManager::SetRuntimeTexture(old->second,nullptr);m_CameraTexturePaths[uuid]=c.targetTexture;
         AssetManager::SetRuntimeTexture(c.targetTexture,renderer->OutputRef());
     });
-    for(auto& [uuid,path]:m_CameraTexturePaths)if(!live.contains(uuid)&&!livePaths.contains(path))AssetManager::SetRuntimeTexture(path,nullptr);
+    ReflectionProbes::Render(*this,device,cmd,time);
     std::erase_if(m_CameraTexturePaths,[&](auto& item){return !live.contains(item.first);});
     std::erase_if(m_CameraTargets,[&](auto& item){return !live.contains(item.first);});
 }
@@ -751,6 +769,36 @@ void Scene::SubmitToRenderer(SceneRenderer& renderer, RHI::Device& device,bool a
         material.runtimeAlbedo = texture;
         material.doubleSided = true;
         if (material.customPixelShader.empty()) { material.metallic = c.texture.empty() ? 0.0f : 1.0f; material.albedoMap = c.texture; }
+        renderer.SubmitParticles(slot->mesh, material, e, quads * 6, c.blendMode == 1, c.sortingOrder);
+    });
+    ReflectionProbes::Submit(*this, renderer);
+    // Decals: projected boxes, drawn after the opaque objects
+    m_Registry.Each<DecalComponent>([&](EntityID e, DecalComponent& c) {
+        if (!m_Registry.IsEnabled<DecalComponent>(e) || !m_SubmitActive[e] || c.opacity <= 0.0f) return;
+        if (!(renderer.Camera().cullingMask & (1u << std::clamp(m_Registry.Get<NameComponent>(e).layer, 0, 31)))) return;
+        DecalGPU d;
+        d.model = GetWorldMatrix(e) * glm::scale(glm::mat4(1.0f), glm::max(c.size, glm::vec3(0.001f)));
+        d.invModel = glm::inverse(d.model);
+        d.color = c.color; d.tilingOffset = c.tilingOffset;
+        d.ids = { AssetManager::TextureSRV(c.texture, true, DefaultTexture::White), c.normalMap.empty() ? ~0u : AssetManager::TextureSRV(c.normalMap, false, DefaultTexture::FlatNormal), 0u, 0u };
+        d.params = { std::clamp(c.opacity, 0.0f, 1.0f), c.normalStrength, std::clamp(c.angleFade, 0.0f, 1.0f), std::clamp(c.smoothness, 0.0f, 1.0f) };
+        d.extra = { std::max(0.0f, c.emission), 0, 0, 0 };
+        renderer.SubmitDecal(d, c.sortingOrder);
+    });
+    // Line Renderers: ribbons through their positions
+    m_Registry.Each<LineRendererComponent>([&](EntityID e, LineRendererComponent& c) {
+        if (c.positions.size() < 2 || !m_Registry.IsEnabled<LineRendererComponent>(e) || !m_SubmitActive[e]) return;
+        if (!(renderer.Camera().cullingMask & (1u << std::clamp(m_Registry.Get<NameComponent>(e).layer, 0, 31)))) return;
+        glm::vec3 boundsMin, boundsMax;
+        const u32 quads = LineRenderers::BuildVertices(c, GetWorldMatrix(e), renderer.Camera(), m_ParticleScratch, boundsMin, boundsMax);
+        if (!quads) return;
+        ParticleMeshSlot* slot = dynamicSlot((u64)m_Registry.Get<IDComponent>(e).uuid ^ 0x51ED270B27A2C4F1ull, quads, boundsMin, boundsMax);
+        Material material;
+        if (auto custom = AssetManager::GetMaterial(c.material)) material = *custom; else material.shader = ShaderType::Unlit;
+        Ref<RHI::Texture> texture = c.texture.empty() ? nullptr : AssetManager::GetTexture(c.texture, true);
+        if (texture) material.runtimeAlbedo = texture;
+        material.doubleSided = true;
+        if (material.customPixelShader.empty() && texture) { material.metallic = 1.0f; material.albedoMap = c.texture; }
         renderer.SubmitParticles(slot->mesh, material, e, quads * 6, c.blendMode == 1, c.sortingOrder);
     });
     m_Registry.Each<PointLightComponent>([&](EntityID e, PointLightComponent& l) {

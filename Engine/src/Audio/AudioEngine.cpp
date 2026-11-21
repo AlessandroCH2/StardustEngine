@@ -14,7 +14,11 @@
 #define MINIAUDIO_IMPLEMENTATION
 #define MA_NO_ENCODING
 #include <miniaudio.h>
+#include <extras/nodes/ma_reverb_node/ma_reverb_node.c>
 #pragma warning(pop)
+#include <nlohmann/json.hpp>
+#include <functional>
+#include <chrono>
 
 namespace Stardust {
 
@@ -37,7 +41,7 @@ static ma_sound* s_Preview = nullptr;
 
 static void FreeSound(ma_sound* s) { if (!s) return; ma_sound_uninit(s); delete s; }
 
-static ma_sound* LoadSound(const std::string& clip, bool spatial) {
+static ma_sound* LoadSound(const std::string& clip, bool spatial, void* group = nullptr) {
     if (clip.empty()) return nullptr;
     auto absolute=AssetManager::ToAbsolute(clip);std::string path=FileSystem::Utf8(absolute);
     auto* s = new ma_sound;
@@ -45,7 +49,7 @@ static ma_sound* LoadSound(const std::string& clip, bool spatial) {
     std::error_code ec;
     ma_uint32 flags = (Pak::Contains(absolute)?Pak::Size(absolute):std::filesystem::file_size(absolute,ec)) > 2 * 1024 * 1024 ? MA_SOUND_FLAG_STREAM : MA_SOUND_FLAG_DECODE;
     if (!spatial) flags |= MA_SOUND_FLAG_NO_SPATIALIZATION;
-    if (ma_sound_init_from_file(&s_Engine, path.c_str(), flags, nullptr, nullptr, s) != MA_SUCCESS) {
+    if (ma_sound_init_from_file(&s_Engine, path.c_str(), flags, (ma_sound_group*)group, nullptr, s) != MA_SUCCESS) {
         SD_ERROR("Audio clip could not be loaded: {}", clip);
         delete s;
         return nullptr;
@@ -59,6 +63,7 @@ bool AudioEngine::Init() {
     InitVfs();auto config=ma_engine_config_init();config.pResourceManagerVFS=&s_Vfs;
     if (ma_engine_init(&config, &s_Engine) != MA_SUCCESS) { SD_WARN("Audio device unavailable: audio disabled"); return false; }
     s_Ready = true;
+    LoadMixer();
     SD_INFO("Audio ready (miniaudio)");
     return true;
 }
@@ -68,6 +73,7 @@ void AudioEngine::Shutdown() {
     OnRuntimeStop();
     StopPreview();
     CloseAllStreams();
+    ShutdownMixer();
     ma_engine_uninit(&s_Engine);
     s_Ready = false;
 }
@@ -76,7 +82,7 @@ void AudioEngine::EnsureSound(Scene& scene, EntityID e) {
     if (s_Sounds.contains(e)) return;
     auto* src = scene.Reg().TryGetEnabled<AudioSourceComponent>(e);
     if (!src) return;
-    ma_sound* s = LoadSound(src->clip, src->spatial);
+    ma_sound* s = LoadSound(src->clip, src->spatial, MixerGroupNode(src->output));
     if (!s) return;
     ma_sound_set_volume(s, src->volume);
     ma_sound_set_pitch(s, src->pitch);
@@ -90,6 +96,7 @@ void AudioEngine::EnsureSound(Scene& scene, EntityID e) {
 void AudioEngine::OnRuntimeStart(Scene& scene) {
     s_Scene = &scene;
     if (!s_Ready) return;
+    LoadMixer();
     std::vector<EntityID> autoplay;
     scene.Reg().Each<AudioSourceComponent>([&](EntityID e, AudioSourceComponent& a) {
         if (a.playOnStart && scene.IsActiveInHierarchy(e)) autoplay.push_back(e);
@@ -129,6 +136,10 @@ void AudioEngine::Update(Scene& scene) {
         ++it;
     }
     std::erase_if(s_OneShots, [](ma_sound* s) { if (ma_sound_at_end(s)) { FreeSound(s); return true; } return false; });
+    static auto last = std::chrono::steady_clock::now();
+    const auto now = std::chrono::steady_clock::now();
+    UpdateMixer(std::min(0.1f, std::chrono::duration<float>(now - last).count()));
+    last = now;
 }
 
 void AudioEngine::Play(EntityID e) {
@@ -159,9 +170,9 @@ void AudioEngine::SetPitch(EntityID e, float p) {
     if (auto it = s_Sounds.find(e); it != s_Sounds.end()) ma_sound_set_pitch(it->second, p);
 }
 
-void AudioEngine::PlayOneShot(const std::string& clip, const glm::vec3& pos, float volume, bool spatial) {
+void AudioEngine::PlayOneShot(const std::string& clip, const glm::vec3& pos, float volume, bool spatial, const std::string& output) {
     if (!s_Ready) return;
-    ma_sound* s = LoadSound(clip, spatial);
+    ma_sound* s = LoadSound(clip, spatial, MixerGroupNode(output));
     if (!s) return;
     ma_sound_set_volume(s, volume);
     ma_sound_set_position(s, pos.x, pos.y, pos.z);
@@ -185,6 +196,7 @@ void AudioEngine::StopPreview() {
 
 } // namespace Stardust
 
+#include "Audio/AudioMixer.inl"
 namespace Stardust {
 void AudioEngine::SetPaused(bool paused) {
     if (!s_Ready || paused == s_Paused) return;

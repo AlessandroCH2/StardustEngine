@@ -95,7 +95,7 @@ float4 ShadeStandard(SurfaceInput s, SurfaceOutputStandard o) {
     float NoL = saturate(dot(N, L));
     float shadow = d.emissive.w < 0 ? 1.0 : NoL > 0.0 ? SampleShadow(f, g_Push.frameBuffer, s.worldPos, N, NoL) : 0.0;
     float3 color = EvaluateBRDF(N, V, L, albedo, roughness, metallic) * SunRadiance(f, amb) * shadow;
-    color += EvaluateAmbient(f, amb, N, V, albedo, roughness, metallic, saturate(o.Occlusion));
+    color += EvaluateAmbient(f, amb, N, V, albedo, roughness, metallic, saturate(o.Occlusion), s.worldPos);
     color += EvaluateLocalLights(f, s.worldPos, N, V, albedo, roughness, metallic, false);
     color += o.Emission;
     color = ApplyAerialPerspective(f, color, s.worldPos);

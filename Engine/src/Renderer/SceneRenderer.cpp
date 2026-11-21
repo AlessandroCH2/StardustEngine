@@ -117,6 +117,25 @@ SceneRenderer::SceneRenderer(Device& device) : m_Device(device) {
         m_LightBuffers[i] = device.CreateBuffer({ kMaxLocalLights * sizeof(LocalLight), BufferUsage::Storage, MemoryUsage::CPUToGPU, "LocalLights" });
     }
 
+    for (u32 i = 0; i < kFramesInFlight; ++i) {
+        m_ProbeBuffers[i] = device.CreateBuffer({ kMaxProbes * sizeof(ProbeGPU), BufferUsage::Storage, MemoryUsage::CPUToGPU, "ReflectionProbes" });
+        m_DecalBuffers[i] = device.CreateBuffer({ kMaxDecals * sizeof(DecalGPU), BufferUsage::Storage, MemoryUsage::CPUToGPU, "Decals" });
+    }
+    GraphicsPipelineDesc decal;
+    decal.name = "Decals"; decal.vs = "Decal.vs"; decal.ps = "Decal.ps";
+    decal.colorFormats = { kHDRFormat };
+    decal.depthTest = false; decal.depthWrite = false;
+    decal.cull = CullMode::Front;   // the far side of the box: works with the camera inside it
+    decal.blend = BlendMode::Alpha;
+    m_DecalPipeline = device.CreateGraphicsPipeline(decal);
+    m_SSAOPipeline = device.CreateComputePipeline({ "SSAO.cs", "SSAO" });
+    m_SSAOBlurPipeline = device.CreateComputePipeline({ "SSAOBlur.cs", "SSAOBlur" });
+    GraphicsPipelineDesc aoApply;
+    aoApply.name = "SSAOApply"; aoApply.vs = "Fullscreen.vs"; aoApply.ps = "SSAOApply.ps";
+    aoApply.colorFormats = { kHDRFormat }; aoApply.depthTest = false; aoApply.depthWrite = false; aoApply.cull = CullMode::None;
+    aoApply.blend = BlendMode::Multiply;
+    m_SSAOApplyPipeline = device.CreateGraphicsPipeline(aoApply);
+
     m_Sky = MakeScope<SkyRenderer>(device);
 
     m_Post = MakeScope<PostProcess>(device, kOutputFormat);
@@ -160,6 +179,12 @@ void SceneRenderer::Resize(u32 width, u32 height) {
     m_EntityId = m_Device.CreateTexture(d);
     d.name = "SceneOutput"; d.format = kOutputFormat; d.usage = TextureUsage::RenderTarget | TextureUsage::Sampled | TextureUsage::CopySrc;
     m_Output = m_Device.CreateTexture(d);
+    TextureDesc ao;
+    ao.width = std::max(1u, width / 2); ao.height = std::max(1u, height / 2); ao.format = Format::R16F;
+    ao.usage = TextureUsage::Storage | TextureUsage::Sampled;
+    ao.name = "SSAO"; m_AO = m_Device.CreateTexture(ao);
+    ao.name = "SSAOBlur"; m_AOBlur = m_Device.CreateTexture(ao);
+    m_HasHistory = false;
     m_Sky->Resize(width, height);
     m_Post->Resize(width, height);
     SetDisplaySize(m_DisplayWidth, m_DisplayHeight);
@@ -190,6 +215,7 @@ void SceneRenderer::BeginScene(const RenderCamera& camera, const EnvironmentSett
     m_Draws.clear();m_InstanceOffset=0;
     m_DrawData.clear();m_MaterialValues.clear();
     m_Lights.clear();
+    m_Probes.clear(); m_Decals.clear();
     m_ActiveTerrains.clear();
 }
 
@@ -402,8 +428,21 @@ void SceneRenderer::Render(CommandList& cmd) {
     FrameConstants fc{};
     fc.view = m_Camera.view;
     fc.proj = m_Camera.projection;
+    // Temporal anti-aliasing: a different sub-pixel offset every frame (Halton 2, 3)
+    const bool temporal = m_Env.taa && GraphicsQuality::Current().temporalAA && m_Camera.postProcessing && !captureMode;
+    glm::vec2 jitter(0.0f);
+    if (temporal) {
+        auto halton = [](u32 i, u32 b) { float f = 1, r = 0; while (i > 0) { f /= b; r += f * (i % b); i /= b; } return r; };
+        const u32 n = (u32)(m_FrameCounter % 8) + 1;
+        jitter = glm::vec2((halton(n, 2) - 0.5f) * 2.0f / m_Width, (halton(n, 3) - 0.5f) * 2.0f / m_Height);
+        fc.proj[2][0] -= jitter.x; fc.proj[2][1] -= jitter.y; // w = -z: shifts NDC by +jitter
+    }
     fc.viewProj = fc.proj * fc.view;
     fc.invViewProj = glm::inverse(fc.viewProj);
+    // The first frame of temporal anti-aliasing starts the history
+    const bool cut = !m_HasHistory;
+    fc.prevViewProj = m_HasHistory ? m_PrevViewProj : fc.viewProj;
+    fc.jitter = { jitter.x, jitter.y, m_HasHistory ? m_PrevJitter.x : jitter.x, m_HasHistory ? m_PrevJitter.y : jitter.y };
     fc.cameraPos = m_Camera.position;
     fc.time = m_Time;
     fc.sunDir = glm::normalize(m_Env.sunDirection);
@@ -430,6 +469,15 @@ void SceneRenderer::Render(CommandList& cmd) {
     if (!m_DrawData.empty()) std::memcpy(m_DrawBuffers[fi]->Mapped(), m_DrawData.data(), m_DrawData.size() * sizeof(DrawDataGPU));
     if (!m_Lights.empty()) std::memcpy(m_LightBuffers[fi]->Mapped(), m_Lights.data(), m_Lights.size() * sizeof(LocalLight));
     reinterpret_cast<FrameConstants*>(frameBuf->Mapped())->lightInfo = { m_LightBuffers[fi]->Index(), (u32)m_Lights.size(), m_OpaqueColor->SRV(), m_OpaqueDepth->SRV() };
+    // Reflection probes: the smallest (most detailed) first, they cover the bigger ones
+    std::stable_sort(m_Probes.begin(), m_Probes.end(), [](auto& a, auto& b) { return a.first < b.first; });
+    for (size_t p = 0; p < m_Probes.size(); ++p) std::memcpy((ProbeGPU*)m_ProbeBuffers[fi]->Mapped() + p, &m_Probes[p].second, sizeof(ProbeGPU));
+    reinterpret_cast<FrameConstants*>(frameBuf->Mapped())->effectsInfo = { m_ProbeBuffers[fi]->Index(), (u32)m_Probes.size(), (u32)m_FrameCounter, 0u };
+    std::stable_sort(m_Decals.begin(), m_Decals.end(), [](auto& a, auto& b) { return a.first < b.first; });
+    for (size_t p = 0; p < m_Decals.size(); ++p) std::memcpy((DecalGPU*)m_DecalBuffers[fi]->Mapped() + p, &m_Decals[p].second, sizeof(DecalGPU));
+    m_PrevViewProj = fc.viewProj; m_PrevJitter = jitter; ++m_FrameCounter;
+    const bool resetHistory = cut || !temporal;
+    m_HasHistory = temporal;
 
     Frustum frustum = Frustum::FromViewProj(fc.viewProj);
     m_ViewFrustum = frustum;
@@ -464,6 +512,8 @@ void SceneRenderer::Render(CommandList& cmd) {
         if(skybox){cmd.SetPipeline(customSky?customSky.get():m_SkyPipeline.get());cmd.Push(skyPush);
         cmd.Draw(3);}
         cmd.EndRendering();
+        if (!m_Decals.empty()) RenderDecals(cmd, frameBuf);
+        if (m_Env.aoIntensity > 0.0f && GraphicsQuality::Current().ambientOcclusion && m_Camera.postProcessing) RenderSSAO(cmd, frameBuf);
         bool hasWater=std::any_of(m_Draws.begin(),m_Draws.end(),[](auto& draw){return draw.shader==ShaderType::Water;});
         if(hasWater){cmd.CopyTexture(m_HDR.get(),m_OpaqueColor.get());cmd.CopyTexture(m_Depth.get(),m_OpaqueDepth.get());cmd.Barrier(m_OpaqueColor.get(),ResourceState::ShaderRead);cmd.Barrier(m_OpaqueDepth.get(),ResourceState::ShaderRead);}
         rd.colors[0].load=LoadOp::Load;rd.colors[1].load=LoadOp::Load;rd.depth.load=LoadOp::Load;
@@ -489,6 +539,13 @@ void SceneRenderer::Render(CommandList& cmd) {
     if (!GraphicsQuality::Current().bloom) ps.bloomIntensity = 0;
     if (!GraphicsQuality::Current().fxaa) ps.fxaa = false;
     if (!m_Camera.postProcessing) { ps.bloomIntensity = 0; ps.vignette = 0; ps.fxaa = false; }
+    const bool postEffects = m_Camera.postProcessing && GraphicsQuality::Current().postEffects && !captureMode;
+    ps.taa = temporal; ps.resetHistory = resetHistory;
+    if (temporal) ps.fxaa = false;
+    ps.depthOfField = postEffects && m_Env.depthOfField;
+    ps.focusDistance = m_Env.focusDistance; ps.focusRange = m_Env.focusRange; ps.bokehRadius = m_Env.bokehRadius;
+    ps.motionBlur = postEffects ? m_Env.motionBlur : 0.0f;
+    if (ps.taa || ps.depthOfField || ps.motionBlur > 0.0f) { cmd.Barrier(m_Depth.get(), ResourceState::ShaderRead); ps.frameBuffer = frameBuf->Index(); ps.depth = m_Depth->SRV(); }
     m_Post->Execute(cmd, m_HDR.get(), m_Output.get(), ps);
 
     if (selectedEntity) {
@@ -539,6 +596,50 @@ void SceneRenderer::Render(CommandList& cmd) {
     }
     cmd.Barrier(target, ResourceState::ShaderRead);
     if (target != m_Output.get()) cmd.Barrier(m_Output.get(), ResourceState::ShaderRead);
+}
+
+void SceneRenderer::RenderDecals(CommandList& cmd, Buffer* frameBuf) {
+    ScopedGpuTimer t(m_Device, "Decals");
+    cmd.Barrier(m_Depth.get(), ResourceState::ShaderRead);
+    RenderingDesc rd;
+    rd.colors.push_back({ m_HDR.get(), LoadOp::Load });
+    cmd.BeginRendering(rd);
+    cmd.SetPipeline(m_DecalPipeline.get());
+    const u32 fi = m_Device.FrameIndex();
+    for (u32 i = 0; i < (u32)m_Decals.size(); ++i) {
+        struct { u32 frame, decals, index, depth; } push{ frameBuf->Index(), m_DecalBuffers[fi]->Index(), i, m_Depth->SRV() };
+        cmd.Push(push);
+        cmd.Draw(36);
+        m_Stats.drawCalls++;
+    }
+    cmd.EndRendering();
+}
+
+void SceneRenderer::RenderSSAO(CommandList& cmd, Buffer* frameBuf) {
+    ScopedGpuTimer t(m_Device, "SSAO");
+    cmd.Barrier(m_Depth.get(), ResourceState::ShaderRead);
+    const u32 w = m_AO->Width(), h = m_AO->Height();
+    cmd.Barrier(m_AO.get(), ResourceState::UnorderedAccess);
+    cmd.SetPipeline(m_SSAOPipeline.get());
+    struct { u32 frame, depth, dst, samples, w, h; float radius, bias; } p{ frameBuf->Index(), m_Depth->SRV(), m_AO->UAV(), 12u, w, h, std::max(0.05f, m_Env.aoRadius), 0.02f };
+    cmd.Push(p);
+    cmd.Dispatch((w + 7) / 8, (h + 7) / 8, 1);
+    // Separable blur: horizontal into the second texture, vertical back
+    cmd.SetPipeline(m_SSAOBlurPipeline.get());
+    struct { u32 frame, src, depth, dst, w, h; i32 dx, dy; } b{ frameBuf->Index(), 0, m_Depth->SRV(), 0, w, h, 1, 0 };
+    cmd.Barrier(m_AO.get(), ResourceState::ShaderRead); cmd.Barrier(m_AOBlur.get(), ResourceState::UnorderedAccess);
+    b.src = m_AO->SRV(); b.dst = m_AOBlur->UAV(); cmd.Push(b); cmd.Dispatch((w + 7) / 8, (h + 7) / 8, 1);
+    cmd.Barrier(m_AOBlur.get(), ResourceState::ShaderRead); cmd.Barrier(m_AO.get(), ResourceState::UnorderedAccess);
+    b.src = m_AOBlur->SRV(); b.dst = m_AO->UAV(); b.dx = 0; b.dy = 1; cmd.Push(b); cmd.Dispatch((w + 7) / 8, (h + 7) / 8, 1);
+    cmd.Barrier(m_AO.get(), ResourceState::ShaderRead);
+    RenderingDesc rd;
+    rd.colors.push_back({ m_HDR.get(), LoadOp::Load });
+    cmd.BeginRendering(rd);
+    cmd.SetPipeline(m_SSAOApplyPipeline.get());
+    struct { u32 ao, depth; float intensity, direct; } a{ m_AO->SRV(), m_Depth->SRV(), std::clamp(m_Env.aoIntensity, 0.0f, 1.0f), 0.0f };
+    cmd.Push(a);
+    cmd.Draw(3);
+    cmd.EndRendering();
 }
 
 // Cascade splits: blend of logarithmic and uniform distribution ("practical split scheme").

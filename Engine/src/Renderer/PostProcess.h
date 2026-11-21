@@ -12,6 +12,11 @@ struct PostSettings {
     float saturation = 1.08f;
     float vignette = 0.35f;
     bool fxaa = true;
+    // HDR effects before bloom, read the depth buffer and the frame constants
+    u32 frameBuffer = 0, depth = 0;
+    bool taa = false, resetHistory = false;
+    bool depthOfField = false; float focusDistance = 10, focusRange = 8, bokehRadius = 8;
+    float motionBlur = 0;
 };
 
 // HDR -> LDR chain: physically based bloom (13-tap down / tent up), ACES tonemapping, grading, FXAA.
@@ -26,6 +31,10 @@ private:
     static constexpr u32 kBloomLevels = 6;
     RHI::Device& m_Device;
     Ref<RHI::Pipeline> m_Down, m_Up, m_Tonemap, m_Fxaa, m_TonemapDirect;
+    Ref<RHI::Pipeline> m_TAA, m_DoF, m_MotionBlur;
+    std::array<Ref<RHI::Texture>, 2> m_History;
+    Ref<RHI::Texture> m_TempA, m_TempB;
+    u32 m_HistoryIndex = 0;
     std::array<Ref<RHI::Texture>, kBloomLevels> m_DownChain;
     std::array<Ref<RHI::Texture>, kBloomLevels - 1> m_UpChain;
     Ref<RHI::Texture> m_LDR;

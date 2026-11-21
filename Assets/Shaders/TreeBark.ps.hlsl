@@ -30,7 +30,7 @@ PSOut main(PSIn i) {
     float NoL = saturate(dot(N, L));
     float shadow = NoL > 0.0 ? SampleShadow(f, g_Push.frameBuffer, i.worldPos, N, NoL) : 0.0;
     float3 color = EvaluateBRDF(N, V, L, albedo, 0.9, 0.0) * SunRadiance(f, amb) * shadow;
-    color += EvaluateAmbient(f, amb, N, V, albedo, 0.9, 0.0, ao);
+    color += EvaluateAmbient(f, amb, N, V, albedo, 0.9, 0.0, ao, i.worldPos);
     color = ApplyAerialPerspective(f, color, i.worldPos);
 
     PSOut o;

@@ -23,7 +23,7 @@ namespace Stardust.Interop
     internal sealed class ScriptType
     {
         public Type Type;
-        public MethodInfo OnCreate, OnUpdate, OnFixedUpdate, OnCollision, OnCollisionExit, OnTriggerEnter, OnTriggerExit, OnDestroy, OnClick;
+        public MethodInfo OnCreate, OnUpdate, OnFixedUpdate, OnCollision, OnCollisionExit, OnTriggerEnter, OnTriggerExit, OnDestroy, OnClick, OnJointBreak;
         public List<FieldInfo> Fields = new();
     }
 
@@ -46,6 +46,7 @@ namespace Stardust.Interop
         {
             if (size != sizeof(NativeApi)) return 0;
             Native.Api = *api;
+            MainThread.Install();
             return 1;
         }
 
@@ -81,6 +82,7 @@ namespace Stardust.Interop
                         OnCreate = t.GetMethod("OnCreate", flags, Type.EmptyTypes),
                         OnUpdate = t.GetMethod("OnUpdate", flags, new[] { typeof(float) }),
                         OnFixedUpdate = t.GetMethod("OnFixedUpdate", flags, new[] { typeof(float) }),
+                        OnJointBreak = t.GetMethod("OnJointBreak", flags, new[] { typeof(Entity) }),
                         OnCollision = t.GetMethod("OnCollisionEnter", flags, new[] { typeof(Entity) }),
                         OnCollisionExit = t.GetMethod("OnCollisionExit", flags, new[] { typeof(Entity) }),
                         OnTriggerEnter = t.GetMethod("OnTriggerEnter", flags, new[] { typeof(Entity) }),
@@ -117,6 +119,7 @@ namespace Stardust.Interop
         public static void UnloadAssembly()
         {
             Stardust.UI.UIEvents.Clear();
+            Coroutines.Clear(); Stardust.InputSystem.InputSystem.Reset();
             s_EditorCommands.Clear();s_CustomEditors.Clear();Stardust.Editor.EditorWindow.Open.Clear();
             s_Types.Clear();
             if (s_Context == null) return;
@@ -202,8 +205,8 @@ namespace Stardust.Interop
             if (m == null) return;
             try
             {
-                if (hasArg) { s_OneArg[0] = arg; m.Invoke(obj, s_OneArg); }
-                else m.Invoke(obj, null);
+                if (hasArg) { s_OneArg[0] = arg; Coroutines.StartFromResult(obj, m.Invoke(obj, s_OneArg)); }
+                else Coroutines.StartFromResult(obj, m.Invoke(obj, null));
             }
             catch (TargetInvocationException e)
             {
@@ -215,6 +218,17 @@ namespace Stardust.Interop
         [UnmanagedCallersOnly] public static void InvokeUpdate(IntPtr h, float dt) {SceneLoadEvents.Tick();Call(h, s => s.OnUpdate, dt, true); }
         [UnmanagedCallersOnly] public static void InvokeFixedUpdate(IntPtr h, float dt) => Call(h, s => s.OnFixedUpdate, dt, true);
         [UnmanagedCallersOnly] public static void PumpSceneLoads()=>SceneLoadEvents.Tick();
+        [UnmanagedCallersOnly] public static void RuntimeTick(int phase) {
+            try {
+                switch (phase) {
+                    case 0: Stardust.InputSystem.InputSystem.Update(); MainThread.Pump(); break;
+                    case 1: Coroutines.Tick(CoroutinePhase.Update); MainThread.Pump(); break;
+                    case 2: Coroutines.Tick(CoroutinePhase.FixedUpdate); break;
+                    case 3: Coroutines.Clear(); Stardust.InputSystem.InputSystem.Reset(); break;
+                }
+            }
+            catch (Exception e) { Native.Log(3, "Runtime: " + e); }
+        }
         [UnmanagedCallersOnly] public static void DispatchUIInput(ulong id,byte* text,int submit)=>Stardust.UI.InputEvents.Fire(id,Native.FromUtf8(text),submit!=0);
         [UnmanagedCallersOnly] public static void ClearUIEvents() {Stardust.UI.UIEvents.Clear();Stardust.UI.InputEvents.Clear();}
         [UnmanagedCallersOnly] public static void DispatchUIButton(ulong entity) => Stardust.UI.UIEvents.Fire(entity);
@@ -234,7 +248,7 @@ namespace Stardust.Interop
         [UnmanagedCallersOnly]
         public static void InvokeContact(IntPtr h, ulong other, int kind) => Call(h, s => kind switch
         {
-            0 => s.OnCollision, 1 => s.OnCollisionExit, 2 => s.OnTriggerEnter, _ => s.OnTriggerExit,
+            0 => s.OnCollision, 1 => s.OnCollisionExit, 2 => s.OnTriggerEnter, 4 => s.OnJointBreak, _ => s.OnTriggerExit,
         }, new Entity(other), true);
         [UnmanagedCallersOnly] public static void InvokeDestroy(IntPtr h) => Call(h, s => s.OnDestroy, null, false);
 

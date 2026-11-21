@@ -34,6 +34,16 @@ struct EnvironmentSettings {
     float fogHeightFalloff = 0.0012f; // per metre
     glm::vec2 windDirection{ 1.0f, 0.3f };
     float windStrength = 0.5f;
+    // ambient occlusion (screen space)
+    float aoIntensity = 0.0f;         // 0 = off
+    float aoRadius = 0.6f;            // metres
+    // anti-aliasing: fxaa below, or temporal (sharper on edges and thin lines, needs a moving camera to converge)
+    bool taa = false;
+    // depth of field
+    bool depthOfField = false;
+    float focusDistance = 10.0f, focusRange = 8.0f, bokehRadius = 8.0f; // metres, metres, pixels at 1080p
+    // camera motion blur
+    float motionBlur = 0.0f;          // 0 = off, 1 = a full frame of movement
     // post
     float bloomIntensity = 0.04f;
     float contrast = 1.06f;
@@ -71,8 +81,11 @@ struct FrameConstants {
     glm::vec4 fogParams;         // x = density, y = height falloff, z = cloud coverage, w = cloud density
     glm::vec4 windParams;        // xy = direction, z = strength
     glm::uvec4 lightInfo;        // x = local light buffer, y = count
+    glm::mat4 prevViewProj;      // last frame (motion vectors, TAA)
+    glm::uvec4 effectsInfo;      // x = reflection probe buffer, y = probe count, z = frame number, w = flags
+    glm::vec4 jitter;            // xy = sub-pixel offset this frame (clip space), zw = last frame
 };
-static_assert(sizeof(FrameConstants) == 736, "FrameConstants must match Common.hlsli");
+static_assert(sizeof(FrameConstants) == 832, "FrameConstants must match Common.hlsli");
 
 // Point / spot light (64 bytes on the GPU, see PBR.hlsli :: EvaluateLocalLights)
 struct LocalLight {
@@ -82,6 +95,27 @@ struct LocalLight {
     float cosInner; float pad[3];
 };
 static_assert(sizeof(LocalLight) == 64);
+
+// Reflection probe (PBR.hlsli :: SampleProbes)
+struct ProbeGPU {
+    glm::vec4 boxMin;   // w = intensity
+    glm::vec4 boxMax;   // w = blend distance
+    glm::vec4 capture;  // xyz = capture position, w = cube SRV (bits)
+    glm::vec4 params;   // x = box projection, y = mip count
+};
+static_assert(sizeof(ProbeGPU) == 64);
+static constexpr u32 kMaxProbes = 64;
+
+// Decal (Decal.hlsli :: DecalData)
+struct DecalGPU {
+    glm::mat4 model, invModel;
+    glm::vec4 color, tilingOffset;
+    glm::uvec4 ids;     // x albedo SRV, y normal SRV (~0 = none)
+    glm::vec4 params;   // opacity, normal strength, angle fade, smoothness
+    glm::vec4 extra;    // x emission
+};
+static_assert(sizeof(DecalGPU) == 208);
+static constexpr u32 kMaxDecals = 1024;
 static constexpr u32 kMaxLocalLights = 256;
 
 static constexpr u32 kShadowCascades = 4;
@@ -117,6 +151,11 @@ public:
     size_t SubmittedDrawCount()const{return m_Draws.size();}
     void SetTerrain(const Ref<TerrainData>& terrain, const glm::vec3& origin, u32 entityId);
     void SubmitLight(const LocalLight& light) { if (m_Lights.size() < kMaxLocalLights) m_Lights.push_back(light); }
+    void SubmitProbe(const ProbeGPU& probe, float order) { if (m_Probes.size() < kMaxProbes) m_Probes.push_back({ order, probe }); }
+    void SubmitDecal(const DecalGPU& decal, int sortingOrder) { if (m_Decals.size() < kMaxDecals) m_Decals.push_back({ sortingOrder, decal }); }
+    // Reflection probe captures: no temporal effects, no probes of its own probe, no post
+    bool captureMode = false;
+    RHI::Texture* HDRTarget() const { return m_HDR.get(); }
     void Render(RHI::CommandList& cmd);
 
     Ref<RHI::Texture> OutputRef() const { return m_Display ? m_Display : m_Output; }
@@ -176,6 +215,17 @@ private:
     std::vector<glm::vec4> m_MaterialValues;
     std::array<Ref<RHI::Buffer>, RHI::kFramesInFlight> m_MaterialBuffers;
     std::vector<LocalLight> m_Lights;
+    std::vector<std::pair<float, ProbeGPU>> m_Probes;
+    std::vector<std::pair<int, DecalGPU>> m_Decals;
+    std::array<Ref<RHI::Buffer>, RHI::kFramesInFlight> m_ProbeBuffers, m_DecalBuffers;
+    Ref<RHI::Pipeline> m_DecalPipeline, m_SSAOPipeline, m_SSAOBlurPipeline, m_SSAOApplyPipeline;
+    Ref<RHI::Texture> m_AO, m_AOBlur;
+    glm::mat4 m_PrevViewProj{ 1.0f };
+    glm::vec2 m_PrevJitter{ 0.0f };
+    u64 m_FrameCounter = 0;
+    bool m_HasHistory = false;
+    void RenderDecals(RHI::CommandList& cmd, RHI::Buffer* frameBuf);
+    void RenderSSAO(RHI::CommandList& cmd, RHI::Buffer* frameBuf);
     std::array<Ref<RHI::Buffer>, RHI::kFramesInFlight> m_LightBuffers;
     Ref<RHI::Pipeline> m_OutlinePipeline;
     Ref<RHI::Texture> m_ShadowMap;

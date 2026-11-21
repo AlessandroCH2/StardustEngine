@@ -90,7 +90,17 @@ FetchContent_Declare(ufbx
     GIT_TAG v0.21.5
     GIT_SHALLOW TRUE
     SOURCE_SUBDIR _no_cmake)
-FetchContent_MakeAvailable(glfw glm json vma imgui imguizmo stb cgltf tinyobj jolt miniaudio ufbx)
+FetchContent_Declare(recast
+    GIT_REPOSITORY https://github.com/recastnavigation/recastnavigation.git
+    GIT_TAG v1.6.0
+    GIT_SHALLOW TRUE
+    SOURCE_SUBDIR _no_cmake)
+FetchContent_MakeAvailable(glfw glm json vma imgui imguizmo stb cgltf tinyobj jolt miniaudio ufbx recast)
+# Navigation meshes (Recast: building, Detour: path queries, DetourCrowd: agents)
+file(GLOB RECAST_SOURCES ${recast_SOURCE_DIR}/Recast/Source/*.cpp ${recast_SOURCE_DIR}/Detour/Source/*.cpp ${recast_SOURCE_DIR}/DetourCrowd/Source/*.cpp)
+add_library(recast STATIC ${RECAST_SOURCES})
+target_include_directories(recast PUBLIC ${recast_SOURCE_DIR}/Recast/Include ${recast_SOURCE_DIR}/Detour/Include ${recast_SOURCE_DIR}/DetourCrowd/Include)
+set_target_properties(recast PROPERTIES FOLDER "ThirdParty")
 add_library(ufbx STATIC ${ufbx_SOURCE_DIR}/ufbx.c)
 target_include_directories(ufbx PUBLIC ${ufbx_SOURCE_DIR})
 set_target_properties(Jolt PROPERTIES FOLDER "ThirdParty")

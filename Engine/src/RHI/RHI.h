@@ -95,7 +95,7 @@ protected:
 
 enum class CullMode : u8 { None, Back, Front };
 enum class CompareOp : u8 { Never, Less, LessEqual, Greater, GreaterEqual, Equal, Always };
-enum class BlendMode : u8 { None, Alpha, Additive, Premultiplied };
+enum class BlendMode : u8 { None, Alpha, Additive, Premultiplied, Multiply };
 enum class Topology : u8 { TriangleList, TriangleStrip, LineList, PointList };
 
 struct GraphicsPipelineDesc {

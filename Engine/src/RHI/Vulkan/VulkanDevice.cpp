@@ -716,6 +716,9 @@ Ref<Pipeline> VulkanDevice::CreateGraphicsPipeline(const GraphicsPipelineDesc& d
         case BlendMode::Premultiplied:
             b.srcColorBlendFactor = VK_BLEND_FACTOR_ONE; b.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
             b.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE; b.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA; break;
+        case BlendMode::Multiply:
+            b.srcColorBlendFactor = VK_BLEND_FACTOR_DST_COLOR; b.dstColorBlendFactor = VK_BLEND_FACTOR_ZERO;
+            b.srcAlphaBlendFactor = VK_BLEND_FACTOR_ZERO; b.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE; break;
         default: break;
         }
     }

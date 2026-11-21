@@ -16,7 +16,7 @@ add_custom_target(StardustVersion
     COMMENT "Stamping engine version"
     VERBATIM)
 add_dependencies(StardustEngine StardustVersion)
-target_link_libraries(StardustEngine PUBLIC ${CMAKE_DL_LIBS} glfw Vulkan::Vulkan vma glm::glm nlohmann_json::nlohmann_json imgui stb nethost Jolt assetlibs)
+target_link_libraries(StardustEngine PUBLIC ${CMAKE_DL_LIBS} glfw Vulkan::Vulkan vma glm::glm nlohmann_json::nlohmann_json imgui stb nethost Jolt assetlibs recast)
 if(WIN32)
     # Media Foundation decodes MP4 / MOV / WMV / AVI for the Video Player
     target_link_libraries(StardustEngine PUBLIC mfplat mfreadwrite mfuuid shlwapi ole32)

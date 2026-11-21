@@ -33,6 +33,13 @@
 #include <Jolt/Physics/Vehicle/VehicleConstraint.h>
 #include <Jolt/Physics/Vehicle/WheeledVehicleController.h>
 #include <Jolt/Physics/Vehicle/VehicleCollisionTester.h>
+#include <Jolt/Physics/Character/CharacterVirtual.h>
+#include <Jolt/Physics/Constraints/FixedConstraint.h>
+#include <Jolt/Physics/Constraints/HingeConstraint.h>
+#include <Jolt/Physics/Constraints/DistanceConstraint.h>
+#include <Jolt/Physics/Constraints/SliderConstraint.h>
+#include <Jolt/Physics/Constraints/SwingTwistConstraint.h>
+#include <Jolt/Physics/Collision/GroupFilterTable.h>
 #pragma warning(pop)
 
 namespace Stardust {
@@ -99,6 +106,11 @@ struct PhysicsWorld::Impl {
     std::unordered_map<u32, bool> sensors;
     struct Vehicle { JPH::Ref<VehicleConstraint> constraint; JPH::Ref<VehicleCollisionTester> tester; std::vector<EntityID> wheels; };
     std::unordered_map<EntityID, Vehicle> vehicles;
+    struct CharacterBody { JPH::Ref<CharacterVirtual> character; glm::vec3 written{ 0.0f }; u32 innerBody = 0; };
+    std::unordered_map<EntityID, CharacterBody> characters;
+    struct JointBody { JPH::Ref<TwoBodyConstraint> constraint; EntityID other = kNullEntity; int type = 0; };
+    std::unordered_map<EntityID, JointBody> joints;
+    std::vector<EntityID> pendingJoints;
 };
 
 static Vec3 ToJ(const glm::vec3& v) { return Vec3(v.x, v.y, v.z); }
@@ -141,6 +153,7 @@ PhysicsWorld::PhysicsWorld(Scene& scene) : m_Scene(scene), m_Impl(MakeScope<Impl
         CreateBody(e);
     }
     m_System->OptimizeBroadPhase();
+    reg.Each<JointComponent>([&](EntityID e, JointComponent&) { if (scene.IsActiveInHierarchy(e)) m_Impl->pendingJoints.push_back(e); });
     SD_INFO("Physics: {} bodies", m_Impl->bodies.size());
 }
 
@@ -148,6 +161,9 @@ PhysicsWorld::~PhysicsWorld() {
     BodyInterface& bi = m_System->GetBodyInterface();
     for (auto& [e, v] : m_Impl->vehicles) { m_System->RemoveStepListener(v.constraint); m_System->RemoveConstraint(v.constraint); }
     m_Impl->vehicles.clear();
+    for (auto& [e, j] : m_Impl->joints) m_System->RemoveConstraint(j.constraint);
+    m_Impl->joints.clear();
+    m_Impl->characters.clear();
     for (auto& [e, id] : m_Impl->bodies) { bi.RemoveBody(id); bi.DestroyBody(id); }
     m_Impl->bodies.clear();
     m_System.reset();
@@ -156,6 +172,9 @@ PhysicsWorld::~PhysicsWorld() {
 }
 
 bool PhysicsWorld::HasBody(EntityID e) const { return m_Impl->bodies.contains(e); }
+bool PhysicsWorld::HasCharacter(EntityID e) const { return m_Impl->characters.contains(e); }
+glm::vec3 PhysicsWorld::Gravity() const { return ToG(m_System->GetGravity()); }
+void PhysicsWorld::SetGravity(const glm::vec3& g) { m_System->SetGravity(ToJ(g)); }
 
 void PhysicsWorld::CreateTerrainBody(EntityID e) {
     Registry& reg = m_Scene.Reg();
@@ -190,6 +209,7 @@ void PhysicsWorld::CreateBody(EntityID e) {
         CreateTerrainBody(e);
         return;
     }
+    if (reg.TryGetEnabled<CharacterControllerComponent>(e) && !reg.TryGetEnabled<RigidbodyComponent>(e)) { CreateCharacter(e); return; }
     auto* rb = reg.TryGetEnabled<RigidbodyComponent>(e);
     auto* box = reg.TryGetEnabled<BoxColliderComponent>(e);
     auto* sphere = reg.TryGetEnabled<SphereColliderComponent>(e);
@@ -276,6 +296,7 @@ void PhysicsWorld::CreateBody(EntityID e) {
     bs.mFriction = mat.friction;
     bs.mRestitution = mat.restitution;
     bs.mIsSensor = mat.isTrigger;
+    if (mat.isTrigger) bs.mCollideKinematicVsNonDynamic = true; // Character Controllers fire triggers
     bs.mUserData = e;
     if (is2D && rb2) {
         bs.mLinearDamping = rb2->linearDamping;
@@ -420,6 +441,11 @@ void PhysicsWorld::RecreateBody(EntityID e) {
 
 void PhysicsWorld::DestroyBody(EntityID e) {
     DestroyVehicle(e);
+    DestroyCharacter(e);
+    // Joints on this body or connected to it: rebuilt on the next step if both bodies exist again
+    std::vector<EntityID> affected;
+    for (auto& [owner, j] : m_Impl->joints) if (owner == e || j.other == e) affected.push_back(owner);
+    for (EntityID owner : affected) { DestroyJoint(owner); m_Impl->pendingJoints.push_back(owner); }
     auto it = m_Impl->bodies.find(e);
     if (it == m_Impl->bodies.end()) return;
     BodyInterface& bi = m_System->GetBodyInterface();
@@ -467,7 +493,14 @@ void PhysicsWorld::Step(float dt) {
         if (vc->throttle != 0 || vc->steer != 0) bi.ActivateBody(m_Impl->bodies[e]);
     }
 
+    if (!m_Impl->pendingJoints.empty()) {
+        auto pending = std::move(m_Impl->pendingJoints); m_Impl->pendingJoints.clear();
+        std::sort(pending.begin(), pending.end()); pending.erase(std::unique(pending.begin(), pending.end()), pending.end());
+        for (EntityID e : pending) CreateJoint(e);
+    }
+
     m_System->Update(dt, 1, m_Temp.get(), m_Jobs.get());
+    UpdateJoints(dt);
 
     // Parents must be written before children; unordered body iteration can otherwise apply an
     // ancestor's movement twice to a dynamic child.
@@ -518,6 +551,224 @@ void PhysicsWorld::Step(float dt) {
             for (int c = 0; c < 4; ++c) { Vec4 col = m.GetColumn4(c); world[c] = glm::vec4(col.GetX(), col.GetY(), col.GetZ(), col.GetW()); }
             glm::vec3 scale = reg.Get<TransformComponent>(w).scale;
             m_Scene.SetWorldMatrix(w, world * glm::scale(glm::mat4(1.0f), scale));
+        }
+    }
+}
+
+// ------------------------------------------------------------------------------------------------ character controller
+
+void PhysicsWorld::CreateCharacter(EntityID e) {
+    Registry& reg = m_Scene.Reg();
+    auto& cc = reg.Get<CharacterControllerComponent>(e);
+    glm::vec3 pos, scale, skew; glm::vec4 persp; glm::quat rot;
+    glm::decompose(m_Scene.GetWorldMatrix(e), scale, rot, pos, skew, persp);
+    scale = glm::abs(scale);
+    const float radius = std::max(0.02f, cc.radius * std::max(scale.x, scale.z));
+    const float halfHeight = std::max(0.01f, cc.height * 0.5f * scale.y - radius);
+    RefConst<Shape> shape = new CapsuleShape(halfHeight, radius);
+    shape = new RotatedTranslatedShape(ToJ(cc.center * scale), Quat::sIdentity(), shape);
+    JPH::Ref<CharacterVirtualSettings> settings = new CharacterVirtualSettings;
+    settings->mShape = shape;
+    settings->mInnerBodyShape = shape;           // ray casts and triggers see the character
+    settings->mInnerBodyLayer = Layers::Moving;
+    settings->mMaxSlopeAngle = glm::radians(std::clamp(cc.slopeLimit, 0.0f, 89.0f));
+    settings->mCharacterPadding = std::clamp(cc.skinWidth, 0.001f, 0.2f);
+    settings->mMass = std::max(1.0f, cc.mass);
+    settings->mMaxStrength = std::max(0.0f, cc.pushForce);
+    settings->mSupportingVolume = Plane(Vec3::sAxisY(), -radius + cc.center.y * scale.y - halfHeight + radius * 0.5f);
+    settings->mEnhancedInternalEdgeRemoval = true;
+    Impl::CharacterBody body;
+    body.character = new CharacterVirtual(settings, RVec3(pos.x, pos.y, pos.z), Quat::sIdentity(), e, m_System.get());
+    body.written = pos;
+    BodyID inner = body.character->GetInnerBodyID();
+    if (!inner.IsInvalid()) {
+        m_System->GetBodyInterface().SetUserData(inner, e);
+        body.innerBody = inner.GetIndexAndSequenceNumber();
+        RegisterBody(e, body.innerBody, false);
+    }
+    m_Impl->characters[e] = std::move(body);
+}
+
+void PhysicsWorld::DestroyCharacter(EntityID e) {
+    auto it = m_Impl->characters.find(e);
+    if (it == m_Impl->characters.end()) return;
+    if (it->second.innerBody) { m_Impl->bodyToEntity.erase(it->second.innerBody); m_Impl->sensors.erase(it->second.innerBody); }
+    m_Impl->characters.erase(it); // the inner body is removed with the character
+}
+
+int PhysicsWorld::MoveCharacter(EntityID e, const glm::vec3& motion, float dt) {
+    auto it = m_Impl->characters.find(e);
+    if (it == m_Impl->characters.end()) return 0;
+    Registry& reg = m_Scene.Reg();
+    auto* cc = reg.TryGet<CharacterControllerComponent>(e);
+    if (!cc) return 0;
+    auto& body = it->second;
+    CharacterVirtual& ch = *body.character;
+    // Moved from a script or the editor since the last move: start from there
+    glm::vec3 world = glm::vec3(m_Scene.GetWorldMatrix(e)[3]);
+    if (glm::length(world - body.written) > 1e-4f) ch.SetPosition(RVec3(world.x, world.y, world.z));
+    if (glm::length(motion) < std::max(cc->minMoveDistance, 1e-7f) || dt <= 0.0f) return cc->collisionFlags;
+    dt = std::max(dt, 1e-4f);
+    const glm::vec3 before = ToG(Vec3(ch.GetPosition()));
+    ch.SetLinearVelocity(ToJ(motion / dt));
+    CharacterVirtual::ExtendedUpdateSettings update;
+    update.mWalkStairsStepUp = Vec3(0, std::max(0.0f, cc->stepOffset), 0);
+    update.mStickToFloorStepDown = Vec3(0, motion.y > 0.0f ? 0.0f : -std::max(0.0f, cc->stepOffset), 0);
+    ch.ExtendedUpdate(dt, Vec3::sZero(), update,
+        m_System->GetDefaultBroadPhaseLayerFilter(Layers::Moving), m_System->GetDefaultLayerFilter(Layers::Moving),
+        {}, {}, *m_Temp);
+    const glm::vec3 after = ToG(Vec3(ch.GetPosition()));
+    int flags = 0;
+    for (const auto& contact : ch.GetActiveContacts()) {
+        if (!contact.mHadCollision || contact.mIsSensorB) continue;
+        const float up = contact.mContactNormal.GetY();
+        flags |= up > 0.55f ? 4 : up < -0.55f ? 2 : 1;
+    }
+    cc->grounded = ch.IsSupported() || (flags & 4);
+    if (cc->grounded) flags |= 4;
+    cc->groundNormal = ch.IsSupported() ? ToG(ch.GetGroundNormal()) : glm::vec3(0, 1, 0);
+    cc->collisionFlags = flags;
+    cc->velocity = (after - before) / dt;
+    // Write the new position, keeping rotation and scale
+    glm::mat4 m = m_Scene.GetWorldMatrix(e);
+    m[3] = glm::vec4(after, 1.0f);
+    m_Scene.SetWorldMatrix(e, m);
+    body.written = after;
+    return flags;
+}
+
+// ------------------------------------------------------------------------------------------------ joints
+
+void PhysicsWorld::RebuildJoint(EntityID e) { DestroyJoint(e); m_Impl->pendingJoints.push_back(e); }
+
+void PhysicsWorld::DestroyJoint(EntityID e) {
+    auto it = m_Impl->joints.find(e);
+    if (it == m_Impl->joints.end()) return;
+    m_System->RemoveConstraint(it->second.constraint);
+    m_Impl->joints.erase(it);
+}
+
+static Vec3 Perpendicular(Vec3Arg v) { return v.GetNormalizedPerpendicular(); }
+
+void PhysicsWorld::CreateJoint(EntityID e) {
+    Registry& reg = m_Scene.Reg();
+    if (!reg.Valid(e) || m_Impl->joints.contains(e)) return;
+    auto* j = reg.TryGetEnabled<JointComponent>(e);
+    if (!j || j->broken || !m_Scene.IsActiveInHierarchy(e)) return;
+    auto self = m_Impl->bodies.find(e);
+    if (self == m_Impl->bodies.end()) return;
+    EntityID other = j->connectedBody ? m_Scene.FindByUUID(j->connectedBody) : kNullEntity;
+    if (j->connectedBody && (!other || !m_Impl->bodies.contains(other))) return; // waits for the other body
+    const glm::mat4 world = m_Scene.GetWorldMatrix(e);
+    const glm::vec3 anchor = glm::vec3(world * glm::vec4(j->anchor, 1.0f));
+    glm::vec3 axisG = glm::mat3(world) * j->axis;
+    if (glm::length(axisG) < 1e-6f) axisG = glm::vec3(1, 0, 0);
+    const Vec3 axis = ToJ(glm::normalize(axisG));
+    const Vec3 normal = Perpendicular(axis);
+    const RVec3 point(anchor.x, anchor.y, anchor.z);
+    JPH::Ref<TwoBodyConstraintSettings> settings;
+    SpringSettings spring(ESpringMode::FrequencyAndDamping, std::max(0.0f, j->springFrequency), std::clamp(j->springDamping, 0.0f, 1.0f));
+    switch ((JointType)j->type) {
+    case JointType::Fixed: {
+        auto* s = new FixedConstraintSettings; s->mSpace = EConstraintSpace::WorldSpace; s->mAutoDetectPoint = true; settings = s; break;
+    }
+    case JointType::Hinge: {
+        auto* s = new HingeConstraintSettings; s->mSpace = EConstraintSpace::WorldSpace;
+        s->mPoint1 = s->mPoint2 = point; s->mHingeAxis1 = s->mHingeAxis2 = axis; s->mNormalAxis1 = s->mNormalAxis2 = normal;
+        if (j->useLimits) { s->mLimitsMin = glm::radians(std::clamp(std::min(j->minLimit, j->maxLimit), -179.0f, 0.0f)); s->mLimitsMax = glm::radians(std::clamp(std::max(j->minLimit, j->maxLimit), 0.0f, 179.0f)); s->mLimitsSpringSettings = spring; }
+        s->mMaxFrictionTorque = std::max(0.0f, j->friction);
+        s->mMotorSettings = MotorSettings(0.0f, 0.0f, std::max(0.0f, j->motorForce), std::max(0.0f, j->motorForce));
+        settings = s; break;
+    }
+    case JointType::Spring: {
+        auto* s = new DistanceConstraintSettings; s->mSpace = EConstraintSpace::WorldSpace;
+        Vec3 otherPoint = other ? m_System->GetBodyInterface().GetCenterOfMassPosition(m_Impl->bodies[other]) : point;
+        s->mPoint1 = point; s->mPoint2 = other ? RVec3(otherPoint) : point;
+        const float rest = other ? (float)(Vec3(otherPoint) - Vec3(point)).Length() : 0.0f;
+        s->mMinDistance = j->useLimits ? std::max(0.0f, j->minLimit) : 0.0f;
+        s->mMaxDistance = j->useLimits ? std::max(s->mMinDistance, j->maxLimit) : rest;
+        if (!j->useLimits) s->mMinDistance = rest;
+        s->mLimitsSpringSettings = spring;
+        settings = s; break;
+    }
+    case JointType::Slider: {
+        auto* s = new SliderConstraintSettings; s->mSpace = EConstraintSpace::WorldSpace;
+        s->mPoint1 = s->mPoint2 = point; s->mSliderAxis1 = s->mSliderAxis2 = axis; s->mNormalAxis1 = s->mNormalAxis2 = normal;
+        if (j->useLimits) { s->mLimitsMin = std::min(0.0f, std::min(j->minLimit, j->maxLimit)); s->mLimitsMax = std::max(0.0f, std::max(j->minLimit, j->maxLimit)); s->mLimitsSpringSettings = spring; }
+        s->mMaxFrictionForce = std::max(0.0f, j->friction);
+        s->mMotorSettings = MotorSettings(0.0f, 0.0f, std::max(0.0f, j->motorForce), std::max(0.0f, j->motorForce));
+        settings = s; break;
+    }
+    case JointType::Ball: default: {
+        auto* s = new SwingTwistConstraintSettings; s->mSpace = EConstraintSpace::WorldSpace;
+        s->mPosition1 = s->mPosition2 = point; s->mTwistAxis1 = s->mTwistAxis2 = axis; s->mPlaneAxis1 = s->mPlaneAxis2 = normal;
+        const float swing = glm::radians(std::clamp(j->swingLimit, 0.0f, 179.0f));
+        s->mNormalHalfConeAngle = s->mPlaneHalfConeAngle = j->useLimits ? swing : JPH_PI;
+        s->mTwistMinAngle = j->useLimits ? glm::radians(std::clamp(std::min(j->twistMin, j->twistMax), -179.0f, 0.0f)) : -JPH_PI;
+        s->mTwistMaxAngle = j->useLimits ? glm::radians(std::clamp(std::max(j->twistMin, j->twistMax), 0.0f, 179.0f)) : JPH_PI;
+        s->mMaxFrictionTorque = std::max(0.0f, j->friction);
+        settings = s; break;
+    }
+    }
+    const BodyLockInterfaceNoLock& locks = m_System->GetBodyLockInterfaceNoLock();
+    Body* a = locks.TryGetBody(self->second);
+    Body* b = other ? locks.TryGetBody(m_Impl->bodies[other]) : &Body::sFixedToWorld;
+    if (!a || !b) return;
+    if (a->IsStatic() && b->IsStatic()) { SD_WARN("Joint on '{}': both bodies are static", reg.Get<NameComponent>(e).name); return; }
+    Impl::JointBody joint;
+    joint.constraint = settings->Create(*a, *b);
+    joint.other = other;
+    joint.type = j->type;
+    if (auto* hinge = dynamic_cast<HingeConstraint*>(joint.constraint.GetPtr()); hinge && j->useMotor) { hinge->SetMotorState(EMotorState::Velocity); hinge->SetTargetAngularVelocity(glm::radians(j->motorTargetVelocity)); }
+    if (auto* slider = dynamic_cast<SliderConstraint*>(joint.constraint.GetPtr()); slider && j->useMotor) { slider->SetMotorState(EMotorState::Velocity); slider->SetTargetVelocity(j->motorTargetVelocity); }
+    m_System->AddConstraint(joint.constraint);
+    // Without collision between the pair, connected limbs (ragdolls) do not push each other apart
+    if (!j->enableCollision && other) {
+        // Jolt has no per-pair filter here: a shared collision group with a sub group per body
+        // is the usual way; bodies keep colliding with everything else.
+        static u32 s_NextGroup = 1;
+        auto& bi = m_System->GetBodyInterface();
+        const CollisionGroup& ga = a->GetCollisionGroup(); const CollisionGroup& gb = b->GetCollisionGroup();
+        if (!ga.GetGroupFilter() && !gb.GetGroupFilter()) {
+            JPH::Ref<GroupFilterTable> table = new GroupFilterTable(2);
+            table->DisableCollision(0, 1);
+            CollisionGroup::GroupID group = s_NextGroup++;
+            a->SetCollisionGroup(CollisionGroup(table, group, 0));
+            b->SetCollisionGroup(CollisionGroup(table, group, 1));
+        }
+    }
+    bool wake = true;
+    if (wake) { m_System->GetBodyInterface().ActivateBody(self->second); if (other) m_System->GetBodyInterface().ActivateBody(m_Impl->bodies[other]); }
+    m_Impl->joints[e] = std::move(joint);
+}
+
+void PhysicsWorld::UpdateJoints(float dt) {
+    if (m_Impl->joints.empty() || dt <= 0.0f) return;
+    Registry& reg = m_Scene.Reg();
+    std::vector<EntityID> broken;
+    for (auto& [e, joint] : m_Impl->joints) {
+        auto* j = reg.TryGet<JointComponent>(e);
+        if (!j) { broken.push_back(e); continue; }
+        // Lambdas are impulses over the step: divide by dt for forces
+        Vec3 force = Vec3::sZero(), torque = Vec3::sZero();
+        Constraint* c = joint.constraint.GetPtr();
+        if (auto* f = dynamic_cast<FixedConstraint*>(c)) { force = f->GetTotalLambdaPosition(); torque = f->GetTotalLambdaRotation(); }
+        else if (auto* h = dynamic_cast<HingeConstraint*>(c)) { force = h->GetTotalLambdaPosition(); auto r = h->GetTotalLambdaRotation(); torque = Vec3(r[0], r[1], h->GetTotalLambdaRotationLimits()); j->currentAngle = glm::degrees(h->GetCurrentAngle());
+            if (j->useMotor) { h->SetMotorState(EMotorState::Velocity); h->SetTargetAngularVelocity(glm::radians(j->motorTargetVelocity)); } else h->SetMotorState(EMotorState::Off); }
+        else if (auto* d = dynamic_cast<DistanceConstraint*>(c)) { force = Vec3(d->GetTotalLambdaPosition(), 0, 0); }
+        else if (auto* s = dynamic_cast<SliderConstraint*>(c)) { auto p = s->GetTotalLambdaPosition(); force = Vec3(p[0], p[1], s->GetTotalLambdaPositionLimits()); torque = s->GetTotalLambdaRotation(); j->currentAngle = s->GetCurrentPosition();
+            if (j->useMotor) { s->SetMotorState(EMotorState::Velocity); s->SetTargetVelocity(j->motorTargetVelocity); } else s->SetMotorState(EMotorState::Off); }
+        else if (auto* t = dynamic_cast<SwingTwistConstraint*>(c)) { force = t->GetTotalLambdaPosition(); torque = Vec3(t->GetTotalLambdaTwist(), t->GetTotalLambdaSwingY(), t->GetTotalLambdaSwingZ()); }
+        j->currentForce = ToG(force) / dt; j->currentTorque = ToG(torque) / dt;
+        const bool overForce = j->breakForce > 0.0f && glm::length(j->currentForce) > j->breakForce;
+        const bool overTorque = j->breakTorque > 0.0f && glm::length(j->currentTorque) > j->breakTorque;
+        if (overForce || overTorque) { j->broken = true; broken.push_back(e); }
+    }
+    for (EntityID e : broken) {
+        DestroyJoint(e);
+        if (auto* j = reg.TryGet<JointComponent>(e); j && j->broken) {
+            std::lock_guard lock(m_EventMutex);
+            m_Events.push_back({ e, e, ContactKind::JointBreak });
         }
     }
 }

@@ -33,6 +33,8 @@
 #include <set>
 
 namespace Stardust {
+void DrawInputActionsSettings(float ui);
+void DrawAudioMixerSettings(float ui);
 
 namespace fs = std::filesystem;
 
@@ -859,15 +861,17 @@ void EditorApp::DrawProjectSettings() {
     auto& cfg = Project::Config();
     bool changed = false;
     static std::string search;
-    const char* pages[] = { "Player", "Quality", "Input Manager", "Tags and Layers", "Package Manager" };
+    const char* pages[] = { "Player", "Quality", "Input Manager", "Tags and Layers", "Package Manager", "Input Actions", "Audio Mixer" };
     const char* keywords[] = {
         "product name company version icon resolution fullscreen vsync scripts assembly folder publishing pak encryption key",
         "graphics render scale shadows shadow resolution distance clouds grass density lod bias bloom fxaa anti aliasing custom low medium high",
         "input axes actions keys keyboard gamepad controller deadzone sensitivity gravity snap invert",
         "tags layers",
         "packages install update remove git samples",
+        "input actions maps bindings rebind composite wasd gamepad mouse hold tap",
+        "audio mixer groups volume music sfx reverb echo low pass high pass snapshots",
     };
-    SettingsUI::Begin("ProjectSettings", s_ProjectSettingsPage, pages, keywords, 5, search);
+    SettingsUI::Begin("ProjectSettings", s_ProjectSettingsPage, pages, keywords, 7, search);
     const int page = s_ProjectSettingsPage;
 
     if (page == 0) {
@@ -916,6 +920,11 @@ void EditorApp::DrawProjectSettings() {
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("3D resolution of the Game view and the player. Screen-space UI always stays at full resolution.\nAbove 1 supersamples (sharper, slower).");
         edited |= Insp::Checkbox("Bloom", &q.bloom);
         edited |= Insp::Checkbox("Anti-aliasing (FXAA)", &q.fxaa);
+        edited |= Insp::Checkbox("Temporal Anti-aliasing", &q.temporalAA);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Allowed when the scene's Environment turns it on.");
+        edited |= Insp::Checkbox("Ambient Occlusion", &q.ambientOcclusion);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Allowed when the scene's Environment turns it on.");
+        edited |= Insp::Checkbox("Depth of Field / Motion Blur", &q.postEffects);
         SettingsUI::Section("Shadows");
         edited |= Insp::Checkbox("Shadows", &q.shadows);
         ImGui::BeginDisabled(!q.shadows);
@@ -1015,6 +1024,9 @@ void EditorApp::DrawProjectSettings() {
         for (const auto& package : PackageManager::Installed())
             SettingsUI::ValueRow(package.displayName.c_str(), package.version + (package.engine ? "  (Engine)" : ""));
     }
+
+    if (page == 5) DrawInputActionsSettings(ui);
+    if (page == 6) DrawAudioMixerSettings(ui);
 
     if (changed) Project::Save();
     SettingsUI::End();

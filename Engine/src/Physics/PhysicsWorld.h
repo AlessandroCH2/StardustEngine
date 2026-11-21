@@ -20,7 +20,7 @@ struct RaycastHit {
     float distance = 0.0f;
 };
 
-enum class ContactKind : int { CollisionEnter = 0, CollisionExit = 1, TriggerEnter = 2, TriggerExit = 3 };
+enum class ContactKind : int { CollisionEnter = 0, CollisionExit = 1, TriggerEnter = 2, TriggerExit = 3, JointBreak = 4 };
 struct CollisionEvent { EntityID a, b; ContactKind kind; };
 
 // Jolt Physics wrapper for one running scene (created when entering play mode)
@@ -51,6 +51,15 @@ public:
 
     std::vector<CollisionEvent> TakeCollisionEvents();
 
+    // Character Controller: moves the capsule by `motion` now (slides, steps, slopes); returns the
+    // collision flags (1 Sides, 2 Above, 4 Below). dt is the caller's time step.
+    int MoveCharacter(EntityID e, const glm::vec3& motion, float dt);
+    bool HasCharacter(EntityID e) const;
+    // Joints: (re)built on the next step after a change
+    void RebuildJoint(EntityID e);
+    glm::vec3 Gravity() const;
+    void SetGravity(const glm::vec3& g);
+
     // internal (contact listener)
     void PushCollision(u32 bodyA, u32 bodyB, bool added);
 
@@ -58,6 +67,11 @@ private:
     void CreateTerrainBody(EntityID e);
     void CreateVehicle(EntityID e);
     void DestroyVehicle(EntityID e);
+    void CreateCharacter(EntityID e);
+    void DestroyCharacter(EntityID e);
+    void CreateJoint(EntityID e);
+    void DestroyJoint(EntityID e);
+    void UpdateJoints(float dt);
     void RegisterBody(EntityID e, u32 bodyIndexAndSequence, bool sensor);
 
     Scene& m_Scene;

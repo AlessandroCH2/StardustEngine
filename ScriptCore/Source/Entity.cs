@@ -146,7 +146,7 @@ namespace Stardust
     //   void OnCreate()  void OnUpdate(float dt)  void OnFixedUpdate(float dt)
     //   void OnCollisionEnter(Entity other)  void OnDestroy()
     // Public fields of type float/int/bool/string/Vector2/Vector3/Color are editable in the Inspector.
-    public abstract class ScriptBehaviour : Entity
+    public abstract partial class ScriptBehaviour : Entity
     {
         internal int ScriptSlotIndex;
         public unsafe bool enabled {

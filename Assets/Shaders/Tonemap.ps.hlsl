@@ -8,7 +8,7 @@ struct Push {
     float contrast;
     float saturation;
     float vignette;
-    float pad;
+    float lumaAlpha; // 1: alpha carries luma for FXAA, 0: opaque
 };
 PUSH_CONSTANTS(Push, g_Push);
 
@@ -56,5 +56,5 @@ float4 main(float4 pos : SV_Position, float2 uv : TEXCOORD0) : SV_Target0 {
     float3 srgb = LinearToSRGB(c);
     // tiny dither against banding in the sky gradient
     srgb += (IGN(pos.xy) - 0.5) / 255.0;
-    return float4(srgb, dot(srgb, float3(0.299, 0.587, 0.114)));
+    return float4(srgb, g_Push.lumaAlpha > 0.5 ? dot(srgb, float3(0.299, 0.587, 0.114)) : 1.0);
 }

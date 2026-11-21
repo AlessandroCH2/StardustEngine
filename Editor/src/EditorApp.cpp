@@ -24,6 +24,7 @@
 #include "UI/CanvasRenderer.h"
 #include "ShaderAssets.h"
 #include "Scene/TrailRenderer.h"
+#include "Renderer/ReflectionProbes.h"
 #include "ShaderGraphEditor.h"
 #include "ScriptEditor.h"
 #ifdef _WIN32
@@ -118,7 +119,7 @@ void EditorApp::OnShutdown() {
     TerrainData::ClearCache();
     AssetManager::Shutdown();
     PhysicsWorld::ShutdownJolt();
-    MeshLibrary::Shutdown();Pak::UnmountAll();
+    ReflectionProbes::Shutdown();MeshLibrary::Shutdown();Pak::UnmountAll();
 }
 
 void EditorApp::NewScene() {
@@ -799,6 +800,7 @@ void EditorApp::DrawSceneView() {
     // Terrain brush (owns the mouse while a terrain tool is active)
     bool brushActive = !m_AnimationPreviewScene&&UpdateTerrainBrush();
     brushActive |= UpdateManagedSceneTools();
+    brushActive |= DrawGameplayGizmos();
 
     // Gizmo
     Scene& gizmoScene=m_AnimationRecording&&m_AnimationPreviewScene?*m_AnimationPreviewScene:ActiveScene();

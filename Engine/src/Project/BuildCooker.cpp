@@ -46,7 +46,7 @@ struct Collector {
 bool BuildCooker::Cook(const fs::path& project,const fs::path& output,const ProjectConfig& config,CookReport* report,const std::function<void(float,const std::string&)>& progress){
  try{
   const bool encrypt=!config.pakKey.empty();if(encrypt)Pak::SetPassphrase(config.pakKey);
-  Collector main{project};for(auto& pack:config.contentPacks)main.optionalPrefixes.push_back(pack.folder);for(size_t i=0;i<config.scenes.size();++i)if(i>=config.scenesEnabled.size()||config.scenesEnabled[i])if(!main.Add(config.scenes[i]))throw std::runtime_error("Missing build scene: "+config.scenes[i]);if(!config.icon.empty()&&!main.Add(config.icon))throw std::runtime_error("Missing game icon: "+config.icon);main.Add("Settings/Input.json");main.Resolve();
+  Collector main{project};for(auto& pack:config.contentPacks)main.optionalPrefixes.push_back(pack.folder);for(size_t i=0;i<config.scenes.size();++i)if(i>=config.scenesEnabled.size()||config.scenesEnabled[i])if(!main.Add(config.scenes[i]))throw std::runtime_error("Missing build scene: "+config.scenes[i]);if(!config.icon.empty()&&!main.Add(config.icon))throw std::runtime_error("Missing game icon: "+config.icon);main.Add("Settings/Input.json");main.Add("Settings/AudioMixer.json");main.Add("Settings/InputActions.json");main.Resolve();
   if(progress)progress(.12f,"Dependencies resolved");
   std::set<std::string> packages;
   auto inputs=[&](const std::set<std::string>& files){std::vector<PakSource> result;for(auto& path:files){if(path.starts_with("Packages/")){packages.insert(path);continue;}result.push_back({path,project/"Assets"/fs::u8path(path)});}return result;};

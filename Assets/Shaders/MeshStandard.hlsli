@@ -20,7 +20,7 @@ MeshPSOut main(MeshVSOut i, bool frontFace : SV_IsFrontFace) {
     float NoL = saturate(dot(N, L));
     float shadow = d.emissive.w<0?1.0:NoL > 0.0 ? SampleShadow(f, g_Push.frameBuffer, i.worldPos, N, NoL) : 0.0;
     float3 color = EvaluateBRDF(N, V, L, albedo.rgb, roughness, metallic) * SunRadiance(f, amb) * shadow;
-    color += EvaluateAmbient(f, amb, N, V, albedo.rgb, roughness, metallic, 1.0);
+    color += EvaluateAmbient(f, amb, N, V, albedo.rgb, roughness, metallic, 1.0, i.worldPos);
     color += EvaluateLocalLights(f, i.worldPos, N, V, albedo.rgb, roughness, metallic, false);
     color += d.emissive.rgb;
     color = ApplyAerialPerspective(f, color, i.worldPos);

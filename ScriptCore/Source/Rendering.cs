@@ -60,6 +60,20 @@ public sealed class Environment : Component {
     public float vignette {get=>P.Value(this,23,"vignette",.1f);set=>P.Property(this,23,"vignette",JsonValue.Create(value));}
     public float fogDensity {get=>P.Value(this,23,"fogDensity",0f);set=>P.Property(this,23,"fogDensity",JsonValue.Create(value));}
     public bool fxaa {get=>P.Value(this,23,"fxaa",true);set=>P.Property(this,23,"fxaa",JsonValue.Create(value));}
+    /// <summary>Screen-space ambient occlusion strength, 0..1 (0 = off).</summary>
+    public float ambientOcclusion {get=>P.Value(this,23,"aoIntensity",0f);set=>P.Property(this,23,"aoIntensity",JsonValue.Create(value));}
+    public float ambientOcclusionRadius {get=>P.Value(this,23,"aoRadius",.6f);set=>P.Property(this,23,"aoRadius",JsonValue.Create(value));}
+    /// <summary>Temporal anti-aliasing (replaces FXAA).</summary>
+    public bool temporalAntiAliasing {get=>P.Value(this,23,"taa",false);set=>P.Property(this,23,"taa",JsonValue.Create(value));}
+    public bool depthOfField {get=>P.Value(this,23,"depthOfField",false);set=>P.Property(this,23,"depthOfField",JsonValue.Create(value));}
+    /// <summary>Metres from the camera that are sharp.</summary>
+    public float focusDistance {get=>P.Value(this,23,"focusDistance",10f);set=>P.Property(this,23,"focusDistance",JsonValue.Create(value));}
+    /// <summary>Metres from the focus distance to the full blur.</summary>
+    public float focusRange {get=>P.Value(this,23,"focusRange",8f);set=>P.Property(this,23,"focusRange",JsonValue.Create(value));}
+    /// <summary>Largest blur, in pixels at 1080p.</summary>
+    public float bokehRadius {get=>P.Value(this,23,"bokehRadius",8f);set=>P.Property(this,23,"bokehRadius",JsonValue.Create(value));}
+    /// <summary>Camera motion blur, 0 = off, 1 = a full frame of movement.</summary>
+    public float motionBlur {get=>P.Value(this,23,"motionBlur",0f);set=>P.Property(this,23,"motionBlur",JsonValue.Create(value));}
     public int skyMode {get=>P.Value(this,23,"skyMode",0);set=>P.Property(this,23,"skyMode",JsonValue.Create(value));}
     public Color skyColor {get=>P.ColorValue(this,23,"skyColor");set=>P.Property(this,23,"skyColor",new JsonArray(value.r,value.g,value.b,value.a));}
     public string skyMaterial {get=>P.Value(this,23,"skyMaterial","");set=>P.Property(this,23,"skyMaterial",JsonValue.Create(value));}
@@ -174,6 +188,12 @@ public static unsafe class QualitySettings {
     public static float grassDensity {get=>Value("grassDensity",1f);set=>Property("grassDensity",JsonValue.Create(value));}
     public static float grassDistance {get=>Value("grassDistance",1f);set=>Property("grassDistance",JsonValue.Create(value));}
     public static float lodBias {get=>Value("lodBias",2f);set=>Property("lodBias",JsonValue.Create(value));}
+    /// <summary>Allows the temporal anti-aliasing of the scene's Environment.</summary>
+    public static bool temporalAntiAliasing {get=>Value("temporalAA",true);set=>Property("temporalAA",JsonValue.Create(value));}
+    /// <summary>Allows the screen-space ambient occlusion of the scene's Environment.</summary>
+    public static bool ambientOcclusion {get=>Value("ambientOcclusion",true);set=>Property("ambientOcclusion",JsonValue.Create(value));}
+    /// <summary>Allows depth of field and motion blur.</summary>
+    public static bool postEffects {get=>Value("postEffects",true);set=>Property("postEffects",JsonValue.Create(value));}
     public static bool bloom {get=>Value("bloom",true);set=>Property("bloom",JsonValue.Create(value));}
     public static bool antiAliasing {get=>Value("fxaa",true);set=>Property("fxaa",JsonValue.Create(value));}
     public static bool vSync {get=>Value("vSync",true);set=>Property("vSync",JsonValue.Create(value));}

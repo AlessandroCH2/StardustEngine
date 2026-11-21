@@ -24,7 +24,7 @@ const char* GraphicsQuality::LevelName(int level) {
 void GraphicsQuality::ToJson(nlohmann::json& j) const {
     j = { { "renderScale", renderScale }, { "shadows", shadows }, { "shadowMapSize", shadowMapSize }, { "shadowDistance", shadowDistance },
           { "cloudDownscale", cloudDownscale }, { "grassDensity", grassDensity }, { "grassDistance", grassDistance }, { "lodBias", lodBias },
-          { "bloom", bloom }, { "fxaa", fxaa } };
+          { "bloom", bloom }, { "fxaa", fxaa }, { "ambientOcclusion", ambientOcclusion }, { "temporalAA", temporalAA }, { "postEffects", postEffects } };
 }
 
 void GraphicsQuality::FromJson(const nlohmann::json& j) {
@@ -33,7 +33,7 @@ void GraphicsQuality::FromJson(const nlohmann::json& j) {
     auto flag = [&](const char* key, bool& out) { auto it = j.find(key); if (it != j.end() && it->is_boolean()) out = it->get<bool>(); };
     number("renderScale", renderScale); flag("shadows", shadows); number("shadowMapSize", shadowMapSize); number("shadowDistance", shadowDistance);
     number("cloudDownscale", cloudDownscale); number("grassDensity", grassDensity); number("grassDistance", grassDistance); number("lodBias", lodBias);
-    flag("bloom", bloom); flag("fxaa", fxaa);
+    flag("bloom", bloom); flag("fxaa", fxaa); flag("ambientOcclusion", ambientOcclusion); flag("temporalAA", temporalAA); flag("postEffects", postEffects);
     Clamp();
 }
 

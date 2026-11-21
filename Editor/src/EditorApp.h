@@ -161,6 +161,7 @@ private:
     void DrawButtonInspector(EntityID e,UIButtonComponent& button);
     void UpdateScripts();
     bool UpdateTerrainBrush(); // inside the Scene view window; returns true while the brush owns the mouse
+    bool DrawGameplayGizmos(); // splines, nav mesh, probes, decals, joints (GameplayGizmos.cpp); true while a handle owns the mouse
     bool RaycastTerrain(const TerrainData& t, const glm::vec3& origin, const glm::vec3& ro, const glm::vec3& rd, glm::vec3& hit);
     void DrawEntityNode(EntityID e);
     void Play();

@@ -4,6 +4,9 @@
 #include "Scene/Scene.h"
 #include "Scene/ParticleSystem.h"
 #include "Scene/TrailRenderer.h"
+#include "Scene/GameplaySerialization.h"
+#include "Scene/Navigation.h"
+#include "Renderer/ReflectionProbes.h"
 #include "UI/UIControls.h"
 #include "Physics/PhysicsWorld.h"
 #include "Assets/AssetManager.h"
@@ -46,7 +49,7 @@ struct RigidbodyNative { int type; float mass; float drag; float angularDrag; in
 
 enum class ComponentType : int {
     Transform = 0, MeshRenderer, Rigidbody, BoxCollider, SphereCollider, CapsuleCollider, Camera, Light, Script, MeshCollider,
-    AnyLight = 10, AudioSource = 11, Animator = 12, Canvas = 13, RectTransform = 14, UIImage = 15, UIText = 16, UIButton = 17, CanvasGroup = 18, RectMask = 19, UILayout = 20, UIInputField = 21, SpriteRenderer=22, Environment=23, Terrain=24, SpotLight=25, VideoPlayer=26, SpriteBatch=27, Rigidbody2D=28, BoxCollider2D=29, CircleCollider2D=30, CapsuleCollider2D=31, ParticleSystem=32, VehicleController=33, WheelCollider=34, UIScrollView=35, UIDropdown=36, TrailRenderer=37,
+    AnyLight = 10, AudioSource = 11, Animator = 12, Canvas = 13, RectTransform = 14, UIImage = 15, UIText = 16, UIButton = 17, CanvasGroup = 18, RectMask = 19, UILayout = 20, UIInputField = 21, SpriteRenderer=22, Environment=23, Terrain=24, SpotLight=25, VideoPlayer=26, SpriteBatch=27, Rigidbody2D=28, BoxCollider2D=29, CircleCollider2D=30, CapsuleCollider2D=31, ParticleSystem=32, VehicleController=33, WheelCollider=34, UIScrollView=35, UIDropdown=36, TrailRenderer=37, CharacterController=38, Joint=39, NavMeshSurface=40, NavMeshAgent=41, LineRenderer=42, Spline=43, ReflectionProbe=44, Decal=45,
 };
 
 struct NativeApi {
@@ -155,6 +158,7 @@ struct ManagedApi {
     void (*InvokeEditorCommand)(const char*);
     void (*InvokeButton)(void*);
     void (*PumpSceneLoads)();
+    void (*RuntimeTick)(int); // 0 before Update, 1 after Update, 2 after FixedUpdate, 3 play mode stopped
     void (*DispatchUIInput)(u64,const char*,int);
     void (*InvokeNamed)(void*,const char*);
     void (*InvokeAction)(void*,u64,const char*,const char*,const char*);
@@ -275,6 +279,14 @@ static void InitNativeApi() {
         case ComponentType::SpriteBatch:return r.Has<SpriteBatchComponent>(e);
         case ComponentType::ParticleSystem:return r.Has<ParticleSystemComponent>(e);
         case ComponentType::TrailRenderer:return r.Has<TrailRendererComponent>(e);
+        case ComponentType::CharacterController:return r.Has<CharacterControllerComponent>(e);
+        case ComponentType::Joint:return r.Has<JointComponent>(e);
+        case ComponentType::NavMeshSurface:return r.Has<NavMeshSurfaceComponent>(e);
+        case ComponentType::NavMeshAgent:return r.Has<NavMeshAgentComponent>(e);
+        case ComponentType::LineRenderer:return r.Has<LineRendererComponent>(e);
+        case ComponentType::Spline:return r.Has<SplineComponent>(e);
+        case ComponentType::ReflectionProbe:return r.Has<ReflectionProbeComponent>(e);
+        case ComponentType::Decal:return r.Has<DecalComponent>(e);
         case ComponentType::UIScrollView:return r.Has<UIScrollViewComponent>(e);
         case ComponentType::UIDropdown:return r.Has<UIDropdownComponent>(e);
         case ComponentType::VehicleController:return r.Has<VehicleControllerComponent>(e);
@@ -314,6 +326,14 @@ static void InitNativeApi() {
         case ComponentType::SpriteBatch:if(!r.Has<SpriteBatchComponent>(e))r.Add<SpriteBatchComponent>(e);break;
         case ComponentType::ParticleSystem:if(!r.Has<ParticleSystemComponent>(e))r.Add<ParticleSystemComponent>(e);break;
         case ComponentType::TrailRenderer:if(!r.Has<TrailRendererComponent>(e))r.Add<TrailRendererComponent>(e);break;
+        case ComponentType::CharacterController:if(!r.Has<CharacterControllerComponent>(e))r.Add<CharacterControllerComponent>(e);RebuildBody(e);break;
+        case ComponentType::Joint:if(!r.Has<JointComponent>(e))r.Add<JointComponent>(e);if(S()->Physics())S()->Physics()->RebuildJoint(e);break;
+        case ComponentType::NavMeshSurface:if(!r.Has<NavMeshSurfaceComponent>(e))r.Add<NavMeshSurfaceComponent>(e);break;
+        case ComponentType::NavMeshAgent:if(!r.Has<NavMeshAgentComponent>(e))r.Add<NavMeshAgentComponent>(e);break;
+        case ComponentType::LineRenderer:if(!r.Has<LineRendererComponent>(e))r.Add<LineRendererComponent>(e);break;
+        case ComponentType::Spline:if(!r.Has<SplineComponent>(e))r.Add<SplineComponent>(e);break;
+        case ComponentType::ReflectionProbe:if(!r.Has<ReflectionProbeComponent>(e))r.Add<ReflectionProbeComponent>(e);break;
+        case ComponentType::Decal:if(!r.Has<DecalComponent>(e))r.Add<DecalComponent>(e);break;
         case ComponentType::UIScrollView:if(!r.Has<UIScrollViewComponent>(e))r.Add<UIScrollViewComponent>(e);break;
         case ComponentType::UIDropdown:if(!r.Has<UIDropdownComponent>(e))r.Add<UIDropdownComponent>(e);break;
         case ComponentType::Rigidbody2D:if(!r.Has<Rigidbody2DComponent>(e))r.Add<Rigidbody2DComponent>(e);RebuildBody(e);break;
@@ -354,6 +374,14 @@ static void InitNativeApi() {
         case ComponentType::SpriteBatch:r.Remove<SpriteBatchComponent>(e);break;
         case ComponentType::ParticleSystem:r.Remove<ParticleSystemComponent>(e);break;
         case ComponentType::TrailRenderer:r.Remove<TrailRendererComponent>(e);break;
+        case ComponentType::CharacterController:r.Remove<CharacterControllerComponent>(e);RebuildBody(e);break;
+        case ComponentType::Joint:r.Remove<JointComponent>(e);if(S()->Physics())S()->Physics()->RebuildJoint(e);break;
+        case ComponentType::NavMeshSurface:r.Remove<NavMeshSurfaceComponent>(e);break;
+        case ComponentType::NavMeshAgent:Navigation::RemoveAgent(*S(),e);r.Remove<NavMeshAgentComponent>(e);break;
+        case ComponentType::LineRenderer:r.Remove<LineRendererComponent>(e);break;
+        case ComponentType::Spline:r.Remove<SplineComponent>(e);break;
+        case ComponentType::ReflectionProbe:r.Remove<ReflectionProbeComponent>(e);break;
+        case ComponentType::Decal:r.Remove<DecalComponent>(e);break;
         case ComponentType::UIScrollView:r.Remove<UIScrollViewComponent>(e);break;
         case ComponentType::UIDropdown:r.Remove<UIDropdownComponent>(e);break;
         case ComponentType::Rigidbody2D:r.Remove<Rigidbody2DComponent>(e);RebuildBody(e);break;
@@ -589,6 +617,14 @@ static void InitNativeApi() {
             if(type==35)if(auto* c=r.TryGet<UIScrollViewComponent>(e)){UIControls::ToJson(*c,data);data["normalized"]=j::array({std::max(0.f,c->lastNormalized.x),c->lastNormalized.y<0?1.f:c->lastNormalized.y});data["velocity"]=j::array({c->velocity.x,c->velocity.y});}
             if(type==36)if(auto* c=r.TryGet<UIDropdownComponent>(e)){UIControls::ToJson(*c,data);data["open"]=c->open;}
             if(type==37)if(auto* c=r.TryGet<TrailRendererComponent>(e)){TrailRenderers::ToJson(*c,data);data["positionCount"]=c->points.size();}
+            if(type==38)if(auto* c=r.TryGet<CharacterControllerComponent>(e)){GameplayJson::ToJson(*c,data);data["isGrounded"]=c->grounded;data["collisionFlags"]=c->collisionFlags;data["velocity"]=j::array({c->velocity.x,c->velocity.y,c->velocity.z});data["groundNormal"]=j::array({c->groundNormal.x,c->groundNormal.y,c->groundNormal.z});}
+            if(type==39)if(auto* c=r.TryGet<JointComponent>(e)){GameplayJson::ToJson(*c,data);data["broken"]=c->broken;data["currentAngle"]=c->currentAngle;data["currentForce"]=j::array({c->currentForce.x,c->currentForce.y,c->currentForce.z});data["currentTorque"]=j::array({c->currentTorque.x,c->currentTorque.y,c->currentTorque.z});}
+            if(type==40)if(auto* c=r.TryGet<NavMeshSurfaceComponent>(e)){GameplayJson::ToJson(*c,data);data["baked"]=Navigation::HasNavMesh(*S());}
+            if(type==41)if(auto* c=r.TryGet<NavMeshAgentComponent>(e)){GameplayJson::ToJson(*c,data);Navigation::AgentState(*S(),e,*c,data);}
+            if(type==42)if(auto* c=r.TryGet<LineRendererComponent>(e)){GameplayJson::ToJson(*c,data);data["positionCount"]=c->positions.size();}
+            if(type==43)if(auto* c=r.TryGet<SplineComponent>(e)){GameplayJson::ToJson(*c,data);}
+            if(type==44)if(auto* c=r.TryGet<ReflectionProbeComponent>(e)){GameplayJson::ToJson(*c,data);}
+            if(type==45)if(auto* c=r.TryGet<DecalComponent>(e)){GameplayJson::ToJson(*c,data);}
             if(type==32)if(auto* c=r.TryGet<ParticleSystemComponent>(e)){ParticleSystems::ToJson(*c,data);data["isPlaying"]=c->playing&&!c->paused;data["isPaused"]=c->paused;data["isEmitting"]=c->emitting;data["particleCount"]=c->particles.size();data["time"]=c->time;}
             // Quads are not in here (they can be megabytes): QueryJson "spriteBatchQuads" reads them
             if(type==27)if(auto* c=r.TryGet<SpriteBatchComponent>(e)){u64 v=c->version;for(u64 chunk:c->chunkVersions)v=v*1099511628211ull^chunk;data={{"textures",c->textures},{"count",c->quads.size()},{"material",c->material},{"color",vec4(c->color)},{"sortingOrder",c->sortingOrder},{"version",std::to_string(v)},{"animations",c->animations.size()}};}
@@ -611,8 +647,8 @@ static void InitNativeApi() {
             if(type==99)data={{"layer",r.Get<NameComponent>(e).layer}};
             if(type==1)if(auto* c=r.TryGet<MeshRendererComponent>(e)){data={{"mesh",c->mesh},{"materials",c->materials},{"material",c->materialPath},{"castShadows",c->castShadows},{"receiveShadows",c->receiveShadows}};j mat;auto effective=!c->materialPath.empty()?AssetManager::GetMaterial(c->materialPath):!c->materials.empty()?AssetManager::GetMaterial(c->materials.front()):nullptr;(effective?*effective:c->material).ToJson(mat);data["embeddedMaterial"]=mat;}
             if(type==22)if(auto* c=r.TryGet<SpriteRendererComponent>(e))data={{"sprite",c->sprite},{"material",c->material},{"color",vec4(c->color)},{"pixelsPerUnit",c->pixelsPerUnit},{"flipX",c->flipX},{"flipY",c->flipY},{"sortingOrder",c->sortingOrder}};
-            if(type==23)if(auto* c=r.TryGet<EnvironmentComponent>(e))data={{"shadowStrength",c->shadowStrength},{"minimumAmbient",c->minimumAmbient},{"exposure",c->exposure},{"ambientIntensity",c->ambientIntensity},{"bloomIntensity",c->bloomIntensity},{"contrast",c->contrast},{"saturation",c->saturation},{"vignette",c->vignette},{"fogDensity",c->fogDensity},{"fxaa",c->fxaa},{"skyMode",c->skyMode},{"skyMaterial",c->skyMaterial},{"skyColor",vec4(c->skyColor)}};
-            if(type==11)if(auto* c=r.TryGet<AudioSourceComponent>(e))data={{"clip",c->clip},{"volume",c->volume},{"pitch",c->pitch},{"loop",c->loop},{"spatial",c->spatial}};
+            if(type==23)if(auto* c=r.TryGet<EnvironmentComponent>(e))data={{"shadowStrength",c->shadowStrength},{"minimumAmbient",c->minimumAmbient},{"exposure",c->exposure},{"ambientIntensity",c->ambientIntensity},{"bloomIntensity",c->bloomIntensity},{"contrast",c->contrast},{"saturation",c->saturation},{"vignette",c->vignette},{"fogDensity",c->fogDensity},{"fxaa",c->fxaa},{"skyMode",c->skyMode},{"skyMaterial",c->skyMaterial},{"skyColor",vec4(c->skyColor)},{"aoIntensity",c->aoIntensity},{"aoRadius",c->aoRadius},{"taa",c->taa},{"depthOfField",c->depthOfField},{"focusDistance",c->focusDistance},{"focusRange",c->focusRange},{"bokehRadius",c->bokehRadius},{"motionBlur",c->motionBlur}};
+            if(type==11)if(auto* c=r.TryGet<AudioSourceComponent>(e))data={{"clip",c->clip},{"volume",c->volume},{"pitch",c->pitch},{"loop",c->loop},{"spatial",c->spatial},{"output",c->output}};
 
             if(type==6)if(auto* c=r.TryGet<CameraComponent>(e))data={{"orthographic",c->orthographic},{"orthographicSize",c->orthographicSize},{"fieldOfView",c->fovDegrees},{"nearClipPlane",c->nearPlane},{"farClipPlane",c->farPlane},{"cullingMask",c->cullingMask},{"targetTexture",c->targetTexture},{"targetWidth",c->targetWidth},{"targetHeight",c->targetHeight}};
             if(type==13)if(auto* c=r.TryGet<CanvasComponent>(e))data={{"referenceResolution",vec2(c->referenceResolution)},{"renderMode",c->renderMode},{"pixelsPerUnit",c->pixelsPerUnit},{"scaleWithScreen",c->scaleWithScreen}};
@@ -698,6 +734,14 @@ static void InitNativeApi() {
             }
             if(type==36)if(auto* c=r.TryGet<UIDropdownComponent>(e)){UIControls::FromJson(data,*c);if(data.contains("open")&&data["open"].is_boolean())c->open=data["open"].get<bool>()&&!c->options.empty();}
             if(type==37)if(auto* c=r.TryGet<TrailRendererComponent>(e)){TrailRenderers::FromJson(data,*c);if(data.value("command",std::string())=="clear")TrailRenderers::Clear(*c);}
+            if(type==38)if(auto* c=r.TryGet<CharacterControllerComponent>(e)){GameplayJson::FromJson(data,*c);bool rebuild=false;for(auto& [k,v]:data.items())if(k!="move")rebuild=true;if(rebuild)RebuildBody(e);if(data.contains("move")&&data["move"].is_array()&&data["move"].size()==3&&S()->Physics()){glm::vec3 m{data["move"][0].get<float>(),data["move"][1].get<float>(),data["move"][2].get<float>()};S()->Physics()->MoveCharacter(e,m,ScriptEngine::CurrentDeltaTime());}}
+            if(type==39)if(auto* c=r.TryGet<JointComponent>(e)){GameplayJson::FromJson(data,*c);if(data.contains("broken")&&data["broken"].is_boolean())c->broken=data["broken"].get<bool>();bool motorOnly=true;for(auto& [k,v]:data.items())if(k!="useMotor"&&k!="motorTargetVelocity")motorOnly=false;if(!motorOnly&&S()->Physics())S()->Physics()->RebuildJoint(e);}
+            if(type==40)if(auto* c=r.TryGet<NavMeshSurfaceComponent>(e)){GameplayJson::FromJson(data,*c);if(data.value("command",std::string())=="bake")Navigation::BakeRuntime(*S(),e);if(data.contains("data"))c->loadedVersion=0;}
+            if(type==41)if(auto* c=r.TryGet<NavMeshAgentComponent>(e)){GameplayJson::FromJson(data,*c);Navigation::AgentCommand(*S(),e,*c,data);}
+            if(type==42)if(auto* c=r.TryGet<LineRendererComponent>(e)){GameplayJson::FromJson(data,*c);}
+            if(type==43)if(auto* c=r.TryGet<SplineComponent>(e)){GameplayJson::FromJson(data,*c);}
+            if(type==44)if(auto* c=r.TryGet<ReflectionProbeComponent>(e)){GameplayJson::FromJson(data,*c);c->dirty=true;}
+            if(type==45)if(auto* c=r.TryGet<DecalComponent>(e)){GameplayJson::FromJson(data,*c);}
             if(type==32)if(auto* c=r.TryGet<ParticleSystemComponent>(e)){
                 ParticleSystems::FromJson(data,*c);
                 const std::string command=data.value("command",std::string());
@@ -720,8 +764,8 @@ static void InitNativeApi() {
                 if(structure)c->Touch();
             }
             if(type==22)if(auto* c=r.TryGet<SpriteRendererComponent>(e)){c->sprite=data.value("sprite",c->sprite);c->material=data.value("material",c->material);v4("color",c->color);c->pixelsPerUnit=std::max(.01f,data.value("pixelsPerUnit",c->pixelsPerUnit));c->flipX=data.value("flipX",c->flipX);c->flipY=data.value("flipY",c->flipY);c->sortingOrder=data.value("sortingOrder",c->sortingOrder);}
-            if(type==23)if(auto* c=r.TryGet<EnvironmentComponent>(e)){c->shadowStrength=std::clamp(data.value("shadowStrength",c->shadowStrength),0.f,1.f);c->minimumAmbient=std::max(0.f,data.value("minimumAmbient",c->minimumAmbient));c->exposure=data.value("exposure",c->exposure);c->ambientIntensity=data.value("ambientIntensity",c->ambientIntensity);c->bloomIntensity=data.value("bloomIntensity",c->bloomIntensity);c->contrast=data.value("contrast",c->contrast);c->saturation=data.value("saturation",c->saturation);c->vignette=data.value("vignette",c->vignette);c->fogDensity=data.value("fogDensity",c->fogDensity);c->fxaa=data.value("fxaa",c->fxaa);c->skyMode=data.value("skyMode",c->skyMode);c->skyMaterial=data.value("skyMaterial",c->skyMaterial);v4("skyColor",c->skyColor);}
-            if(type==11)if(auto* c=r.TryGet<AudioSourceComponent>(e)){c->clip=data.value("clip",c->clip);c->volume=data.value("volume",c->volume);c->pitch=data.value("pitch",c->pitch);c->loop=data.value("loop",c->loop);c->spatial=data.value("spatial",c->spatial);AudioEngine::Stop(e);}
+            if(type==23)if(auto* c=r.TryGet<EnvironmentComponent>(e)){c->shadowStrength=std::clamp(data.value("shadowStrength",c->shadowStrength),0.f,1.f);c->minimumAmbient=std::max(0.f,data.value("minimumAmbient",c->minimumAmbient));c->exposure=data.value("exposure",c->exposure);c->ambientIntensity=data.value("ambientIntensity",c->ambientIntensity);c->bloomIntensity=data.value("bloomIntensity",c->bloomIntensity);c->contrast=data.value("contrast",c->contrast);c->saturation=data.value("saturation",c->saturation);c->vignette=data.value("vignette",c->vignette);c->fogDensity=data.value("fogDensity",c->fogDensity);c->fxaa=data.value("fxaa",c->fxaa);c->aoIntensity=std::clamp(data.value("aoIntensity",c->aoIntensity),0.f,1.f);c->aoRadius=std::max(.05f,data.value("aoRadius",c->aoRadius));c->taa=data.value("taa",c->taa);c->depthOfField=data.value("depthOfField",c->depthOfField);c->focusDistance=std::max(0.f,data.value("focusDistance",c->focusDistance));c->focusRange=std::max(.01f,data.value("focusRange",c->focusRange));c->bokehRadius=std::clamp(data.value("bokehRadius",c->bokehRadius),0.f,32.f);c->motionBlur=std::clamp(data.value("motionBlur",c->motionBlur),0.f,4.f);c->skyMode=data.value("skyMode",c->skyMode);c->skyMaterial=data.value("skyMaterial",c->skyMaterial);v4("skyColor",c->skyColor);}
+            if(type==11)if(auto* c=r.TryGet<AudioSourceComponent>(e)){c->clip=data.value("clip",c->clip);c->volume=data.value("volume",c->volume);c->pitch=data.value("pitch",c->pitch);c->loop=data.value("loop",c->loop);c->spatial=data.value("spatial",c->spatial);if(data.contains("output")){c->output=data.value("output",c->output);AudioEngine::RemoveEntity(e);}AudioEngine::Stop(e);}
 
             if(type==6)if(auto* c=r.TryGet<CameraComponent>(e)){c->cullingMask=data.value("cullingMask",c->cullingMask);c->targetTexture=data.value("targetTexture",c->targetTexture);c->targetWidth=std::clamp(data.value("targetWidth",c->targetWidth),16,8192);c->targetHeight=std::clamp(data.value("targetHeight",c->targetHeight),16,8192);c->orthographic=data.value("orthographic",c->orthographic);c->orthographicSize=std::max(.001f,data.value("orthographicSize",c->orthographicSize));c->fovDegrees=std::clamp(data.value("fieldOfView",c->fovDegrees),1.f,179.f);c->nearPlane=std::max(.001f,data.value("nearClipPlane",c->nearPlane));c->farPlane=std::max(c->nearPlane+.001f,data.value("farClipPlane",c->farPlane));}
             if(type==13)if(auto* c=r.TryGet<CanvasComponent>(e)){v2("referenceResolution",c->referenceResolution);c->renderMode=data.value("renderMode",c->renderMode);c->pixelsPerUnit=data.value("pixelsPerUnit",c->pixelsPerUnit);c->scaleWithScreen=data.value("scaleWithScreen",c->scaleWithScreen);}
@@ -748,6 +792,22 @@ static void InitNativeApi() {
             const u64 id=std::strtoull(q.value("entity","0").c_str(),nullptr,16);
             if(EntityID e=S()->FindByUUID(id))if(auto* c=S()->Reg().TryGet<SpriteBatchComponent>(e))result["quads"]=Base64::Encode(c->quads.data(),c->quads.size()*sizeof(SpriteQuad));
         }
+        auto vec3=[](const nlohmann::json& a,glm::vec3 fallback=glm::vec3(0)){return a.is_array()&&a.size()==3?glm::vec3(a[0].get<float>(),a[1].get<float>(),a[2].get<float>()):fallback;};
+        auto arr=[](glm::vec3 v){return nlohmann::json::array({v.x,v.y,v.z});};
+        const std::string kind=q.is_object()?q.value("kind",""):"";
+        // Navigation (C# NavMesh)
+        if(kind=="navPath"&&S()){std::vector<glm::vec3> corners;int status=2;bool ok=Navigation::CalculatePath(*S(),vec3(q["from"]),vec3(q["to"]),corners,status);result["found"]=ok;result["status"]=status;result["corners"]=nlohmann::json::array();for(auto& c:corners)result["corners"].push_back(arr(c));}
+        if(kind=="navSample"&&S()){glm::vec3 hit;bool ok=Navigation::SamplePosition(*S(),vec3(q["position"]),q.value("maxDistance",1.0f),hit);result["found"]=ok;result["position"]=arr(hit);}
+        if(kind=="navRaycast"&&S()){glm::vec3 hit;bool blocked=Navigation::Raycast(*S(),vec3(q["from"]),vec3(q["to"]),hit);result["blocked"]=blocked;result["position"]=arr(hit);}
+        if(kind=="navInfo"&&S())result["baked"]=Navigation::HasNavMesh(*S());
+        // Audio Mixer (C# AudioMixer)
+        if(kind=="mixerSet")result["ok"]=AudioEngine::SetMixerParameter(q.value("group",""),q.value("parameter",""),q.value("value",0.0f));
+        if(kind=="mixerGet")result["value"]=AudioEngine::GetMixerParameter(q.value("group",""),q.value("parameter",""));
+        if(kind=="mixerSnapshot")result["ok"]=AudioEngine::TransitionToSnapshot(q.value("name",""),q.value("seconds",0.0f));
+        if(kind=="mixerGroups"){result["groups"]=nlohmann::json::array();for(auto& g:AudioEngine::MixerGroups())result["groups"].push_back(g.name);result["snapshots"]=nlohmann::json::array();for(auto& s:AudioEngine::MixerSnapshots())result["snapshots"].push_back(s.name);}
+        if(kind=="oneShot"){glm::vec3 p=vec3(q["position"]);AudioEngine::PlayOneShot(q.value("clip",""),p,q.value("volume",1.0f),q.value("spatial",true),q.value("output",""));}
+        // Physics settings (C# Physics.gravity)
+        if(kind=="physicsGravity"&&S()&&S()->Physics()){if(q.contains("set"))S()->Physics()->SetGravity(vec3(q["set"],glm::vec3(0,-9.81f,0)));result["gravity"]=arr(S()->Physics()->Gravity());}
         if(q.is_object()&&q.value("kind","")=="textureSize")
             if(auto texture=AssetManager::GetTexture(q.value("path",""),true)){result["width"]=texture->Desc().width;result["height"]=texture->Desc().height;}
         out=result.dump();return out.c_str();
@@ -842,7 +902,7 @@ bool ScriptEngine::Init() {
     if (!ok || !GetExport(load, coreDll, L"InvokeButton", m.InvokeButton) ||
         !GetExport(load, coreDll, L"LoadEditorAssembly",m.LoadEditorAssembly) ||
         !GetExport(load, coreDll, L"DrawEditorUI",m.DrawEditorUI) || !GetExport(load, coreDll, L"GetEditorCommands",m.GetEditorCommands) ||
-        !GetExport(load, coreDll, L"InvokeEditorCommand",m.InvokeEditorCommand) || !GetExport(load,coreDll,L"InvokeNamed",m.InvokeNamed) || !GetExport(load,coreDll,L"DispatchUIButton",m.DispatchUIButton) || !GetExport(load,coreDll,L"ClearUIEvents",m.ClearUIEvents) || !GetExport(load,coreDll,L"InvokeAction",m.InvokeAction) || !GetExport(load,coreDll,L"GetComponentActions",m.GetComponentActions) || !GetExport(load,coreDll,L"DispatchUIInput",m.DispatchUIInput) || !GetExport(load,coreDll,L"PumpSceneLoads",m.PumpSceneLoads)) return false;
+        !GetExport(load, coreDll, L"InvokeEditorCommand",m.InvokeEditorCommand) || !GetExport(load,coreDll,L"InvokeNamed",m.InvokeNamed) || !GetExport(load,coreDll,L"DispatchUIButton",m.DispatchUIButton) || !GetExport(load,coreDll,L"ClearUIEvents",m.ClearUIEvents) || !GetExport(load,coreDll,L"InvokeAction",m.InvokeAction) || !GetExport(load,coreDll,L"GetComponentActions",m.GetComponentActions) || !GetExport(load,coreDll,L"DispatchUIInput",m.DispatchUIInput) || !GetExport(load,coreDll,L"PumpSceneLoads",m.PumpSceneLoads) || !GetExport(load,coreDll,L"RuntimeTick",m.RuntimeTick)) return false;
 
     InitNativeApi();
     ScanSources(s_SourceTime, s_SourceCount);
@@ -1075,7 +1135,7 @@ void ScriptEngine::OnRuntimeStop() {
         if (flags != started.end() && i < flags->second.size() && flags->second[i]) s_Managed.InvokeDestroy(handles[i]);
         s_Managed.DestroyInstance(handles[i]);
     }
-    if(s_Ready)s_Managed.ClearUIEvents();
+    if(s_Ready){s_Managed.ClearUIEvents();s_Managed.RuntimeTick(3);}
     s_Scene = nullptr;
 }
 
@@ -1111,8 +1171,10 @@ void ScriptEngine::Update(float dt) {
     s_Managed.SetTime(dt, s_ElapsedTime, 1.0f / 60.0f);
     auto list = s_Instances;
     for (auto& [e, handles] : list) StartSlots(e);
+    s_Managed.RuntimeTick(0);
     for (auto& [e, handles] : list) for(size_t i=0;i<handles.size();++i)
         if(handles[i]&&s_Instances.contains(e)&&SlotStarted(e,i)&&SlotRunnable(e,i))s_Managed.InvokeUpdate(handles[i],dt);
+    s_Managed.RuntimeTick(1);
 }
 
 void ScriptEngine::SetScreenSize(float w, float h) { s_ScreenSize = { w, h }; }
@@ -1126,6 +1188,7 @@ void ScriptEngine::FixedUpdate(float dt) {
     for (auto& [e, handles] : list) StartSlots(e);
     for (auto& [e, handles] : list) for(size_t i=0;i<handles.size();++i)
         if(handles[i]&&s_Instances.contains(e)&&SlotStarted(e,i)&&SlotRunnable(e,i))s_Managed.InvokeFixedUpdate(handles[i],dt);
+    s_Managed.RuntimeTick(2);
 }
 
 void ScriptEngine::OnContact(EntityID a, EntityID b, int kind) {
@@ -1136,6 +1199,7 @@ void ScriptEngine::OnContact(EntityID a, EntityID b, int kind) {
         auto handles = it->second;
         for (size_t i = 0; i < handles.size(); ++i) if (handles[i] && s_Instances.contains(e) && SlotStarted(e, i) && SlotRunnable(e, i)) s_Managed.InvokeContact(handles[i], U(other), kind);
     };
+    if (kind == 4) { invoke(a, a); return; } // joint break: only the joint's object
     invoke(a, b); invoke(b, a);
 }
 

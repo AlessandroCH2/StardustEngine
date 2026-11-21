@@ -4,6 +4,7 @@
 #include "Scene/PrefabSystem.h"
 #include "Scene/ParticleSystem.h"
 #include "Scene/TrailRenderer.h"
+#include "Scene/GameplaySerialization.h"
 #include "UI/UIControls.h"
 #include "Scripting/ScriptEngine.h"
 #include "Core/FileSystem.h"
@@ -64,6 +65,14 @@ static void WriteEntity(Scene& scene, EntityID e, json& out) {
         if(!c->animations.empty()){json anims=json::array();for(auto& a:c->animations){json frames=json::array();for(auto& f:a.frames)frames.push_back({f.x,f.y,f.z,f.w});anims.push_back({{"frames",frames},{"fps",a.fps}});}j["spriteBatch"]["animations"]=anims;}}
     if(auto* c=reg.TryGet<ParticleSystemComponent>(e)){nlohmann::json settings;ParticleSystems::ToJson(*c,settings);j["particleSystem"]=json::parse(settings.dump());}
     if(auto* c=reg.TryGet<TrailRendererComponent>(e)){nlohmann::json settings;TrailRenderers::ToJson(*c,settings);j["trailRenderer"]=json::parse(settings.dump());}
+    if(auto* c=reg.TryGet<CharacterControllerComponent>(e)){nlohmann::json settings;GameplayJson::ToJson(*c,settings);j["characterController"]=json::parse(settings.dump());}
+    if(auto* c=reg.TryGet<JointComponent>(e)){nlohmann::json settings;GameplayJson::ToJson(*c,settings);j["joint"]=json::parse(settings.dump());}
+    if(auto* c=reg.TryGet<NavMeshSurfaceComponent>(e)){nlohmann::json settings;GameplayJson::ToJson(*c,settings);j["navMeshSurface"]=json::parse(settings.dump());}
+    if(auto* c=reg.TryGet<NavMeshAgentComponent>(e)){nlohmann::json settings;GameplayJson::ToJson(*c,settings);j["navMeshAgent"]=json::parse(settings.dump());}
+    if(auto* c=reg.TryGet<LineRendererComponent>(e)){nlohmann::json settings;GameplayJson::ToJson(*c,settings);j["lineRenderer"]=json::parse(settings.dump());}
+    if(auto* c=reg.TryGet<SplineComponent>(e)){nlohmann::json settings;GameplayJson::ToJson(*c,settings);j["spline"]=json::parse(settings.dump());}
+    if(auto* c=reg.TryGet<ReflectionProbeComponent>(e)){nlohmann::json settings;GameplayJson::ToJson(*c,settings);j["reflectionProbe"]=json::parse(settings.dump());}
+    if(auto* c=reg.TryGet<DecalComponent>(e)){nlohmann::json settings;GameplayJson::ToJson(*c,settings);j["decal"]=json::parse(settings.dump());}
     if(auto* c=reg.TryGet<SpriteRendererComponent>(e))j["spriteRenderer"]={{"sprite",c->sprite},{"material",c->material},{"color",Vec(c->color)},{"pixelsPerUnit",c->pixelsPerUnit},{"flipX",c->flipX},{"flipY",c->flipY},{"sortingOrder",c->sortingOrder}};
     if (auto* c = reg.TryGet<CameraComponent>(e))
         j["camera"] = { {"cullingMask",c->cullingMask},{"clearFlags",c->clearFlags},{"background",{c->background.r,c->background.g,c->background.b,c->background.a}},{"renderShadows",c->renderShadows},{"postProcessing",c->postProcessing},{"targetTexture",c->targetTexture},{"targetWidth",c->targetWidth},{"targetHeight",c->targetHeight}, {"orthographic",c->orthographic},{"orthographicSize",c->orthographicSize},{"far",c->farPlane}, { "fov", c->fovDegrees }, { "near", c->nearPlane }, { "primary", c->primary } };
@@ -76,7 +85,8 @@ static void WriteEntity(Scene& scene, EntityID e, json& out) {
                              { "fogDensity", c->fogDensity }, { "fogHeightFalloff", c->fogHeightFalloff },
                              { "windDirection", c->windDirectionDeg }, { "windStrength", c->windStrength },
                              { "bloom", c->bloomIntensity }, { "contrast", c->contrast }, { "saturation", c->saturation },
-                             { "vignette", c->vignette }, { "fxaa", c->fxaa } };
+                             { "vignette", c->vignette }, { "fxaa", c->fxaa }, { "aoIntensity", c->aoIntensity }, { "aoRadius", c->aoRadius }, { "taa", c->taa },
+                             { "depthOfField", c->depthOfField }, { "focusDistance", c->focusDistance }, { "focusRange", c->focusRange }, { "bokehRadius", c->bokehRadius }, { "motionBlur", c->motionBlur } };
     auto matJson = [](const PhysicsMaterialProps& m) { return json{ { "friction", m.friction }, { "restitution", m.restitution }, { "isTrigger", m.isTrigger } }; };
     if (auto* c = reg.TryGet<PointLightComponent>(e))
         j["pointLight"] = { { "color", Vec(c->color) }, { "intensity", c->intensity }, { "range", c->range } };
@@ -85,7 +95,7 @@ static void WriteEntity(Scene& scene, EntityID e, json& out) {
                            { "innerAngle", c->innerAngle }, { "outerAngle", c->outerAngle } };
     if (auto* c = reg.TryGet<AudioSourceComponent>(e))
         j["audioSource"] = { { "clip", c->clip }, { "volume", c->volume }, { "pitch", c->pitch }, { "loop", c->loop },
-                             { "playOnStart", c->playOnStart }, { "spatial", c->spatial }, { "minDistance", c->minDistance }, { "maxDistance", c->maxDistance } };
+                             { "playOnStart", c->playOnStart }, { "spatial", c->spatial }, { "minDistance", c->minDistance }, { "maxDistance", c->maxDistance }, { "output", c->output } };
     if (reg.Has<AudioListenerComponent>(e)) j["audioListener"] = json::object();
     if (auto* c = reg.TryGet<CanvasComponent>(e)) j["canvas"] = {{"resolution",Vec(c->referenceResolution)},{"scaleWithScreen",c->scaleWithScreen},{"sortingOrder",c->sortingOrder},{"renderMode",c->renderMode},{"pixelsPerUnit",c->pixelsPerUnit},{"planeDistance",c->planeDistance}};
     if (auto* c = reg.TryGet<RectTransformComponent>(e)) j["rectTransform"] = {{"anchorMin",Vec(c->anchorMin)},{"anchorMax",Vec(c->anchorMax)},{"pivot",Vec(c->pivot)},{"position",Vec(c->anchoredPosition)},{"size",Vec(c->sizeDelta)},{"rotation",c->rotation},{"scale",Vec(c->scale)}};
@@ -214,6 +224,7 @@ static std::vector<EntityID> ReadEntities(Scene& sceneRef, const json& entities,
             c.spatial = m.value("spatial", c.spatial);
             c.minDistance = m.value("minDistance", c.minDistance);
             c.maxDistance = m.value("maxDistance", c.maxDistance);
+            c.output = m.value("output", c.output);
         }
         if (j.contains("audioListener")) reg.Add<AudioListenerComponent>(e);
         if (j.contains("canvas")) {
@@ -268,6 +279,14 @@ static std::vector<EntityID> ReadEntities(Scene& sceneRef, const json& entities,
         if(j.contains("videoPlayer")){auto& c=reg.Add<VideoPlayerComponent>(e);auto& m=j["videoPlayer"];c.clip=m.value("clip","");c.targetTexture=m.value("targetTexture","");c.playing=c.playOnStart=m.value("playOnStart",true);c.loop=m.value("loop",true);c.speed=m.value("speed",1.f);c.renderMode=std::clamp(m.value("renderMode",0),0,1);c.audio=m.value("audio",true);c.volume=m.value("volume",1.f);}
         if(j.contains("spriteBatch")&&j["spriteBatch"].is_object()){auto& c=reg.Add<SpriteBatchComponent>(e);auto& m=j["spriteBatch"];if(m.contains("textures")&&m["textures"].is_array())for(auto& t:m["textures"])if(t.is_string())c.textures.push_back(t.get<std::string>());auto bytes=Base64::Decode(m.value("quads",std::string()));c.quads.resize(bytes.size()/sizeof(SpriteQuad));if(!c.quads.empty())std::memcpy(c.quads.data(),bytes.data(),c.quads.size()*sizeof(SpriteQuad));c.material=m.value("material","");c.color=Vec4(m.value("color",json()),glm::vec4(1));c.sortingOrder=m.value("sortingOrder",0);for(auto& a:m.value("animations",json::array())){SpriteAnimation anim;anim.fps=a.value("fps",8.f);for(auto& f:a.value("frames",json::array()))if(f.is_array()&&f.size()==4)anim.frames.push_back({f[0].get<float>(),f[1].get<float>(),f[2].get<float>(),f[3].get<float>()});c.animations.push_back(anim);}c.Touch();}
         if(j.contains("trailRenderer")&&j["trailRenderer"].is_object())TrailRenderers::FromJson(nlohmann::json::parse(j["trailRenderer"].dump()),reg.Add<TrailRendererComponent>(e));
+        if(j.contains("characterController")&&j["characterController"].is_object())GameplayJson::FromJson(nlohmann::json::parse(j["characterController"].dump()),reg.Add<CharacterControllerComponent>(e));
+        if(j.contains("joint")&&j["joint"].is_object())GameplayJson::FromJson(nlohmann::json::parse(j["joint"].dump()),reg.Add<JointComponent>(e));
+        if(j.contains("navMeshSurface")&&j["navMeshSurface"].is_object())GameplayJson::FromJson(nlohmann::json::parse(j["navMeshSurface"].dump()),reg.Add<NavMeshSurfaceComponent>(e));
+        if(j.contains("navMeshAgent")&&j["navMeshAgent"].is_object())GameplayJson::FromJson(nlohmann::json::parse(j["navMeshAgent"].dump()),reg.Add<NavMeshAgentComponent>(e));
+        if(j.contains("lineRenderer")&&j["lineRenderer"].is_object())GameplayJson::FromJson(nlohmann::json::parse(j["lineRenderer"].dump()),reg.Add<LineRendererComponent>(e));
+        if(j.contains("spline")&&j["spline"].is_object())GameplayJson::FromJson(nlohmann::json::parse(j["spline"].dump()),reg.Add<SplineComponent>(e));
+        if(j.contains("reflectionProbe")&&j["reflectionProbe"].is_object())GameplayJson::FromJson(nlohmann::json::parse(j["reflectionProbe"].dump()),reg.Add<ReflectionProbeComponent>(e));
+        if(j.contains("decal")&&j["decal"].is_object())GameplayJson::FromJson(nlohmann::json::parse(j["decal"].dump()),reg.Add<DecalComponent>(e));
         if(j.contains("particleSystem")&&j["particleSystem"].is_object())ParticleSystems::FromJson(nlohmann::json::parse(j["particleSystem"].dump()),reg.Add<ParticleSystemComponent>(e));
         if(j.contains("spriteRenderer")){auto& c=reg.Add<SpriteRendererComponent>(e);auto& m=j["spriteRenderer"];c.sprite=m.value("sprite","");c.material=m.value("material","");c.color=Vec4(m.value("color",json()),glm::vec4(1));c.pixelsPerUnit=m.value("pixelsPerUnit",0.f);c.flipX=m.value("flipX",false);c.flipY=m.value("flipY",false);c.sortingOrder=m.value("sortingOrder",0);}
         if (j.contains("camera")) {
@@ -304,6 +323,9 @@ static std::vector<EntityID> ReadEntities(Scene& sceneRef, const json& entities,
             c.saturation = m.value("saturation", c.saturation);
             c.vignette = m.value("vignette", c.vignette);
             c.fxaa = m.value("fxaa", c.fxaa);
+            c.aoIntensity = m.value("aoIntensity", c.aoIntensity); c.aoRadius = m.value("aoRadius", c.aoRadius); c.taa = m.value("taa", c.taa);
+            c.depthOfField = m.value("depthOfField", c.depthOfField); c.focusDistance = m.value("focusDistance", c.focusDistance);
+            c.focusRange = m.value("focusRange", c.focusRange); c.bokehRadius = m.value("bokehRadius", c.bokehRadius); c.motionBlur = m.value("motionBlur", c.motionBlur);
         }
         auto readMat = [&](const json& m, PhysicsMaterialProps& out) {
             if (!m.contains("material")) return;
@@ -473,6 +495,9 @@ static std::vector<EntityID> ReadEntities(Scene& sceneRef, const json& entities,
         for(auto& [uuid,entity]:byUUID)if(auto* terrain=reg.TryGet<TerrainComponent>(entity))for(auto& neighbor:terrain->neighbors){auto found=byUUID.find(neighbor);if(found!=byUUID.end())neighbor=reg.Get<IDComponent>(found->second).uuid;}
         for(auto& [uuid,entity]:byUUID)if(auto* lod=reg.TryGet<LODGroupComponent>(entity))for(auto& level:lod->levels)for(auto& id:level.renderers){auto found=byUUID.find(id);if(found!=byUUID.end())id=reg.Get<IDComponent>(found->second).uuid;}
         for(auto& [uuid,entity]:byUUID)if(auto* bone=reg.TryGet<BoneComponent>(entity)){auto found=byUUID.find(bone->root);if(found!=byUUID.end())bone->root=reg.Get<IDComponent>(found->second).uuid;}
+        // Joints and spline followers inside the copied hierarchy point at the copies (ragdolls, platforms on rails)
+        for(auto& [uuid,entity]:byUUID)if(auto* joint=reg.TryGet<JointComponent>(entity)){auto found=byUUID.find(joint->connectedBody);if(found!=byUUID.end())joint->connectedBody=reg.Get<IDComponent>(found->second).uuid;}
+        for(auto& [uuid,entity]:byUUID)if(auto* spline=reg.TryGet<SplineComponent>(entity)){auto found=byUUID.find(spline->follower);if(found!=byUUID.end())spline->follower=reg.Get<IDComponent>(found->second).uuid;}
         for(auto& [uuid,entity]:byUUID)if(auto* button=reg.TryGet<UIButtonComponent>(entity)){auto found=byUUID.find(button->target);if(found!=byUUID.end())button->target=reg.Get<IDComponent>(found->second).uuid;for(auto& action:button->actions){auto target=byUUID.find(action.target);if(target!=byUUID.end())action.target=reg.Get<IDComponent>(target->second).uuid;auto args=json::parse(action.argumentsJson,nullptr,false);if(args.is_array())for(size_t i=0;i<args.size()&&i<action.argumentTypes.size();++i){auto& type=action.argumentTypes[i];auto& arg=args[i];if(arg.is_string()&&(type=="Entity"||type.starts_with("Component:")||type.starts_with("Script:"))){auto ref=byUUID.find(ParseUUID(arg));if(ref!=byUUID.end())arg=UUIDStr(reg.Get<IDComponent>(ref->second).uuid);}}action.argumentsJson=args.is_array()?args.dump():"[]";}}
         for(auto& [uuid,entity]:byUUID)if(auto* link=reg.TryGet<PrefabInstanceComponent>(entity)){auto mapping=json::parse(link->mapping);remap(mapping);link->mapping=mapping.dump();}
         for (auto& [uuid,entity] : byUUID) if (auto* scripts = reg.TryGet<ScriptComponent>(entity))

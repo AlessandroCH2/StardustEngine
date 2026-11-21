@@ -23,6 +23,9 @@ PostProcess::PostProcess(Device& device, Format outputFormat) : m_Device(device)
     m_TonemapDirect = device.CreateGraphicsPipeline(d);
     d.name = "FXAA"; d.ps = "FXAA.ps";
     m_Fxaa = device.CreateGraphicsPipeline(d);
+    m_TAA = device.CreateComputePipeline({ "TAA.cs", "TAA" });
+    m_DoF = device.CreateComputePipeline({ "DepthOfField.cs", "DepthOfField" });
+    m_MotionBlur = device.CreateComputePipeline({ "MotionBlur.cs", "MotionBlur" });
 }
 
 void PostProcess::Resize(u32 width, u32 height) {
@@ -44,11 +47,54 @@ void PostProcess::Resize(u32 width, u32 height) {
     l.format = Format::RGBA8_UNORM;
     l.usage = TextureUsage::RenderTarget | TextureUsage::Sampled;
     m_LDR = m_Device.CreateTexture(l);
+    TextureDesc h;
+    h.width = width; h.height = height; h.format = Format::RGBA16F;
+    h.usage = TextureUsage::Storage | TextureUsage::Sampled;
+    for (int i = 0; i < 2; ++i) { h.name = "TAAHistory" + std::to_string(i); m_History[i] = m_Device.CreateTexture(h); }
+    h.name = "PostTempA"; m_TempA = m_Device.CreateTexture(h);
+    h.name = "PostTempB"; m_TempB = m_Device.CreateTexture(h);
 }
 
 void PostProcess::Execute(CommandList& cmd, Texture* hdr, Texture* output, const PostSettings& s) {
     ScopedGpuTimer timer(m_Device, "Post");
     cmd.Barrier(hdr, ResourceState::ShaderRead);
+    // HDR effects: each reads the previous result and writes a storage image
+    const bool depthEffects = s.depth != 0 && s.frameBuffer != 0;
+    auto groups = [&](Texture* t) { return std::pair((t->Width() + 7) / 8, (t->Height() + 7) / 8); };
+    if (depthEffects && s.taa) {
+        Texture* history = m_History[m_HistoryIndex].get();
+        Texture* out = m_History[m_HistoryIndex ^ 1].get();
+        cmd.Barrier(history, ResourceState::ShaderRead);
+        cmd.Barrier(out, ResourceState::UnorderedAccess);
+        cmd.SetPipeline(m_TAA.get());
+        struct { u32 frame, current, history, depth, dst, w, h, reset; float blend, pad[3]; } p{ s.frameBuffer, hdr->SRV(), history->SRV(), s.depth, out->UAV(), out->Width(), out->Height(), s.resetHistory ? 1u : 0u, 0.1f, {} };
+        cmd.Push(p);
+        auto [gx, gy] = groups(out); cmd.Dispatch(gx, gy, 1);
+        cmd.Barrier(out, ResourceState::ShaderRead);
+        m_HistoryIndex ^= 1;
+        hdr = out;
+    }
+    if (depthEffects && s.depthOfField && s.bokehRadius > 0.0f) {
+        Texture* out = hdr == m_TempA.get() ? m_TempB.get() : m_TempA.get();
+        cmd.Barrier(out, ResourceState::UnorderedAccess);
+        cmd.SetPipeline(m_DoF.get());
+        const float scale = m_Height / 1080.0f;
+        struct { u32 frame, src, depth, dst, w, h; float focus, range, radius; u32 samples; float pad[2]; } p{ s.frameBuffer, hdr->SRV(), s.depth, out->UAV(), out->Width(), out->Height(), s.focusDistance, s.focusRange, std::clamp(s.bokehRadius * scale, 0.0f, 32.0f), 48u, {} };
+        cmd.Push(p);
+        auto [gx, gy] = groups(out); cmd.Dispatch(gx, gy, 1);
+        cmd.Barrier(out, ResourceState::ShaderRead);
+        hdr = out;
+    }
+    if (depthEffects && s.motionBlur > 0.0f) {
+        Texture* out = hdr == m_TempA.get() ? m_TempB.get() : m_TempA.get();
+        cmd.Barrier(out, ResourceState::UnorderedAccess);
+        cmd.SetPipeline(m_MotionBlur.get());
+        struct { u32 frame, src, depth, dst, w, h; float intensity; u32 samples; } p{ s.frameBuffer, hdr->SRV(), s.depth, out->UAV(), out->Width(), out->Height(), s.motionBlur, 12u };
+        cmd.Push(p);
+        auto [gx, gy] = groups(out); cmd.Dispatch(gx, gy, 1);
+        cmd.Barrier(out, ResourceState::ShaderRead);
+        hdr = out;
+    }
 
     // No bloom: skip the whole chain, the tone map multiplies it by zero anyway
     if (s.bloomIntensity <= 0.0f) cmd.Barrier(m_UpChain[0].get(), ResourceState::ShaderRead);
@@ -79,7 +125,7 @@ void PostProcess::Execute(CommandList& cmd, Texture* hdr, Texture* output, const
     }
     }
 
-    TonemapPush tp{ hdr->SRV(), m_UpChain[0]->SRV(), s.exposure, s.bloomIntensity, s.contrast, s.saturation, s.vignette, 0 };
+    TonemapPush tp{ hdr->SRV(), m_UpChain[0]->SRV(), s.exposure, s.bloomIntensity, s.contrast, s.saturation, s.vignette, s.fxaa ? 1.0f : 0.0f };
     RenderingDesc rd;
     if (s.fxaa) {
         rd.colors.push_back({ m_LDR.get(), LoadOp::DontCare });

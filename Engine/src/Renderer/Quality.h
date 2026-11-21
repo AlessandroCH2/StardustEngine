@@ -19,12 +19,15 @@ struct GraphicsQuality {
     float lodBias = 2.0f;        // multiplies the screen share LOD Groups see: 2 on High
     bool bloom = true;
     bool fxaa = true;
+    bool ambientOcclusion = true; // screen-space ambient occlusion (when the Environment turns it on)
+    bool temporalAA = true;       // temporal anti-aliasing (when the Environment turns it on)
+    bool postEffects = true;      // depth of field and motion blur
 
     static GraphicsQuality& Current() { static GraphicsQuality quality; return quality; }
     static GraphicsQuality Preset(int level) {
         GraphicsQuality q;
         q.level = level < 0 ? 0 : level > 2 ? 2 : level;
-        if (q.level == Low) { q.renderScale = 0.67f; q.shadowMapSize = 1024; q.shadowDistance = 0.6f; q.cloudDownscale = 4; q.grassDensity = 0.4f; q.grassDistance = 0.6f; q.lodBias = 1.4f; q.bloom = false; }
+        if (q.level == Low) { q.renderScale = 0.67f; q.shadowMapSize = 1024; q.shadowDistance = 0.6f; q.cloudDownscale = 4; q.grassDensity = 0.4f; q.grassDistance = 0.6f; q.lodBias = 1.4f; q.bloom = false; q.ambientOcclusion = false; q.postEffects = false; }
         if (q.level == Medium) { q.renderScale = 0.85f; q.shadowMapSize = 2048; q.shadowDistance = 0.8f; q.cloudDownscale = 3; q.grassDensity = 0.7f; q.grassDistance = 0.8f; q.lodBias = 0.8f; }
         return q;
     }

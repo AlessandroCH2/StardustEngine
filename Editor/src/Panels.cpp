@@ -23,6 +23,7 @@
 #include "ShaderAssets.h"
 #include "ShaderGraphEditor.h"
 #include "ScriptEditor.h"
+#include "GameplayInspectors.h"
 #include <imgui.h>
 #include <imgui_internal.h>
 #include <imgui_stdlib.h>
@@ -147,6 +148,16 @@ static void ComponentSection(Scene& scene, EntityID e, const char* name, bool re
 }
 
 // ------------------------------------------------------------------------------------------------ hierarchy
+static void DrawGameplayInspectors(Scene& scene, EntityID e, bool playing) {
+    ComponentSection<CharacterControllerComponent>(scene, e, "Character Controller", true, [&](auto& c) { GameplayInspector::Draw(scene, e, c, playing); });
+    ComponentSection<JointComponent>(scene, e, "Joint", true, [&](auto& c) { GameplayInspector::Draw(scene, e, c, playing); });
+    ComponentSection<NavMeshSurfaceComponent>(scene, e, "Nav Mesh Surface", true, [&](auto& c) { GameplayInspector::Draw(scene, e, c, playing); });
+    ComponentSection<NavMeshAgentComponent>(scene, e, "Nav Mesh Agent", true, [&](auto& c) { GameplayInspector::Draw(scene, e, c, playing); });
+    ComponentSection<LineRendererComponent>(scene, e, "Line Renderer", true, [&](auto& c) { GameplayInspector::Draw(scene, e, c, playing); });
+    ComponentSection<SplineComponent>(scene, e, "Spline", true, [&](auto& c) { GameplayInspector::Draw(scene, e, c, playing); });
+    ComponentSection<ReflectionProbeComponent>(scene, e, "Reflection Probe", true, [&](auto& c) { GameplayInspector::Draw(scene, e, c, playing); });
+    ComponentSection<DecalComponent>(scene, e, "Decal", true, [&](auto& c) { GameplayInspector::Draw(scene, e, c, playing); });
+}
 
 void EditorApp::DrawEntityContextItems() {
     Scene& scene = ActiveScene();
@@ -495,7 +506,13 @@ static void DrawEnvironmentSettings(EnvironmentComponent& env) {
         SliderProp("Contrast", env.contrast, 0.8f, 1.4f);
         SliderProp("Saturation", env.saturation, 0.0f, 2.0f);
         SliderProp("Vignette", env.vignette, 0.0f, 1.5f);
-        BoolProp("FXAA", env.fxaa);
+        BoolProp("Temporal Anti-aliasing", env.taa);
+        if (!env.taa) BoolProp("FXAA", env.fxaa);
+        SliderProp("Ambient Occlusion", env.aoIntensity, 0.0f, 1.0f);
+        if (env.aoIntensity > 0.0f) SliderProp("AO Radius", env.aoRadius, 0.05f, 4.0f);
+        BoolProp("Depth of Field", env.depthOfField);
+        if (env.depthOfField) { FloatProp("Focus Distance", env.focusDistance, 0.05f, 0.0f, 10000.0f); FloatProp("Focus Range", env.focusRange, 0.05f, 0.01f, 10000.0f); SliderProp("Bokeh Radius", env.bokehRadius, 0.0f, 32.0f); }
+        SliderProp("Motion Blur", env.motionBlur, 0.0f, 2.0f);
 }
 
 void EditorApp::DrawInspector() {
@@ -629,6 +646,14 @@ void EditorApp::DrawInspector() {
         BoolProp("Loop", a.loop);
         BoolProp("Play On Start", a.playOnStart);
         BoolProp("Spatial (3D)", a.spatial);
+        {
+            auto& groups = AudioEngine::MixerGroups();
+            Insp::LabelCell("Output");
+            if (ImGui::BeginCombo("##output", a.output.empty() ? "Master" : a.output.c_str())) {
+                for (auto& g : groups) if (ImGui::Selectable(g.name.c_str(), a.output == g.name || (a.output.empty() && g.name == "Master"))) a.output = g.name == "Master" ? std::string() : g.name;
+                ImGui::EndCombo();
+            }
+        }
         if (a.spatial) {
             FloatProp("Min Distance", a.minDistance, 0.05f, 0.01f, 1000.0f);
             FloatProp("Max Distance", a.maxDistance, 0.1f, 0.1f, 10000.0f);
@@ -718,6 +743,7 @@ void EditorApp::DrawInspector() {
         ImGui::TextDisabled("Wheels: the Wheel Colliders on child objects.");
         if (m_State != PlayState::Edit) ImGui::Text("Speed %.1f km/h   RPM %.0f   Gear %d", c.speed * 3.6f, c.rpm, c.gear);
     });
+    DrawGameplayInspectors(inspectScene, e, m_State != PlayState::Edit);
     ComponentSection<TrailRendererComponent>(inspectScene, e, "Trail Renderer", true, [&](TrailRendererComponent& c) {
         FloatProp("Time (s)", c.time, 0.05f, 0.01f, 600.0f);
         FloatProp("Min Vertex Distance", c.minVertexDistance, 0.005f, 0.005f, 100.0f);
@@ -824,6 +850,10 @@ void EditorApp::DrawInspector() {
         if (!reg.Has<SpriteBatchComponent>(e) && item("Sprite Batch")) reg.Add<SpriteBatchComponent>(e);
         if (!reg.Has<ParticleSystemComponent>(e) && item("Particle System")) reg.Add<ParticleSystemComponent>(e);
         if (!reg.Has<TrailRendererComponent>(e) && item("Trail Renderer")) reg.Add<TrailRendererComponent>(e);
+        if (!reg.Has<LineRendererComponent>(e) && item("Line Renderer")) reg.Add<LineRendererComponent>(e);
+        if (!reg.Has<SplineComponent>(e) && item("Spline")) reg.Add<SplineComponent>(e);
+        if (!reg.Has<ReflectionProbeComponent>(e) && item("Reflection Probe")) reg.Add<ReflectionProbeComponent>(e);
+        if (!reg.Has<DecalComponent>(e) && item("Decal")) reg.Add<DecalComponent>(e);
         if (!reg.Has<LODGroupComponent>(e) && item("LOD Group")) reg.Add<LODGroupComponent>(e);
         if (!reg.Has<CameraComponent>(e) && item("Camera")) reg.Add<CameraComponent>(e);
         if (!reg.Has<DirectionalLightComponent>(e) && item("Directional Light")) reg.Add<DirectionalLightComponent>(e);
@@ -848,6 +878,11 @@ void EditorApp::DrawInspector() {
         if (!reg.Has<MeshColliderComponent>(e) && item("Mesh Collider")) reg.Add<MeshColliderComponent>(e);
         if (!reg.Has<VehicleControllerComponent>(e) && item("Vehicle Controller")) reg.Add<VehicleControllerComponent>(e);
         if (!reg.Has<WheelColliderComponent>(e) && item("Wheel Collider")) reg.Add<WheelColliderComponent>(e);
+        if (!reg.Has<CharacterControllerComponent>(e) && item("Character Controller")) reg.Add<CharacterControllerComponent>(e);
+        if (!reg.Has<JointComponent>(e) && item("Joint")) reg.Add<JointComponent>(e);
+        section("Navigation");
+        if (!reg.Has<NavMeshSurfaceComponent>(e) && item("Nav Mesh Surface")) reg.Add<NavMeshSurfaceComponent>(e);
+        if (!reg.Has<NavMeshAgentComponent>(e) && item("Nav Mesh Agent")) reg.Add<NavMeshAgentComponent>(e);
         section("UI / Animation");
         if(!reg.Has<UILayoutGroupComponent>(e)&&item("Layout Group"))reg.Add<UILayoutGroupComponent>(e);
         if(!reg.Has<CanvasGroupComponent>(e)&&item("Canvas Group"))reg.Add<CanvasGroupComponent>(e);
@@ -919,6 +954,14 @@ static bool MatchesReference(Registry& reg, EntityID e, const std::string& type)
     if (c == "VehicleController") return reg.Has<VehicleControllerComponent>(e);
     if (c == "WheelCollider") return reg.Has<WheelColliderComponent>(e);
     if (c == "TrailRenderer") return reg.Has<TrailRendererComponent>(e);
+    if (c == "CharacterController") return reg.Has<CharacterControllerComponent>(e);
+    if (c == "Joint") return reg.Has<JointComponent>(e);
+    if (c == "NavMeshSurface") return reg.Has<NavMeshSurfaceComponent>(e);
+    if (c == "NavMeshAgent") return reg.Has<NavMeshAgentComponent>(e);
+    if (c == "LineRenderer") return reg.Has<LineRendererComponent>(e);
+    if (c == "Spline") return reg.Has<SplineComponent>(e);
+    if (c == "ReflectionProbe") return reg.Has<ReflectionProbeComponent>(e);
+    if (c == "Decal") return reg.Has<DecalComponent>(e);
     if (c == "DirectionalLight") return reg.Has<DirectionalLightComponent>(e);
     if (c == "Light") return reg.Has<DirectionalLightComponent>(e) || reg.Has<PointLightComponent>(e) || reg.Has<SpotLightComponent>(e);
     if (c == "AudioSource") return reg.Has<AudioSourceComponent>(e);

@@ -47,6 +47,14 @@ namespace Stardust
             if(t==typeof(UI.ScrollView))return 35;
             if(t==typeof(UI.Dropdown))return 36;
             if(t==typeof(TrailRenderer))return 37;
+            if(t==typeof(CharacterController))return 38;
+            if(t==typeof(Joint))return 39;
+            if(t==typeof(AI.NavMeshSurface))return 40;
+            if(t==typeof(AI.NavMeshAgent))return 41;
+            if(t==typeof(LineRenderer))return 42;
+            if(t==typeof(Spline))return 43;
+            if(t==typeof(ReflectionProbe))return 44;
+            if(t==typeof(Decal))return 45;
             if(t==typeof(Rigidbody2D))return 28;
             if(t==typeof(BoxCollider2D))return 29;
             if(t==typeof(CircleCollider2D))return 30;
@@ -203,6 +211,11 @@ namespace Stardust
         {
             fixed (byte* p = Native.Utf8(clip)) Native.Api.PlayClipAtPoint(p, &position, volume);
         }
+        /// <summary>Plays a clip once at a point, through an Audio Mixer group.</summary>
+        public static void PlayClipAtPoint(string clip, Vector3 position, float volume, string mixerGroup, bool spatial = true)
+            => Native.Query(new System.Text.Json.Nodes.JsonObject { ["kind"] = "oneShot", ["clip"] = clip, ["position"] = new System.Text.Json.Nodes.JsonArray(position.x, position.y, position.z), ["volume"] = volume, ["spatial"] = spatial, ["output"] = mixerGroup ?? "" });
+        /// <summary>Audio Mixer group this source plays into ("" = Master).</summary>
+        public string outputAudioMixerGroup { get => ComponentProperties.Value(this, 11, "output", ""); set => ComponentProperties.Property(this, 11, "output", System.Text.Json.Nodes.JsonValue.Create(value ?? "")); }
     }
 
     public partial class BoxCollider : Collider { }

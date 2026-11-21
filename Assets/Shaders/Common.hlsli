@@ -23,7 +23,10 @@ struct FrameData {
     uint4  atmosphereInfo; // x = transmittance LUT, y = sky-view LUT, z = ambient buffer, w = clouds texture
     float4 fogParams;      // x = fog density (1/m), y = height falloff (1/m), z = cloud coverage, w = cloud density
     float4 windParams;     // xy = direction, z = strength, w = gust frequency
-    uint4  lightInfo;      // x = local light buffer, y = count
+    uint4  lightInfo;      // x = local light buffer, y = count, z = opaque colour copy, w = opaque depth copy
+    float4x4 prevViewProj; // last frame (motion vectors, temporal anti-aliasing)
+    uint4  effectsInfo;    // x = reflection probe buffer, y = probe count, z = frame number, w = flags
+    float4 jitter;         // xy = this frame's sub-pixel offset (clip space), zw = last frame's
 };
 
 static const uint kFrameCascadeMatrices = 368; // byte offset of cascadeViewProj[4]
@@ -54,6 +57,9 @@ FrameData LoadFrame(uint bufferIndex) {
     f.fogParams = b.Load<float4>(688);
     f.windParams = b.Load<float4>(704);
     f.lightInfo = b.Load<uint4>(720);
+    f.prevViewProj = LoadMatrix(b, 736);
+    f.effectsInfo = b.Load<uint4>(800);
+    f.jitter = b.Load<float4>(816);
     return f;
 }
 

@@ -144,7 +144,7 @@ namespace Stardust
         public float distance;
     }
 
-    public static unsafe class Physics
+    public static unsafe partial class Physics
     {
         // ignore: skip this entity's own collider (e.g. ground checks from inside a character capsule)
         public static bool Raycast(Vector3 origin, Vector3 direction, out RaycastHit hit, float maxDistance = 1000f, Entity ignore = null)

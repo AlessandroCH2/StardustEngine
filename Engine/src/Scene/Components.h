@@ -235,6 +235,11 @@ struct EnvironmentComponent {
     float saturation = 1.08f;
     float vignette = 0.35f;
     bool fxaa = true;
+    float aoIntensity = 0.0f, aoRadius = 0.6f;        // screen-space ambient occlusion (0 = off)
+    bool taa = false;                                  // temporal anti-aliasing (replaces FXAA)
+    bool depthOfField = false;
+    float focusDistance = 10.0f, focusRange = 8.0f, bokehRadius = 8.0f;
+    float motionBlur = 0.0f;
 };
 
 // Procedural landscape with grass and trees (rendered by the nature renderers)
@@ -298,6 +303,7 @@ struct AudioSourceComponent {
     bool spatial = true;       // 3D: attenuated and panned relative to the Audio Listener
     float minDistance = 1.0f;
     float maxDistance = 50.0f;
+    std::string output;        // Audio Mixer group ("Music", "SFX/Weapons"...), empty = Master
 };
 
 struct AudioListenerComponent {};
@@ -541,3 +547,5 @@ struct ScriptComponent : ScriptSlot {
 };
 
 } // namespace Stardust
+
+#include "Scene/GameplayComponents.h"
