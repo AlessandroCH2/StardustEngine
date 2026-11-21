@@ -9,6 +9,7 @@ dist/
 # Sample projects: not needed to compile the engine, and large
 SandboxProject/
 NodulusProject/
+PortvaleProject/
 Examples/FeatureLab/
 # Local feature tests: not pushed
 Tests/GpuFeatureTests.cpp
