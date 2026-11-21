@@ -512,9 +512,17 @@ static std::vector<EntityID> ReadEntities(Scene& sceneRef, const json& entities,
     return roots;
 }
 
-std::vector<EntityID> SceneSerializer::AppendScene(Scene& scene,const std::string& text){auto data=json::parse(text);return ReadEntities(scene,data.at("entities"),true,0);}
+std::vector<EntityID> SceneSerializer::AppendScene(Scene& scene,const std::string& text){
+    auto data=json::parse(text);
+    // New UUIDs (and remapping every reference to them) only when one would clash with an entity already
+    // there: a scene replacing the current one keeps its own ids, which is also much faster for big scenes.
+    bool clash=false;
+    for(const json& j:data.at("entities")){u64 id=ParseUUID(j.value("uuid",json()));if(id&&scene.FindByUUID(id)){clash=true;break;}}
+    if(clash)SD_INFO("AppendScene: ids clash, new ones are given");
+    return ReadEntities(scene,data.at("entities"),clash,0);
+}
 
-Ref<Scene> SceneSerializer::FromJson(const std::string& text) {
+Ref<Scene> SceneSerializer::FromJson(const std::string& text, bool keepSource) {
     json root = json::parse(text, nullptr, false);
     if (root.is_discarded() || !root.contains("entities")) { SD_ERROR("Invalid scene file"); return nullptr; }
     auto scene = MakeRef<Scene>();
@@ -524,6 +532,7 @@ Ref<Scene> SceneSerializer::FromJson(const std::string& text) {
 
     root=PrefabSystem::Resolve(nlohmann::json(root));
     ReadEntities(*scene, root["entities"], false, kNullEntity);
+    if (keepSource) scene->SetSourceJson(root.dump());
     return scene;
 }
 

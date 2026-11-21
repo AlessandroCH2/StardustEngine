@@ -40,6 +40,10 @@ public:
 
     Registry& Reg() { return m_Registry; }
     const std::string& Name() const { return m_Name; }
+    // The scene's entities as JSON (prefabs resolved), kept by background loading so ReplaceContents
+    // does not have to write them out again
+    void SetSourceJson(std::string json) { m_SourceJson = std::move(json); }
+    const std::string& SourceJson() const { return m_SourceJson; }
     void SetName(const std::string& n) { m_Name = n; }
 
     // Runtime
@@ -80,6 +84,7 @@ private:
 
     Registry m_Registry;
     std::string m_Name = "Untitled";
+    std::string m_SourceJson;
     bool m_Running = false;
     std::vector<EntityID> m_RootOrder;          // ordering of root entities
     std::vector<glm::mat4> m_WorldCache;

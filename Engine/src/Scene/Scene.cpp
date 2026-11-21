@@ -343,7 +343,8 @@ void Scene::ReplaceContents(Scene& next,RHI::Device& device){
  for(auto e:GetRoots())if(std::find(preserve.begin(),preserve.end(),e)==preserve.end())DestroyEntity(e);
  m_PendingDestroy.clear();
  if(m_Physics)m_Physics->TakeCollisionEvents();
- auto roots=SceneSerializer::AppendScene(*this,SceneSerializer::ToJson(next));m_Name=next.Name();SceneManager::SetActiveSceneName(m_Name);m_FixedAccumulator=0;ComputeWorldMatrices();PrepareTerrains(device);
+ // a scene loaded in the background brings its entities as JSON already: no need to write them out again
+ auto roots=SceneSerializer::AppendScene(*this,next.SourceJson().empty()?SceneSerializer::ToJson(next):next.SourceJson());m_Name=next.Name();SceneManager::SetActiveSceneName(m_Name);m_FixedAccumulator=0;ComputeWorldMatrices();PrepareTerrains(device);
  std::vector<EntityID> added;std::function<void(EntityID)> visit=[&](auto e){added.push_back(e);for(auto c:GetChildren(e))visit(c);};for(auto root:roots)visit(root);
  for(auto e:added)if(m_Physics&&IsActiveInHierarchy(e))m_Physics->CreateBody(e);
  ScriptEngine::OnRuntimeStart(this,false);

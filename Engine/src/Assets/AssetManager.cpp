@@ -21,6 +21,8 @@
 #include <future>
 #include <thread>
 #include <chrono>
+#include <mutex>
+#include <atomic>
 
 #pragma warning(push, 0)
 #define STB_IMAGE_IMPLEMENTATION
@@ -618,19 +620,31 @@ Ref<Mesh> AssetManager::GetAnimatedFbx(const std::string& ref, float time, const
 
 namespace {
 using MeshJson=nlohmann::json;
-u64 s_ObjCacheHits=0;
+std::atomic<u64> s_ObjCacheHits{0};
 MeshJson MeshDependency(const fs::path& path){std::error_code ec;auto size=fs::file_size(path,ec);if(ec)return {{"path",FileSystem::Utf8(path)},{"missing",true}};auto time=fs::last_write_time(path,ec);if(ec)return {{"path",FileSystem::Utf8(path)},{"missing",true}};return {{"path",FileSystem::Utf8(path)},{"size",size},{"stamp",time.time_since_epoch().count()}};}
 fs::path ObjCachePath(const fs::path& path){if(!Project::IsLoaded()||Pak::Contains(path))return {};std::error_code ec;if(!fs::is_regular_file(path,ec))return {};auto source=FileSystem::Utf8(fs::absolute(path).lexically_normal());u64 hash=14695981039346656037ull;for(unsigned char c:source){hash^=c;hash*=1099511628211ull;}return Project::Dir()/"Library/ImportedMeshes"/(std::format("{:016x}.sdmesh",hash));}
-Ref<Mesh> ReadObjCache(const fs::path& cache,const fs::path& source,RHI::Device& device){
- if(cache.empty())return {};try{std::ifstream in(cache,std::ios::binary);u32 magic=0,length=0;in.read((char*)&magic,4);in.read((char*)&length,4);if(!in||magic!=0x314D4453||length>1024*1024)return {};std::string text(length,'\0');in.read(text.data(),length);auto header=MeshJson::parse(text,nullptr,false);if(!header.is_object()||header.value("version",0)!=1)return {};auto deps=header["dependencies"];if(!deps.is_array()||deps.empty()||deps.size()>128||deps[0]!=MeshDependency(source))return {};for(auto& dependency:deps)if(dependency!=MeshDependency(fs::u8path(dependency.at("path").get<std::string>())))return {};u64 nv=header.at("vertices"),ni=header.at("indices");if(!nv||nv>4000000||!ni||ni>12000000||ni%3)return {};std::error_code ec;if(fs::file_size(cache,ec)!=8+length+nv*sizeof(Vertex)+ni*sizeof(u32)||ec)return {};std::vector<Vertex> vertices(nv);std::vector<u32> indices(ni);in.read((char*)vertices.data(),nv*sizeof(Vertex));in.read((char*)indices.data(),ni*sizeof(u32));if(!in||std::any_of(indices.begin(),indices.end(),[&](u32 i){return i>=nv;}))return {};std::vector<SubMesh> parts;for(auto& part:header["parts"]){SubMesh value{part.at("first"),part.at("count"),part.at("slot"),part.value("name","")};if((u64)value.firstIndex+value.indexCount>ni)return {};parts.push_back(std::move(value));}auto mesh=MakeRef<Mesh>(device,vertices,indices,FileSystem::Utf8(source.filename()));mesh->SetSubMeshes(std::move(parts));return mesh;}catch(...){return {};}
+bool ReadObjCache(const fs::path& cache,const fs::path& source,std::vector<Vertex>& outVertices,std::vector<u32>& outIndices,std::vector<SubMesh>& outParts){
+ if(cache.empty())return false;try{std::ifstream in(cache,std::ios::binary);u32 magic=0,length=0;in.read((char*)&magic,4);in.read((char*)&length,4);if(!in||magic!=0x314D4453||length>1024*1024)return {};std::string text(length,'\0');in.read(text.data(),length);auto header=MeshJson::parse(text,nullptr,false);if(!header.is_object()||header.value("version",0)!=1)return {};auto deps=header["dependencies"];if(!deps.is_array()||deps.empty()||deps.size()>128||deps[0]!=MeshDependency(source))return {};for(auto& dependency:deps)if(dependency!=MeshDependency(fs::u8path(dependency.at("path").get<std::string>())))return {};u64 nv=header.at("vertices"),ni=header.at("indices");if(!nv||nv>4000000||!ni||ni>12000000||ni%3)return {};std::error_code ec;if(fs::file_size(cache,ec)!=8+length+nv*sizeof(Vertex)+ni*sizeof(u32)||ec)return {};std::vector<Vertex> vertices(nv);std::vector<u32> indices(ni);in.read((char*)vertices.data(),nv*sizeof(Vertex));in.read((char*)indices.data(),ni*sizeof(u32));if(!in||std::any_of(indices.begin(),indices.end(),[&](u32 i){return i>=nv;}))return {};std::vector<SubMesh> parts;for(auto& part:header["parts"]){SubMesh value{part.at("first"),part.at("count"),part.at("slot"),part.value("name","")};if((u64)value.firstIndex+value.indexCount>ni)return {};parts.push_back(std::move(value));}outVertices=std::move(vertices);outIndices=std::move(indices);outParts=std::move(parts);return true;}catch(...){return false;}
 }
 void WriteObjCache(const fs::path& cache,const fs::path& source,const std::string& obj,const std::vector<Vertex>& vertices,const std::vector<u32>& indices,const std::vector<SubMesh>& parts){
  if(cache.empty())return;fs::path temporary=cache;temporary+="."+std::to_string(GenerateUUID())+".tmp";try{MeshJson dependencies=MeshJson::array({MeshDependency(source)});std::istringstream lines(obj);std::string line;while(std::getline(lines,line)){std::istringstream words(line);std::string key,file;words>>key;if(key=="mtllib")while(words>>file){auto dependency=MeshDependency(source.parent_path()/fs::u8path(file));if(dependency.is_object())dependencies.push_back(dependency);}}MeshJson entries=MeshJson::array();for(auto& part:parts)entries.push_back({{"first",part.firstIndex},{"count",part.indexCount},{"slot",part.materialSlot},{"name",part.name}});auto text=MeshJson({{"version",1},{"dependencies",dependencies},{"vertices",vertices.size()},{"indices",indices.size()},{"parts",entries}}).dump();std::error_code ec;fs::create_directories(cache.parent_path(),ec);std::ofstream out(temporary,std::ios::binary);u32 magic=0x314D4453,length=(u32)text.size();out.write((char*)&magic,4);out.write((char*)&length,4);out.write(text.data(),length);out.write((char*)vertices.data(),vertices.size()*sizeof(Vertex));out.write((char*)indices.data(),indices.size()*sizeof(u32));bool success=out.good();out.close();if(success){fs::copy_file(temporary,cache,fs::copy_options::overwrite_existing,ec);}fs::remove(temporary,ec);}catch(...){std::error_code ec;fs::remove(temporary,ec);}
 }
 }
 u64 AssetManager::MeshCacheHits(){return s_ObjCacheHits;}
+Ref<Mesh> AssetManager::MakeMesh(MeshData& data) {
+    auto mesh = MakeRef<Mesh>(*s_Device, data.vertices, data.indices, data.name);
+    mesh->SetSubMeshes(std::move(data.parts));
+    return mesh;
+}
+
 Ref<Mesh> AssetManager::ImportObj(const fs::path& path) {
-    auto cache=ObjCachePath(path);if(auto mesh=ReadObjCache(cache,path,*s_Device)){++s_ObjCacheHits;return mesh;}
+    MeshData data;
+    return DecodeObj(path, data) ? MakeMesh(data) : nullptr;
+}
+
+bool AssetManager::DecodeObj(const fs::path& path, MeshData& out) {
+    out.name = FileSystem::Utf8(path.filename());
+    auto cache=ObjCachePath(path);if(ReadObjCache(cache,path,out.vertices,out.indices,out.parts)){++s_ObjCacheHits;return true;}
     tinyobj::attrib_t attrib;
     std::vector<tinyobj::shape_t> shapes;
     std::vector<tinyobj::material_t> materials;
@@ -639,7 +653,7 @@ Ref<Mesh> AssetManager::ImportObj(const fs::path& path) {
     auto sourceText=FileSystem::ReadText(path);std::istringstream obj(sourceText);
     if (!tinyobj::LoadObj(&attrib, &shapes, &materials, &warn, &err, &obj, &reader, true)) {
         SD_ERROR("OBJ import failed: {} {}", path.string(), err);
-        return nullptr;
+        return false;
     }
     std::vector<Vertex> verts;
     std::vector<u32> idx;std::vector<SubMesh> parts;
@@ -661,19 +675,27 @@ Ref<Mesh> AssetManager::ImportObj(const fs::path& path) {
             verts.push_back(v);
         }
     }
-    if (verts.empty()) return nullptr;
+    if (verts.empty()) return false;
     ComputeNormalsAndTangents(verts, idx, !hasNormals);
-    WriteObjCache(cache,path,sourceText,verts,idx,parts);auto result=MakeRef<Mesh>(*s_Device, verts, idx, FileSystem::Utf8(path.filename()));result->SetSubMeshes(std::move(parts));return result;
+    WriteObjCache(cache,path,sourceText,verts,idx,parts);
+    out.vertices=std::move(verts);out.indices=std::move(idx);out.parts=std::move(parts);
+    return true;
 }
 
 Ref<Mesh> AssetManager::ImportGltf(const fs::path& path) {
+    MeshData data;
+    return DecodeGltf(path, data) ? MakeMesh(data) : nullptr;
+}
+
+bool AssetManager::DecodeGltf(const fs::path& path, MeshData& out) {
+    out.name = FileSystem::Utf8(path.filename());
     cgltf_options opt{};
     opt.file.read=[](const cgltf_memory_options*,const cgltf_file_options*,const char* path,cgltf_size* size,void** data){try{auto bytes=FileSystem::ReadBinary(fs::u8path(path));if(bytes.empty())return cgltf_result_file_not_found;*size=bytes.size();*data=malloc(bytes.size());if(!*data)return cgltf_result_out_of_memory;memcpy(*data,bytes.data(),bytes.size());return cgltf_result_success;}catch(...){return cgltf_result_io_error;}};
     opt.file.release=[](const cgltf_memory_options*,const cgltf_file_options*,void* data){free(data);};
     cgltf_data* data = nullptr;
     std::string p = FileSystem::Utf8(path);
-    if (cgltf_parse_file(&opt, p.c_str(), &data) != cgltf_result_success) { SD_ERROR("glTF parse failed: {}", p); return nullptr; }
-    if (cgltf_load_buffers(&opt, data, p.c_str()) != cgltf_result_success) { SD_ERROR("glTF buffers failed: {}", p); cgltf_free(data); return nullptr; }
+    if (cgltf_parse_file(&opt, p.c_str(), &data) != cgltf_result_success) { SD_ERROR("glTF parse failed: {}", p); return false; }
+    if (cgltf_load_buffers(&opt, data, p.c_str()) != cgltf_result_success) { SD_ERROR("glTF buffers failed: {}", p); cgltf_free(data); return false; }
 
     std::vector<Vertex> verts;
     std::vector<u32> idx;std::vector<SubMesh> parts;
@@ -719,9 +741,69 @@ Ref<Mesh> AssetManager::ImportGltf(const fs::path& path) {
         }
     }
     cgltf_free(data);
-    if (verts.empty()) { SD_ERROR("glTF has no triangle meshes: {}", p); return nullptr; }
+    if (verts.empty()) { SD_ERROR("glTF has no triangle meshes: {}", p); return false; }
     if (needNormals || needTangents) ComputeNormalsAndTangents(verts, idx, needNormals);
-    auto result=MakeRef<Mesh>(*s_Device, verts, idx, FileSystem::Utf8(path.filename()));result->SetSubMeshes(std::move(parts));return result;
+    out.vertices=std::move(verts);out.indices=std::move(idx);out.parts=std::move(parts);
+    return true;
+}
+
+// ------------------------------------------------------------------ staged meshes (background loading)
+namespace {
+struct StagedMesh { std::string ref; AssetManager::MeshData data; };
+std::mutex s_StageMutex;
+std::vector<StagedMesh> s_Staged;
+}
+
+bool AssetManager::StageMesh(const std::string& ref) {
+    if (ref.empty() || ref.starts_with("builtin:")) return false;
+    fs::path abs = ToAbsolute(ref);
+    std::string ext = Lower(abs.extension().string());
+    if (!FileSystem::Exists(abs)) return false;
+    MeshData data;
+    bool ok = ext == ".obj" ? DecodeObj(abs, data) : (ext == ".gltf" || ext == ".glb") ? DecodeGltf(abs, data) : false;
+    if (!ok || data.vertices.empty()) return false;
+    std::lock_guard lock(s_StageMutex);
+    s_Staged.push_back({ ref, std::move(data) });
+    return true;
+}
+
+int AssetManager::StagedMeshes() { std::lock_guard lock(s_StageMutex); return (int)s_Staged.size(); }
+
+int AssetManager::UploadStagedMeshes(double budgetMs) {
+    auto start = std::chrono::steady_clock::now();
+    while (s_Device) {
+        StagedMesh item;
+        {
+            std::lock_guard lock(s_StageMutex);
+            if (s_Staged.empty()) return 0;
+            item = std::move(s_Staged.back());
+            s_Staged.pop_back();
+        }
+        if (!s_Meshes.contains(item.ref)) {
+            auto mesh = MakeMesh(item.data);
+            SD_INFO("Mesh imported: {} ({} vertices, {} triangles, background)", item.ref, mesh->VertexCount(), mesh->IndexCount() / 3);
+            s_Meshes[item.ref] = mesh;
+        }
+        if (std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count() > budgetMs) break;
+    }
+    return StagedMeshes();
+}
+
+std::vector<std::string> AssetManager::LoadedMeshRefs() {
+    std::vector<std::string> out; out.reserve(s_Meshes.size());
+    for (auto& [ref, mesh] : s_Meshes) out.push_back(ref);
+    return out;
+}
+
+// a staged mesh the scene asks for before its turn: uploaded right away
+static Ref<Mesh> TakeStaged(const std::string& ref) {
+    StagedMesh item; bool found = false;
+    {
+        std::lock_guard lock(s_StageMutex);
+        for (size_t i = 0; i < s_Staged.size(); ++i)
+            if (s_Staged[i].ref == ref) { item = std::move(s_Staged[i]); s_Staged.erase(s_Staged.begin() + i); found = true; break; }
+    }
+    return found ? AssetManager::MakeMesh(item.data) : nullptr;
 }
 
 Ref<Mesh> AssetManager::GetMesh(const std::string& ref) {
@@ -737,6 +819,7 @@ Ref<Mesh> AssetManager::GetMesh(const std::string& ref) {
     Ref<Mesh> mesh;
     std::string ext = Lower(abs.extension().string());
     if (!FileSystem::Exists(abs)) SD_WARN("Mesh not found: {}", ref);
+    else if ((mesh = TakeStaged(ref))) {}
     else if (ext == ".obj") mesh = ImportObj(abs);
     else if (ext == ".gltf" || ext == ".glb") mesh = ImportGltf(abs);
     else if (ext == ".fbx") mesh = ImportFbx(abs);

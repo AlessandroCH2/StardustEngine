@@ -11,7 +11,7 @@ public:
     static Ref<Scene> Load(const std::filesystem::path& path);   // nullptr on failure
     static std::string ToJson(Scene& scene, bool compact = false);   // compact: no indentation (undo snapshots)
     static std::vector<EntityID> AppendScene(Scene& scene,const std::string& json);
-    static Ref<Scene> FromJson(const std::string& json);
+    static Ref<Scene> FromJson(const std::string& json, bool keepSource = false); // keepSource: Scene::SourceJson (background loading)
 
     // Prefabs (.prefab = JSON of one entity subtree) and in-memory copies
     static std::string EntityToJson(Scene& scene, EntityID root);

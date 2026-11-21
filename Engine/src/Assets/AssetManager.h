@@ -40,6 +40,15 @@ public:
     static u64 MeshCacheHits();
     static Ref<Mesh> GetAnimatedFbx(const std::string& ref, float time, const std::string& animation = {});
     static std::string BuiltinRef(PrimitiveType t) { return std::string("builtin:") + PrimitiveName(t); }
+    // Loading without stalls: a worker thread decodes .obj/.gltf/.glb files (StageMesh, thread-safe) and
+    // the main thread turns them into GPU meshes a few at a time (UploadStagedMeshes, within a time budget).
+    // GetMesh takes a staged mesh at once if the scene asks for it first.
+    struct MeshData { std::vector<Vertex> vertices; std::vector<u32> indices; std::vector<SubMesh> parts; std::string name; };
+    static Ref<Mesh> MakeMesh(MeshData& data);   // main thread: uploads decoded data
+    static bool StageMesh(const std::string& ref);
+    static int UploadStagedMeshes(double budgetMs);
+    static int StagedMeshes();
+    static std::vector<std::string> LoadedMeshRefs(); // main thread: what is already cached
 
     // Materials and textures inside an FBX, written once to the hidden <model>.fbm folder beside it
     static std::vector<FbxContentItem> GetFbxContents(const std::string& asset);
@@ -63,6 +72,8 @@ public:
 private:
     static Ref<Mesh> ImportObj(const std::filesystem::path& path);
     static Ref<Mesh> ImportGltf(const std::filesystem::path& path);
+    static bool DecodeObj(const std::filesystem::path& path, MeshData& out);   // CPU only: safe on any thread
+    static bool DecodeGltf(const std::filesystem::path& path, MeshData& out);  // CPU only: safe on any thread
     static Ref<Mesh> ImportFbx(const std::filesystem::path& path, float time = -1, const std::string& animation = {});
 
     static inline RHI::Device* s_Device = nullptr;
