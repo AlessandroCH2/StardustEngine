@@ -2,6 +2,8 @@
 #include "Core/Base64.h"
 #include "Physics/PhysicsWorld.h"
 #include "MemoryDevice.h"
+#include "MockHttpServer.h"
+#include "AgentQueries.h"
 #include "Animation/ModelSkeleton.h"
 #include "Renderer/Nature/TerrainNeighbors.h"
 #include "Project/Project.h"
@@ -314,7 +316,7 @@ public class TestGameplay : ScriptBehaviour {
       Scene gameplay;auto ground=gameplay.CreateEntity("Ground");gameplay.Reg().Get<TransformComponent>(ground).position={0,-0.5f,0};gameplay.Reg().Add<BoxColliderComponent>(ground).size={20,1,20};
       auto runner=gameplay.CreateEntity("Gameplay");gameplay.Reg().Get<TransformComponent>(runner).position={0,1.2f,0};gameplay.Reg().Add<ScriptComponent>(runner).className="TestGameplay";
       gameplay.OnRuntimeStart();
-      for(int i=0;i<200;++i){gameplay.OnUpdate(1.f/60);auto f=nlohmann::json::parse(ScriptEngine::GetInstanceFields(runner));if(f["CoroutineSteps"]==5&&f["Repeats"]==3&&f["AwaitOnMain"]!=0&&f["HttpDone"]!=0&&i>30)break;std::this_thread::sleep_for(std::chrono::milliseconds(5));}
+      for(int i=0;i<1000;++i){gameplay.OnUpdate(1.f/60);auto f=nlohmann::json::parse(ScriptEngine::GetInstanceFields(runner));if(f["CoroutineSteps"]==5&&f["Repeats"]==3&&f["AwaitOnMain"]!=0&&f["HttpDone"]!=0&&i>30)break;std::this_thread::sleep_for(std::chrono::milliseconds(5));}
       auto f=nlohmann::json::parse(ScriptEngine::GetInstanceFields(runner));
       std::cout<<"C# gameplay: "<<f.dump()<<"\n";
       Check(f["CoroutineSteps"]==5&&f["Nested"]==1,"coroutine steps (null, WaitForSeconds, nested, WaitUntil) failed");
@@ -365,6 +367,76 @@ public class TestGameplay : ScriptBehaviour {
       Check(Pak::Mount(archive,root/"Assets"),"runtime mount failed");ScriptEngine::SetInstanceField(manager,"Stage","1");current.OnUpdate(.01f);fields=nlohmann::json::parse(ScriptEngine::GetInstanceFields(manager));Check(fields["SpawnNumber"]==42&&fields["Content"]=="mounted file","typed prefab instantiate or virtual file read failed");
       Scene next;next.SetName("Next level");auto newObject=next.CreateEntity("New level");next.Reg().Add<ScriptComponent>(newObject).className="TestA";int before=fields["Observed"];current.ReplaceContents(next,device);Check(glm::length(current.Physics()->GetVelocity(manager)-glm::vec3(1,2,3))<.01f,"persistent rigidbody velocity was reset");Check(current.FindByUUID(managerUuid)==manager&&current.Reg().Valid(child)&&!current.FindByUUID(oldUuid),"persistent hierarchy lost or old level survived");current.OnUpdate(.01f);fields=nlohmann::json::parse(ScriptEngine::GetInstanceFields(manager));Check(fields["Creates"]==1&&fields["Observed"].get<int>()==before+1,"DontDestroyOnLoad recreated managed script or lost private state");Check(current.FindByName("New level")!=0,"new scene not activated");Check(nlohmann::json::parse(ScriptEngine::GetInstanceFields(current.FindByName("New level")))["SceneAtCreate"]=="Next level","OnCreate observed previous scene name");
       Check(Pak::Unmount(archive)&&!FileSystem::Exists(root/"Assets/UI/Future.png"),"pak unmount did not remove virtual entries");current.OnRuntimeStop();
+    }
+    {   // AI Agent: the three wire formats against a local mock server, tools on a scene, approvals
+      using nlohmann::json;
+      static Scene& agentScene=*new Scene();static std::vector<EntityID> agentSelection;static EntityID agentSelected=kNullEntity;static bool agentEdited=false;
+      ScriptEngine::SetQueryHandler([](const std::string& request){AgentContext ctx;ctx.scene=&agentScene;ctx.selection=&agentSelection;ctx.selected=&agentSelected;auto reply=AgentSceneQuery(ctx,request);agentEdited=agentEdited||ctx.edited;return reply;});
+      SetEnvironmentVariableW(L"STARDUST_AI_SETTINGS",(root/"ai-settings.json").wstring().c_str());
+      TestNet::MockHttpServer server;const std::string base="http://127.0.0.1:"+std::to_string(server.Port());
+      auto agent=[](json request){request["kind"]="agent";auto reply=json::parse(ScriptEngine::DrawEditorUI(request.dump()),nullptr,false);return reply.is_object()?reply:json::object();};
+      auto run=[&](bool stopAtApproval=false){json state;for(int i=0;i<2000;++i){state=agent({{"action","poll"},{"version",-1}});if(!state.value("busy",false)||(stopAtApproval&&state.contains("approval")))break;std::this_thread::sleep_for(std::chrono::milliseconds(5));}return state;};
+      auto lastText=[](const json& state){std::string text;for(auto& m:state["messages"])if(m.value("role","")=="assistant")text=m.value("text","");return text;};
+      // OpenAI-compatible (Ollama, LM Studio, custom): create an object, list, write a file
+      agent({{"action","settings"},{"provider","custom"},{"baseUrl",base+"/v1"},{"model","mock-model"}});
+      server.Reply(200,R"({"data":[{"id":"mock-b"},{"id":"mock-a"}]})");
+      agent({{"action","models"}});json listed;for(int i=0;i<400;++i){listed=agent({{"action","poll"},{"version",-1}});if(!listed.value("modelsLoading",true))break;std::this_thread::sleep_for(std::chrono::milliseconds(5));}
+      Check(listed["models"]==json::array({"mock-a","mock-b"}),"AI agent did not list the server's models");
+      server.ClearRequests();
+      server.Reply(200,R"({"choices":[{"finish_reason":"tool_calls","message":{"role":"assistant","content":null,"tool_calls":[{"id":"c1","type":"function","function":{"name":"create_entity","arguments":"{\"name\":\"Crate\",\"primitive\":\"cube\",\"components\":{\"transform\":{\"position\":[1,2,3]},\"boxCollider\":{}}}"}}]}}]})");
+      server.Reply(200,R"({"choices":[{"finish_reason":"tool_calls","message":{"role":"assistant","content":"Checking.","tool_calls":[{"id":"c2","type":"function","function":{"name":"list_entities","arguments":"{\"filter\":\"crate\"}"}},{"id":"c3","type":"function","function":{"name":"write_file","arguments":"{\"path\":\"Assets/AgentNote.txt\",\"content\":\"made by the agent\"}"}}]}}]})");
+      server.Reply(200,R"({"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"Done: one crate."}}]})");
+      agent({{"action","send"},{"text","Add a crate"}});
+      json state=run();
+      EntityID crate=agentScene.FindByName("Crate");
+      Check(crate&&agentScene.Reg().Has<MeshRendererComponent>(crate)&&agentScene.Reg().Has<BoxColliderComponent>(crate)&&glm::length(agentScene.Reg().Get<TransformComponent>(crate).position-glm::vec3(1,2,3))<1e-4f,"AI agent create_entity did not build the object");
+      Check(agentEdited,"AI agent scene edit was not reported for undo");
+      Check(lastText(state)=="Done: one crate.",("AI agent did not show the final answer: "+state.dump()).c_str());
+      Check(FileSystem::ReadText(Project::Dir()/"Assets/AgentNote.txt")=="made by the agent","AI agent write_file failed");
+      auto requests=server.Requests();
+      Check(requests.size()==3&&requests[0].path=="/v1/chat/completions"&&requests[0].body.find("\"create_entity\"")!=std::string::npos&&requests[0].body.find("\"role\":\"system\"")!=std::string::npos,"OpenAI-compatible request is wrong");
+      Check(requests.size()==3&&requests[1].body.find(R"("tool_call_id":"c1")")!=std::string::npos&&requests[2].body.find(R"("tool_call_id":"c3")")!=std::string::npos&&requests[2].body.find("Crate")!=std::string::npos,"OpenAI-compatible tool results were not sent back");
+      const std::string crateId=std::format("{:016x}",agentScene.Reg().Get<IDComponent>(crate).uuid);
+      // Anthropic: edit (rotation by Euler angles), then a delete that the user denies
+      agent({{"action","settings"},{"provider","anthropic"},{"baseUrl",base},{"apiKey","test-key"},{"model","claude-opus-5-5"}});
+      server.ClearRequests();
+      server.Reply(200,R"({"content":[{"type":"text","text":"Turning it."},{"type":"tool_use","id":"tu1","name":"edit_entity","input":{"id":")"+crateId+R"(","patch":{"transform":{"euler":[0,90,0]}}}}],"stop_reason":"tool_use"})");
+      server.Reply(200,R"({"content":[{"type":"tool_use","id":"tu2","name":"delete_entity","input":{"id":")"+crateId+R"("}}],"stop_reason":"tool_use"})");
+      server.Reply(200,R"({"content":[{"type":"text","text":"Kept it."}],"stop_reason":"end_turn"})");
+      agent({{"action","send"},{"text","Turn the crate and remove it"}});
+      state=run(true);
+      Check(state.contains("approval"),"AI agent did not ask before deleting");
+      agent({{"action","approve"},{"allow","no"}});
+      state=run();
+      crate=agentScene.FindByUUID(std::stoull(crateId,nullptr,16));
+      Check(crate!=kNullEntity,"denied delete still removed the object");
+      if(crate){const glm::vec3 euler=glm::degrees(glm::eulerAngles(agentScene.Reg().Get<TransformComponent>(crate).rotation));Check(std::abs(glm::dot(agentScene.Reg().Get<TransformComponent>(crate).rotation,glm::quat(glm::radians(glm::vec3(0,90,0)))))>0.999f,std::format("AI agent rotation edit failed ({},{},{})",euler.x,euler.y,euler.z).c_str());Check(agentScene.Reg().Has<BoxColliderComponent>(crate),"edit lost a component");}
+      requests=server.Requests();
+      Check(requests.size()==3&&requests[0].path=="/v1/messages"&&requests[0].headers.find("x-api-key: test-key")!=std::string::npos&&requests[0].headers.find("anthropic-version: 2026-10-21")!=std::string::npos&&requests[0].body.find(R"("output_config":{"effort":"high"})")!=std::string::npos,"Anthropic request is wrong");
+      Check(requests.size()==3&&requests[1].body.find(R"("tool_use_id":"tu1")")!=std::string::npos&&requests[2].body.find(R"("tool_use_id":"tu2")")!=std::string::npos&&requests[2].body.find("denied")!=std::string::npos,"Anthropic tool results were not sent back");
+      Check(requests.size()==3&&requests[0].body.find("Add a crate")!=std::string::npos,"conversation history was not kept across providers");
+      Check(lastText(state)=="Kept it.","Anthropic final answer missing");
+      // Gemini: a function call with a thought signature that must come back unchanged
+      agent({{"action","settings"},{"provider","gemini"},{"baseUrl",base+"/v1beta"},{"apiKey","g-key"},{"model","gemini-test"}});
+      agent({{"action","clear"}});
+      server.ClearRequests();
+      server.Reply(200,R"({"candidates":[{"content":{"role":"model","parts":[{"functionCall":{"name":"get_entity","args":{"id":")"+crateId+R"("}},"thoughtSignature":"sig-123"}]},"finishReason":"STOP"}]})");
+      server.Reply(200,R"({"candidates":[{"content":{"role":"model","parts":[{"text":"It is a crate."}]},"finishReason":"STOP"}]})");
+      agent({{"action","send"},{"text","What is the crate?"}});
+      state=run();
+      requests=server.Requests();
+      Check(requests.size()==2&&requests[0].path=="/v1beta/models/gemini-test:generateContent"&&requests[0].headers.find("x-goog-api-key: g-key")!=std::string::npos,"Gemini request is wrong");
+      Check(requests.size()==2&&requests[1].body.find("sig-123")!=std::string::npos&&requests[1].body.find("functionResponse")!=std::string::npos&&requests[1].body.find("Crate")!=std::string::npos,"Gemini function response or thought signature missing");
+      Check(requests.size()==2&&requests[0].body.find("Add a crate")==std::string::npos,"New chat did not clear the history");
+      Check(lastText(state)=="It is a crate.","Gemini final answer missing");
+      // Errors reach the transcript instead of hanging
+      server.Reply(401,R"({"error":{"message":"invalid key"}})");
+      agent({{"action","send"},{"text","hi"}});state=run();
+      Check(state["messages"].back().value("role","")=="error"&&state["messages"].back().value("text","").find("invalid key")!=std::string::npos,"AI agent HTTP error not shown");
+      Check(FileSystem::ReadText(root/"ai-settings.json").find("g-key")!=std::string::npos,"AI agent settings were not saved");
+      {auto chats=nlohmann::json::parse(FileSystem::ReadText(Project::Dir()/"Library/AgentChats.json"),nullptr,false);Check(chats.is_array()&&chats.size()==2&&chats.dump().find("Add a crate")!=std::string::npos,"AI agent chats were not saved");auto listed=agent({{"action","poll"},{"version",-1}});Check(listed["chats"].size()==2,"AI agent chat list is wrong");agent({{"action","openChat"},{"id",chats[1]["id"]}});auto reopened=agent({{"action","poll"},{"version",-1}});Check(reopened["title"]==chats[1]["title"]&&!reopened["messages"].empty(),"AI agent could not reopen a chat");}
+      ScriptEngine::SetQueryHandler(nullptr);
+      std::cout<<"AI agent: OpenAI-compatible, Anthropic and Gemini tool loops, approvals and errors passed\n";
     }
     ScriptEngine::Shutdown();
 }

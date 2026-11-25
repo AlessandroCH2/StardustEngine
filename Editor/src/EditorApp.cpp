@@ -442,6 +442,7 @@ void EditorApp::OnImGui() {
     DrawGameView();
     DrawSceneView();
     DrawManagedWindows();
+    DrawAiAgent();
     ShaderGraphEditor::Draw();
     ScriptEditor::Draw();
     ShaderAssets::Update(); // recompiles .shader / .shadergraph files changed on disk
@@ -598,6 +599,7 @@ void EditorApp::DrawMenuBar() {
         if(ImGui::MenuItem("Animation",nullptr,m_ShowAnimationEditor)){m_ShowAnimationEditor=!m_ShowAnimationEditor;m_AnimationFocusRequest=m_ShowAnimationEditor;}
         if(ImGui::MenuItem("Animator",nullptr,m_ShowAnimatorEditor)){m_ShowAnimatorEditor=!m_ShowAnimatorEditor;m_AnimatorFocusRequest=m_ShowAnimatorEditor;}
         if (ImGui::MenuItem("Script Editor", nullptr, ScriptEditor::IsOpen())) ScriptEditor::Open({}, 0);
+        ImGui::MenuItem("AI Agent", nullptr, &m_ShowAiAgent);
         ImGui::Separator();
         DrawLayoutMenu();
         ImGui::EndMenu();

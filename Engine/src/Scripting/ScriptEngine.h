@@ -50,6 +50,9 @@ public:
     static void BuildAsync();
     // Errors and warnings of the last script build ("file(line,col): error CS0103: ..."), and a counter that changes with each build
     static std::vector<std::string> BuildDiagnostics();
+    // Extra Native.Query kinds ("agent..."), answered by the editor: JSON request in, JSON reply out
+    static void SetQueryHandler(std::string (*handler)(const std::string& request)) { s_QueryHandler = handler; }
+    static inline std::string (*s_QueryHandler)(const std::string&) = nullptr;
     static u64 BuildDiagnosticsGeneration();
     static bool IsBuilding() { return s_Building; }
     static bool TakeBuildFinished(bool& success);

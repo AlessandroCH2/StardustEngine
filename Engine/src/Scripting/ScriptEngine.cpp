@@ -793,6 +793,7 @@ static void InitNativeApi() {
         static thread_local std::string out;
         nlohmann::json result=nlohmann::json::object();
         auto q=nlohmann::json::parse(request?request:"",nullptr,false);
+        if(ScriptEngine::s_QueryHandler&&q.is_object()&&q.value("kind","").rfind("agent",0)==0){out=ScriptEngine::s_QueryHandler(request);return out.c_str();}
         if(q.is_object()&&q.value("kind","")=="spriteBatchQuads"&&S()){
             const u64 id=std::strtoull(q.value("entity","0").c_str(),nullptr,16);
             if(EntityID e=S()->FindByUUID(id))if(auto* c=S()->Reg().TryGet<SpriteBatchComponent>(e))result["quads"]=Base64::Encode(c->quads.data(),c->quads.size()*sizeof(SpriteQuad));

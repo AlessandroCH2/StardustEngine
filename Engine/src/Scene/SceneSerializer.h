@@ -16,6 +16,8 @@ public:
     // Prefabs (.prefab = JSON of one entity subtree) and in-memory copies
     static std::string EntityToJson(Scene& scene, EntityID root);
     static EntityID InstantiateJson(Scene& scene, const std::string& json, EntityID parent = kNullEntity);
+    // Rebuilds an entity subtree from EntityToJson-style JSON, keeping its UUIDs, parent and place among its siblings
+    static EntityID ReplaceJson(Scene& scene, EntityID target, const std::string& json);
     static std::string SelectionToJson(Scene& scene,const std::vector<EntityID>& roots);
     static std::vector<EntityID> InstantiateSelection(Scene& scene,const std::string& json,EntityID parent=kNullEntity);
     static bool SavePrefab(Scene& scene, EntityID root, const std::filesystem::path& path);

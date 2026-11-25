@@ -32,6 +32,7 @@ namespace Stardust.Interop
     {
         static GameLoadContext s_Context;
         static readonly Dictionary<string, ScriptType> s_Types = new();
+        internal static IEnumerable<KeyValuePair<string, ScriptType>> ScriptTypes => s_Types;
         static readonly object[] s_OneArg = new object[1];
         static readonly Dictionary<string,MethodInfo> s_EditorCommands = new();
         static readonly Dictionary<string,Type> s_CustomEditors=new();
@@ -309,6 +310,7 @@ namespace Stardust.Interop
                 var q=JsonNode.Parse(Native.FromUtf8(request)).AsObject();var kind=q["kind"]?.GetValue<string>();
                 if(kind=="windows"){var windows=new JsonArray();foreach(var pair in Stardust.Editor.EditorWindow.Open)windows.Add(new JsonObject{["id"]=pair.Key,["title"]=pair.Value.title});response["windows"]=windows;}
                 else if(kind=="symbols")response["types"]=Symbols();
+                else if(kind=="agent")response=Stardust.Editor.AI.Agent.Handle(q);
                 else {
                     Stardust.Editor.EditorGUI.Begin(q["events"] as JsonObject);
                     if(kind=="window") {if(Stardust.Editor.EditorWindow.Open.TryGetValue(q["id"].GetValue<string>(),out var window)){if(q["close"]?.GetValue<bool>()==true)window.Close();else window.OnGUI();}}
@@ -375,7 +377,7 @@ namespace Stardust.Interop
             foreach(var pair in docs)if(pair.Key==prefix||pair.Key.StartsWith(prefix+"(")||pair.Key.StartsWith(prefix+"``"))return pair.Value;
             return null;
         }
-        static JsonArray Symbols(){
+        internal static JsonArray Symbols(){
             var types=new JsonArray();
             var list=new List<Type>();
             foreach(var t in typeof(Native).Assembly.GetExportedTypes())if(!t.Namespace?.Contains("Interop")??true)list.Add(t);

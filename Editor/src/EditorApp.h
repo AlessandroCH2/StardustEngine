@@ -251,6 +251,10 @@ private:
     // projects / build / undo
     bool m_ShowHub = true, m_ShowBuildSettings = false, m_ShowProjectSettings = false, m_ShowPackageManager = false;
     void DrawPackageManager(); // PackageManagerWindow.cpp
+    // AI Agent window (AiAgent.cpp) and the scene requests of its tools
+    bool m_ShowAiAgent = false;
+    void DrawAiAgent();
+    std::string AgentQuery(const std::string& request);
     std::atomic<bool> m_Building{ false };
     std::thread m_PlayerBuildThread;
     std::mutex m_BuildProgressMutex;

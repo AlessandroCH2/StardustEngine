@@ -572,6 +572,21 @@ EntityID SceneSerializer::InstantiateJson(Scene& scene, const std::string& text,
     return roots.empty() ? kNullEntity : roots[0];
 }
 
+EntityID SceneSerializer::ReplaceJson(Scene& scene, EntityID target, const std::string& text) {
+    json r = json::parse(text, nullptr, false);
+    if (r.is_discarded() || !r.contains("entities") || !r["entities"].is_array() || r["entities"].empty() || !scene.Reg().Valid(target)) return kNullEntity;
+    const EntityID parent = scene.GetParent(target);
+    std::vector<EntityID> siblings = parent ? scene.GetChildren(parent) : scene.GetRoots();
+    const int index = (int)(std::find(siblings.begin(), siblings.end(), target) - siblings.begin());
+    r["entities"][0].erase("parent");
+    scene.DestroyEntity(target);
+    auto roots = ReadEntities(scene, r["entities"], false, parent);
+    if (roots.empty()) return kNullEntity;
+    scene.MoveInParent(roots[0], index);
+    if (scene.IsRunning()) scene.StartRuntimeObjects(roots[0]);
+    return roots[0];
+}
+
 std::string SceneSerializer::SelectionToJson(Scene& scene,const std::vector<EntityID>& selection){json entities=json::array();for(auto e:selection){if(!scene.Reg().Valid(e))continue;bool nested=false;for(auto other:selection)if(other!=e&&scene.Reg().Valid(other)&&scene.IsDescendantOf(e,other)){nested=true;break;}if(nested)continue;size_t start=entities.size();WriteEntity(scene,e,entities);entities[start].erase("parent");auto parent=scene.GetParent(e);entities[start]["clipboardParent"]=parent?UUIDStr(scene.Reg().Get<IDComponent>(parent).uuid):UUIDStr(0);auto world=scene.GetWorldMatrix(e);json matrix=json::array();for(int c=0;c<4;++c)for(int r=0;r<4;++r)matrix.push_back(world[c][r]);entities[start]["clipboardWorld"]=matrix;}return json{{"entities",entities}}.dump();}
 std::vector<EntityID> SceneSerializer::InstantiateSelection(Scene& scene,const std::string& text,EntityID parent){auto data=json::parse(text,nullptr,false);if(!data.is_object()||!data.contains("entities"))return {};auto roots=ReadEntities(scene,data["entities"],true,parent);size_t index=0;for(auto& entity:data["entities"])if(entity.contains("clipboardWorld")&&index<roots.size()){auto e=roots[index++];auto sourceParent=scene.FindByUUID(ParseUUID(entity.value("clipboardParent",json())));if(!parent&&sourceParent)scene.SetParent(e,sourceParent,false);else if(!parent){auto& matrix=entity["clipboardWorld"];if(matrix.is_array()&&matrix.size()==16){glm::mat4 world(1);for(int c=0;c<4;++c)for(int r=0;r<4;++r)world[c][r]=matrix[c*4+r];scene.SetWorldMatrix(e,world);}}}return roots;}
 
